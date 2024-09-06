@@ -12,7 +12,7 @@ import (
 	"golang.org/x/text/language"
 )
 
-func getCheapesOffer(
+func getCheapestOffer(
 	rangeStartDate, rangeEndDate time.Time,
 	tripLength int,
 	srcCity, dstCity string,
@@ -73,7 +73,7 @@ func getCheapesOffer(
 }
 
 func main() {
-	getCheapesOffer(
+	getCheapestOffer(
 		time.Now().AddDate(0, 0, 60),
 		time.Now().AddDate(0, 0, 90),
 		2,
