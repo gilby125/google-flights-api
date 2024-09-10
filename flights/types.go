@@ -49,9 +49,11 @@ func (f Flight) String() string {
 // It describes the offer of a trip. [Session.GetPriceGraph] returns a slice of Offers.
 // [Session.GetOffers] returns a slice of [FullOffer] that contains Offer.
 type Offer struct {
-	StartDate  time.Time // start date of the offer
-	ReturnDate time.Time // return date of the offer
-	Price      float64   // price of the offer
+	StartDate      time.Time // start date of the offer
+	ReturnDate     time.Time // return date of the offer
+	Price          float64   // price of the offer
+	Airline        string
+	FlightDuration time.Duration
 }
 
 func (o Offer) String() string {

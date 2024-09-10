@@ -15,6 +15,7 @@ func getBestPrices(
 	rangeStartDate, rangeEndDate time.Time,
 	tripLengths []int,
 	srcCity, dstCity string,
+	debug bool,
 ) {
 	session, err := flights.New()
 	if err != nil {
@@ -33,7 +34,7 @@ func getBestPrices(
 	bestOffer := flights.Offer{}
 
 	for _, tripLength := range tripLengths {
-		offers, err := session.GetPriceGraph(
+		offers, rawResponse, err := session.GetPriceGraph(
 			context.Background(),
 			flights.PriceGraphArgs{
 				RangeStartDate: rangeStartDate,
@@ -47,6 +48,10 @@ func getBestPrices(
 		if err != nil {
 			log.Printf("Error getting price graph for trip length %d: %v\n", tripLength, err)
 			continue
+		}
+
+		if debug {
+			fmt.Printf("Raw API Response:\n%s\n", rawResponse)
 		}
 
 		for _, o := range offers {
@@ -66,6 +71,8 @@ func getBestPrices(
 	fmt.Printf("Return: %s\n", bestOffer.ReturnDate.Format("2006-01-02"))
 	fmt.Printf("Price: $%.2f\n", bestOffer.Price)
 	fmt.Printf("Trip Length: %d days\n", int(bestOffer.ReturnDate.Sub(bestOffer.StartDate).Hours()/24))
+	fmt.Printf("Airline: %s\n", bestOffer.Airline)
+	fmt.Printf("Flight Duration: %s\n", bestOffer.FlightDuration)
 
 	url, err := session.SerializeURL(
 		context.Background(),
@@ -91,5 +98,6 @@ func main() {
 		[]int{3, 7, 5, 10, 9, 14},   // Trip lengths: 7, 10, and 14 days
 		"New York",
 		"London",
+		true, // Set to true for debug mode
 	)
 }

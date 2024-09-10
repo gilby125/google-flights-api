@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -106,37 +107,41 @@ func getPriceGraphSection(bytesToDecode []byte) ([]Offer, error) {
 	return offers, nil
 }
 
-// GetPriceGraph retrieves offers (date range) from the "Price graph" section of Google Flight search.
-// The city names should be provided in the language described by args.Lang. The offers are returned
-// in a slice of [Offer].
-//
-// GetPriceGraph returns an error if any of the requests fail or if any of the city names are misspelled.
-//
-// Requirements are described by the [PriceGraphArgs.Validate] function.
-func (s *Session) GetPriceGraph(ctx context.Context, args PriceGraphArgs) ([]Offer, error) {
+func (s *Session) GetPriceGraph(ctx context.Context, args PriceGraphArgs) ([]Offer, string, error) {
 	if err := args.Validate(); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	offers := []Offer{}
 
 	resp, err := s.doRequestPriceGraph(ctx, args)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	defer resp.Body.Close()
 
-	body := bufio.NewReader(resp.Body)
-	skipPrefix(body)
+	// Read the entire body into a byte slice
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to read response body: %v", err)
+	}
+
+	// Convert the byte slice to a string
+	rawResponse := string(bodyBytes)
+
+	// Use a new bytes.Reader for further processing
+	bodyReader := bufio.NewReader(bytes.NewReader(bodyBytes))
+
+	skipPrefix(bodyReader)
 
 	for {
-		readLine(body) // skip line
-		bytesToDecode, err := getInnerBytes(body)
+		readLine(bodyReader) // skip line
+		bytesToDecode, err := getInnerBytes(bodyReader)
 		if err != nil {
 			sortSlice(offers, func(lv, rv Offer) bool {
 				return lv.StartDate.Before(rv.StartDate)
 			})
-			return offers, nil
+			return offers, rawResponse, nil
 		}
 
 		offers_, _ := getPriceGraphSection(bytesToDecode)
