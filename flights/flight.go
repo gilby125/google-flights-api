@@ -118,8 +118,8 @@ func (s *Session) getFlightReqData(ctx context.Context, args Args) (string, erro
 }
 
 func (s *Session) doRequestFlights(ctx context.Context, args Args) (*http.Response, error) {
-	url := "https://www.google.com/_/TravelFrontendUi/data/travel.frontend.flights.FlightsFrontendService/GetShoppingResults?f.sid=-1300922759171628473&bl=boq_travel-frontend-ui_20230627.02_p1&hl=en&soc-app=162&soc-platform=1&soc-device=1&_reqid=52717&rt=c"
-
+	//url := "https://www.google.com/_/TravelFrontendUi/data/travel.frontend.flights.FlightsFrontendService/GetShoppingResults?f.sid=-1300922759171628473&bl=boq_travel-frontend-ui_20230627.02_p1&hl=en&soc-app=162&soc-platform=1&soc-device=1&_reqid=52717&rt=c"
+	url := "https://www.google.com/_/FlightsFrontendUi/data/travel.frontend.flights.FlightsFrontendService/GetCalendarGraph?f.sid=2443535704194977136&bl=boq_travel-frontend-flights-ui_20250212.02_p0&hl=en-US&gl=US&soc-app=162&soc-platform=1&soc-device=1&_reqid=3148323&rt=c"
 	reqDate, err := s.getFlightReqData(ctx, args)
 	if err != nil {
 		return nil, fmt.Errorf("could not get request data: %v", err)
