@@ -33,8 +33,12 @@ type FlightSearchPayload struct {
 }
 
 type BulkSearchPayload struct {
+	Origins           []string
+	Destinations      []string
 	DepartureDateFrom time.Time
 	DepartureDateTo   time.Time
+	ReturnDateFrom    time.Time
+	ReturnDateTo      time.Time
 	TripLength        int
 	Adults            int
 	Children          int

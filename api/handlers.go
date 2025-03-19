@@ -2,15 +2,15 @@ package api
 
 import (
 	"database/sql"
-	"encoding/json"
 	"net/http"
 	"strconv"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/gilby125/google-flights-api/db"
 	"github.com/gilby125/google-flights-api/queue"
 	"github.com/gilby125/google-flights-api/worker"
+	"github.com/gin-gonic/gin"
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
 // SearchRequest represents a flight search request
@@ -50,23 +50,23 @@ type BulkSearchRequest struct {
 
 // JobRequest represents a scheduled job request
 type JobRequest struct {
-	Name           string    `json:"name" binding:"required"`
-	CronExpression string    `json:"cron_expression" binding:"required"`
-	Origin         string    `json:"origin" binding:"required"`
-	Destination    string    `json:"destination" binding:"required"`
-	DateStart      time.Time `json:"date_start" binding:"required"`
-	DateEnd        time.Time `json:"date_end" binding:"required"`
+	Name            string    `json:"name" binding:"required"`
+	CronExpression  string    `json:"cron_expression" binding:"required"`
+	Origin          string    `json:"origin" binding:"required"`
+	Destination     string    `json:"destination" binding:"required"`
+	DateStart       time.Time `json:"date_start" binding:"required"`
+	DateEnd         time.Time `json:"date_end" binding:"required"`
 	ReturnDateStart time.Time `json:"return_date_start,omitempty"`
-	ReturnDateEnd  time.Time `json:"return_date_end,omitempty"`
-	TripLength     int       `json:"trip_length,omitempty" binding:"min=0"`
-	Adults         int       `json:"adults" binding:"required,min=1"`
-	Children       int       `json:"children" binding:"min=0"`
-	InfantsLap     int       `json:"infants_lap" binding:"min=0"`
-	InfantsSeat    int       `json:"infants_seat" binding:"min=0"`
-	TripType       string    `json:"trip_type" binding:"required,oneof=one_way round_trip"`
-	Class          string    `json:"class" binding:"required,oneof=economy premium_economy business first"`
-	Stops          string    `json:"stops" binding:"required,oneof=nonstop one_stop two_stops any"`
-	Currency       string    `json:"currency" binding:"required,len=3"`
+	ReturnDateEnd   time.Time `json:"return_date_end,omitempty"`
+	TripLength      int       `json:"trip_length,omitempty" binding:"min=0"`
+	Adults          int       `json:"adults" binding:"required,min=1"`
+	Children        int       `json:"children" binding:"min=0"`
+	InfantsLap      int       `json:"infants_lap" binding:"min=0"`
+	InfantsSeat     int       `json:"infants_seat" binding:"min=0"`
+	TripType        string    `json:"trip_type" binding:"required,oneof=one_way round_trip"`
+	Class           string    `json:"class" binding:"required,oneof=economy premium_economy business first"`
+	Stops           string    `json:"stops" binding:"required,oneof=nonstop one_stop two_stops any"`
+	Currency        string    `json:"currency" binding:"required,len=3"`
 }
 
 // getAirports returns a handler for getting all airports
@@ -179,276 +179,6 @@ func createSearch(q queue.Queue) gin.HandlerFunc {
 	}
 }
 
-// deleteJob returns a handler for deleting a job
-func deleteJob(db *db.PostgresDB) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		id := c.Param("id")
-		jobID, err := strconv.Atoi(id)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid job ID"})
-			return
-		}
-
-		// Begin a transaction
-		tx, err := db.GetDB().Begin()
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		defer tx.Rollback()
-
-		// Delete the job details
-		_, err = tx.Exec("DELETE FROM job_details WHERE job_id = $1", jobID)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		// Delete the job
-		result, err := tx.Exec("DELETE FROM scheduled_jobs WHERE id = $1", jobID)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		// Check if the job was found
-		rowsAffected, err := result.RowsAffected()
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		if rowsAffected == 0 {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})
-			return
-		}
-
-		// Commit the transaction
-		if err := tx.Commit(); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		c.JSON(http.StatusOK, gin.H{"message": "Job deleted successfully"})
-	}
-}
-
-// runJob returns a handler for manually triggering a job
-func runJob(q queue.Queue, db *db.PostgresDB) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		id := c.Param("id")
-		jobID, err := strconv.Atoi(id)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid job ID"})
-			return
-		}
-
-		// Get the job details
-		var details struct {
-			Origin           string
-			Destination      string
-			DepartureDateStart time.Time
-			DepartureDateEnd   time.Time
-			ReturnDateStart   sql.NullTime
-			ReturnDateEnd     sql.NullTime
-			TripLength       sql.NullInt32
-			Adults           int
-			Children         int
-			InfantsLap       int
-			InfantsSeat      int
-			TripType         string
-			Class            string
-			Stops            string
-		}
-
-		err = db.GetDB().QueryRow(
-			`SELECT origin, destination, departure_date_start, departure_date_end, 
-			return_date_start, return_date_end, trip_length, adults, children, 
-			infants_lap, infants_seat, trip_type, class, stops 
-			FROM job_details WHERE job_id = $1`,
-			jobID,
-		).Scan(
-			&details.Origin, &details.Destination, &details.DepartureDateStart, &details.DepartureDateEnd,
-			&details.ReturnDateStart, &details.ReturnDateEnd, &details.TripLength, &details.Adults, &details.Children,
-			&details.InfantsLap, &details.InfantsSeat, &details.TripType, &details.Class, &details.Stops,
-		)
-
-		if err != nil {
-			if err == sql.ErrNoRows {
-				c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})
-				return
-			}
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		// Create a bulk search payload
-		payload := worker.BulkSearchPayload{
-			Origins:           []string{details.Origin},
-			Destinations:      []string{details.Destination},
-			DepartureDateFrom: details.DepartureDateStart,
-			DepartureDateTo:   details.DepartureDateEnd,
-			Adults:            details.Adults,
-			Children:          details.Children,
-			InfantsLap:        details.InfantsLap,
-			InfantsSeat:       details.InfantsSeat,
-			TripType:          details.TripType,
-			Class:             details.Class,
-			Stops:             details.Stops,
-			Currency:          "USD", // Default currency
-		}
-
-		// Add optional fields if present
-		if details.ReturnDateStart.Valid {
-			payload.ReturnDateFrom = details.ReturnDateStart.Time
-		}
-		if details.ReturnDateEnd.Valid {
-			payload.ReturnDateTo = details.ReturnDateEnd.Time
-		}
-		if details.TripLength.Valid {
-			payload.TripLength = int(details.TripLength.Int32)
-		}
-
-		// Enqueue the job
-		jobQueueID, err := q.Enqueue(c.Request.Context(), "bulk_search", payload)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		// Update the last run time
-		_, err = db.GetDB().Exec(
-			"UPDATE scheduled_jobs SET last_run = NOW() WHERE id = $1",
-			jobID,
-		)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		c.JSON(http.StatusAccepted, gin.H{
-			"job_id":  jobQueueID,
-			"message": "Job triggered successfully",
-		})
-	}
-}
-
-// enableJob returns a handler for enabling a job
-func enableJob(db *db.PostgresDB) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		id := c.Param("id")
-		jobID, err := strconv.Atoi(id)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid job ID"})
-			return
-		}
-
-		result, err := db.GetDB().Exec(
-			"UPDATE scheduled_jobs SET enabled = true, updated_at = NOW() WHERE id = $1",
-			jobID,
-		)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		// Check if the job was found
-		rowsAffected, err := result.RowsAffected()
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		if rowsAffected == 0 {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})
-			return
-		}
-
-		c.JSON(http.StatusOK, gin.H{"message": "Job enabled successfully"})
-	}
-}
-
-// disableJob returns a handler for disabling a job
-func disableJob(db *db.PostgresDB) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		id := c.Param("id")
-		jobID, err := strconv.Atoi(id)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid job ID"})
-			return
-		}
-
-		result, err := db.GetDB().Exec(
-			"UPDATE scheduled_jobs SET enabled = false, updated_at = NOW() WHERE id = $1",
-			jobID,
-		)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		// Check if the job was found
-		rowsAffected, err := result.RowsAffected()
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		if rowsAffected == 0 {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})
-			return
-		}
-
-		c.JSON(http.StatusOK, gin.H{"message": "Job disabled successfully"})
-	}
-}
-
-// getWorkerStatus returns a handler for getting worker status
-func getWorkerStatus(workerManager *worker.Manager) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "running"})
-	}
-}
-
-// createBulkSearch returns a handler for creating a bulk flight search
-func createBulkSearch(q queue.Queue) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		var req BulkSearchRequest
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-
-		// Create a worker payload
-		payload := worker.BulkSearchPayload{
-			Origins:           req.Origins,
-			Destinations:      req.Destinations,
-			DepartureDateFrom: req.DepartureDateFrom,
-			DepartureDateTo:   req.DepartureDateTo,
-			ReturnDateFrom:    req.ReturnDateFrom,
-			ReturnDateTo:      req.ReturnDateTo,
-			TripLength:        req.TripLength,
-			Adults:            req.Adults,
-			Children:          req.Children,
-			InfantsLap:        req.InfantsLap,
-			InfantsSeat:       req.InfantsSeat,
-			TripType:          req.TripType,
-			Class:             req.Class,
-			Stops:             req.Stops,
-			Currency:          req.Currency,
-		}
-
-		// Enqueue the job
-		jobID, err := q.Enqueue(c.Request.Context(), "bulk_search", payload)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		c.JSON(http.StatusAccepted, gin.H{
-			"job_id":  jobID,
-			"message": "Bulk flight search job created successfully",
-		})
-	}
-}
-
 // getSearchById returns a handler for getting a search by ID
 func getSearchById(db *db.PostgresDB) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -461,9 +191,9 @@ func getSearchById(db *db.PostgresDB) gin.HandlerFunc {
 
 		// Get the search query
 		var query struct {
-			ID           int
-			Origin       string
-			Destination  string
+			ID            int
+			Origin        string
+			Destination   string
 			DepartureDate time.Time
 			ReturnDate    sql.NullTime
 			Status        string
@@ -530,8 +260,8 @@ func getSearchById(db *db.PostgresDB) gin.HandlerFunc {
 			segments := []map[string]interface{}{}
 			for segmentRows.Next() {
 				var segment struct {
-					AirlineCode     string
-					FlightNumber    string
+					AirlineCode      string
+					FlightNumber     string
 					DepartureAirport string
 					ArrivalAirport   string
 					DepartureTime    time.Time
@@ -637,9 +367,9 @@ func listSearches(db *db.PostgresDB) gin.HandlerFunc {
 		queries := []map[string]interface{}{}
 		for rows.Next() {
 			var query struct {
-				ID           int
-				Origin       string
-				Destination  string
+				ID            int
+				Origin        string
+				Destination   string
 				DepartureDate time.Time
 				ReturnDate    sql.NullTime
 				Status        string
@@ -676,8 +406,6 @@ func listSearches(db *db.PostgresDB) gin.HandlerFunc {
 		})
 	}
 }
-
-
 
 // deleteJob returns a handler for deleting a job
 func deleteJob(db *db.PostgresDB) gin.HandlerFunc {
@@ -744,20 +472,20 @@ func runJob(q queue.Queue, db *db.PostgresDB) gin.HandlerFunc {
 
 		// Get the job details
 		var details struct {
-			Origin           string
-			Destination      string
+			Origin             string
+			Destination        string
 			DepartureDateStart time.Time
 			DepartureDateEnd   time.Time
-			ReturnDateStart   sql.NullTime
-			ReturnDateEnd     sql.NullTime
-			TripLength       sql.NullInt32
-			Adults           int
-			Children         int
-			InfantsLap       int
-			InfantsSeat      int
-			TripType         string
-			Class            string
-			Stops            string
+			ReturnDateStart    sql.NullTime
+			ReturnDateEnd      sql.NullTime
+			TripLength         sql.NullInt32
+			Adults             int
+			Children           int
+			InfantsLap         int
+			InfantsSeat        int
+			TripType           string
+			Class              string
+			Stops              string
 		}
 
 		err = db.GetDB().QueryRow(
@@ -904,81 +632,6 @@ func disableJob(db *db.PostgresDB) gin.HandlerFunc {
 func getWorkerStatus(workerManager *worker.Manager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "running"})
-	}
-}
-
-// createBulkSearch returns a handler for creating a bulk flight search
-func createBulkSearch(q queue.Queue) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		var req BulkSearchRequest
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-
-		// Create a worker payload
-		payload := worker.BulkSearchPayload{
-			Origins:           req.Origins,
-			Destinations:      req.Destinations,
-			DepartureDateFrom: req.DepartureDateFrom,
-			DepartureDateTo:   req.DepartureDateTo,
-			ReturnDateFrom:    req.ReturnDateFrom,
-			ReturnDateTo:      req.ReturnDateTo,
-			TripLength:        req.TripLength,
-			Adults:            req.Adults,
-			Children:          req.Children,
-			InfantsLap:        req.InfantsLap,
-			InfantsSeat:       req.InfantsSeat,
-			TripType:          req.TripType,
-			Class:             req.Class,
-			Stops:             req.Stops,
-			Currency:          req.Currency,
-		}
-
-		// Enqueue the job
-		jobID, err := q.Enqueue(c.Request.Context(), "bulk_search", payload)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		c.JSON(http.StatusAccepted, gin.H{
-			"job_id":  jobID,
-			"message": "Bulk flight search job created successfully",
-		})
-	}
-}
-
-		// Create a worker payload
-		payload := worker.BulkSearchPayload{
-			Origins:           req.Origins,
-			Destinations:      req.Destinations,
-			DepartureDateFrom: req.DepartureDateFrom,
-			DepartureDateTo:   req.DepartureDateTo,
-			ReturnDateFrom:    req.ReturnDateFrom,
-			ReturnDateTo:      req.ReturnDateTo,
-			TripLength:        req.TripLength,
-			Adults:            req.Adults,
-			Children:          req.Children,
-			InfantsLap:        req.InfantsLap,
-			InfantsSeat:       req.InfantsSeat,
-			TripType:          req.TripType,
-			Class:             req.Class,
-			Stops:             req.Stops,
-			Currency:          req.Currency,
-		}
-
-		// Enqueue the job
-		jobID, err := q.Enqueue(c.Request.Context(), "bulk_search", payload)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		c.JSON(http.StatusAccepted, gin.H{
-			"job_id":  jobID,
-			"message": "Bulk flight search job created successfully",
-		})
 	}
 }
 
@@ -1148,234 +801,6 @@ func createJob(db *db.PostgresDB) gin.HandlerFunc {
 	}
 }
 
-// deleteJob returns a handler for deleting a job
-func deleteJob(db *db.PostgresDB) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		id := c.Param("id")
-		jobID, err := strconv.Atoi(id)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid job ID"})
-			return
-		}
-
-		// Begin a transaction
-		tx, err := db.GetDB().Begin()
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		defer tx.Rollback()
-
-		// Delete the job details
-		_, err = tx.Exec("DELETE FROM job_details WHERE job_id = $1", jobID)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		// Delete the job
-		result, err := tx.Exec("DELETE FROM scheduled_jobs WHERE id = $1", jobID)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		// Check if the job was found
-		rowsAffected, err := result.RowsAffected()
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		if rowsAffected == 0 {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})
-			return
-		}
-
-		// Commit the transaction
-		if err := tx.Commit(); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		c.JSON(http.StatusOK, gin.H{"message": "Job deleted successfully"})
-	}
-}
-
-// runJob returns a handler for manually triggering a job
-func runJob(q queue.Queue, db *db.PostgresDB) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		id := c.Param("id")
-		jobID, err := strconv.Atoi(id)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid job ID"})
-			return
-		}
-
-		// Get the job details
-		var details struct {
-			Origin           string
-			Destination      string
-			DepartureDateStart time.Time
-			DepartureDateEnd   time.Time
-			ReturnDateStart   sql.NullTime
-			ReturnDateEnd     sql.NullTime
-			TripLength       sql.NullInt32
-			Adults           int
-			Children         int
-			InfantsLap       int
-			InfantsSeat      int
-			TripType         string
-			Class            string
-			Stops            string
-		}
-
-		err = db.GetDB().QueryRow(
-			`SELECT origin, destination, departure_date_start, departure_date_end, 
-			return_date_start, return_date_end, trip_length, adults, children, 
-			infants_lap, infants_seat, trip_type, class, stops 
-			FROM job_details WHERE job_id = $1`,
-			jobID,
-		).Scan(
-			&details.Origin, &details.Destination, &details.DepartureDateStart, &details.DepartureDateEnd,
-			&details.ReturnDateStart, &details.ReturnDateEnd, &details.TripLength, &details.Adults, &details.Children,
-			&details.InfantsLap, &details.InfantsSeat, &details.TripType, &details.Class, &details.Stops,
-		)
-
-		if err != nil {
-			if err == sql.ErrNoRows {
-				c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})
-				return
-			}
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		// Create a bulk search payload
-		payload := worker.BulkSearchPayload{
-			Origins:           []string{details.Origin},
-			Destinations:      []string{details.Destination},
-			DepartureDateFrom: details.DepartureDateStart,
-			DepartureDateTo:   details.DepartureDateEnd,
-			Adults:            details.Adults,
-			Children:          details.Children,
-			InfantsLap:        details.InfantsLap,
-			InfantsSeat:       details.InfantsSeat,
-			TripType:          details.TripType,
-			Class:             details.Class,
-			Stops:             details.Stops,
-			Currency:          "USD", // Default currency
-		}
-
-		// Add optional fields if present
-		if details.ReturnDateStart.Valid {
-			payload.ReturnDateFrom = details.ReturnDateStart.Time
-		}
-		if details.ReturnDateEnd.Valid {
-			payload.ReturnDateTo = details.ReturnDateEnd.Time
-		}
-		if details.TripLength.Valid {
-			payload.TripLength = int(details.TripLength.Int32)
-		}
-
-		// Enqueue the job
-		jobQueueID, err := q.Enqueue(c.Request.Context(), "bulk_search", payload)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		// Update the last run time
-		_, err = db.GetDB().Exec(
-			"UPDATE scheduled_jobs SET last_run = NOW() WHERE id = $1",
-			jobID,
-		)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		c.JSON(http.StatusAccepted, gin.H{
-			"job_id":  jobQueueID,
-			"message": "Job triggered successfully",
-		})
-	}
-}
-
-// enableJob returns a handler for enabling a job
-func enableJob(db *db.PostgresDB) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		id := c.Param("id")
-		jobID, err := strconv.Atoi(id)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid job ID"})
-			return
-		}
-
-		result, err := db.GetDB().Exec(
-			"UPDATE scheduled_jobs SET enabled = true, updated_at = NOW() WHERE id = $1",
-			jobID,
-		)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		// Check if the job was found
-		rowsAffected, err := result.RowsAffected()
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		if rowsAffected == 0 {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})
-			return
-		}
-
-		c.JSON(http.StatusOK, gin.H{"message": "Job enabled successfully"})
-	}
-}
-
-// disableJob returns a handler for disabling a job
-func disableJob(db *db.PostgresDB) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		id := c.Param("id")
-		jobID, err := strconv.Atoi(id)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid job ID"})
-			return
-		}
-
-		result, err := db.GetDB().Exec(
-			"UPDATE scheduled_jobs SET enabled = false, updated_at = NOW() WHERE id = $1",
-			jobID,
-		)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		// Check if the job was found
-		rowsAffected, err := result.RowsAffected()
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		if rowsAffected == 0 {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})
-			return
-		}
-
-		c.JSON(http.StatusOK, gin.H{"message": "Job disabled successfully"})
-	}
-}
-
-// getWorkerStatus returns a handler for getting worker status
-func getWorkerStatus(workerManager *worker.Manager) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "running"})
-	}
-}
-
 // createBulkSearch returns a handler for creating a bulk flight search
 func createBulkSearch(q queue.Queue) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -1418,6 +843,22 @@ func createBulkSearch(q queue.Queue) gin.HandlerFunc {
 	}
 }
 
+// updateJob returns a handler for updating a job
+func updateJob(db *db.PostgresDB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		id := c.Param("id")
+		jobID, err := strconv.Atoi(id)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid job ID"})
+			return
+		}
+
+		var req JobRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
 		// Begin a transaction
 		tx, err := db.GetDB().Begin()
 		if err != nil {
@@ -1432,13 +873,12 @@ func createBulkSearch(q queue.Queue) gin.HandlerFunc {
 			req.Name, req.CronExpression, jobID,
 		)
 
-
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
 
-		// Insert the job details
+		// Update the job details
 		_, err = tx.Exec(
 			`UPDATE job_details SET origin = $1, destination = $2, departure_date_start = $3, departure_date_end = $4, 
 			return_date_start = $5, return_date_end = $6, trip_length = $7, adults = $8, children = $9, 
@@ -1460,10 +900,30 @@ func createBulkSearch(q queue.Queue) gin.HandlerFunc {
 			return
 		}
 
-		c.JSON(http.StatusCreated, gin.H{
-			"id":      id,
+		c.JSON(http.StatusOK, gin.H{
+			"id":      jobID,
 			"message": "Job updated successfully",
 		})
+	}
+}
+
+// getQueueStatus returns a handler for getting the status of the queue
+func getQueueStatus(q queue.Queue) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Get stats for all queue types
+		queueTypes := []string{"flight_search", "bulk_search"}
+		allStats := make(map[string]map[string]int64)
+
+		for _, queueType := range queueTypes {
+			stats, err := q.GetQueueStats(c.Request.Context(), queueType)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			allStats[queueType] = stats
+		}
+
+		c.JSON(http.StatusOK, allStats)
 	}
 }
 
@@ -1505,20 +965,20 @@ func getJobById(db *db.PostgresDB) gin.HandlerFunc {
 
 		// Get the job details
 		var details struct {
-			Origin           string
-			Destination      string
+			Origin             string
+			Destination        string
 			DepartureDateStart time.Time
 			DepartureDateEnd   time.Time
-			ReturnDateStart   sql.NullTime
-			ReturnDateEnd     sql.NullTime
-			TripLength       sql.NullInt32
-			Adults           int
-			Children         int
-			InfantsLap       int
-			InfantsSeat      int
-			TripType         string
-			Class            string
-			Stops            string
+			ReturnDateStart    sql.NullTime
+			ReturnDateEnd      sql.NullTime
+			TripLength         sql.NullInt32
+			Adults             int
+			Children           int
+			InfantsLap         int
+			InfantsSeat        int
+			TripType           string
+			Class              string
+			Stops              string
 		}
 
 		err = db.GetDB().QueryRow(
@@ -1547,17 +1007,17 @@ func getJobById(db *db.PostgresDB) gin.HandlerFunc {
 			"created_at":      job.CreatedAt,
 			"updated_at":      job.UpdatedAt,
 			"details": map[string]interface{}{
-				"origin":              details.Origin,
-				"destination":         details.Destination,
+				"origin":               details.Origin,
+				"destination":          details.Destination,
 				"departure_date_start": details.DepartureDateStart,
 				"departure_date_end":   details.DepartureDateEnd,
-				"adults":              details.Adults,
-				"children":            details.Children,
-				"infants_lap":         details.InfantsLap,
-				"infants_seat":        details.InfantsSeat,
-				"trip_type":           details.TripType,
-				"class":               details.Class,
-				"stops":               details.Stops,
+				"adults":               details.Adults,
+				"children":             details.Children,
+				"infants_lap":          details.InfantsLap,
+				"infants_seat":         details.InfantsSeat,
+				"trip_type":            details.TripType,
+				"class":                details.Class,
+				"stops":                details.Stops,
 			},
 		}
 
@@ -1578,342 +1038,5 @@ func getJobById(db *db.PostgresDB) gin.HandlerFunc {
 		}
 
 		c.JSON(http.StatusOK, jobMap)
-	}
-}
-
-// updateJob returns a handler for updating a job
-func updateJob(db *db.PostgresDB) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		id := c.Param("id")
-		jobID, err := strconv.Atoi(id)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid job ID"})
-			return
-		}
-
-		var req JobRequest
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-
-		// Begin a transaction
-		tx, err := db.GetDB().Begin()
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		defer tx.Rollback()
-
-		// Insert the job
-		var jobID int
-		err = tx.QueryRow(
-			`INSERT INTO scheduled_jobs (name, cron_expression, enabled) 
-			VALUES ($1, $2, $3) RETURNING id`,
-			req.Name, req.CronExpression, true,
-		).Scan(&jobID)
-
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		// Insert the job details
-		_, err = tx.Exec(
-			`INSERT INTO job_details 
-			(job_id, origin, destination, departure_date_start, departure_date_end, 
-			return_date_start, return_date_end, trip_length, adults, children, 
-			infants_lap, infants_seat, trip_type, class, stops) 
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
-			jobID, req.Origin, req.Destination, req.DateStart, req.DateEnd,
-			req.ReturnDateStart, req.ReturnDateEnd, req.TripLength, req.Adults, req.Children,
-			req.InfantsLap, req.InfantsSeat, req.TripType, req.Class, req.Stops,
-		)
-
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		// Commit the transaction
-		if err := tx.Commit(); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		c.JSON(http.StatusCreated, gin.H{
-			"id":      jobID,
-			"message": "Job created successfully",
-		})
-	}
-}
-
-// deleteJob returns a handler for deleting a job
-func deleteJob(db *db.PostgresDB) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		id := c.Param("id")
-		jobID, err := strconv.Atoi(id)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid job ID"})
-			return
-		}
-
-		// Begin a transaction
-		tx, err := db.GetDB().Begin()
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		defer tx.Rollback()
-
-		// Delete the job details
-		_, err = tx.Exec("DELETE FROM job_details WHERE job_id = $1", jobID)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		// Delete the job
-		result, err := tx.Exec("DELETE FROM scheduled_jobs WHERE id = $1", jobID)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		// Check if the job was found
-		rowsAffected, err := result.RowsAffected()
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		if rowsAffected == 0 {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})
-			return
-		}
-
-		// Commit the transaction
-		if err := tx.Commit(); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		c.JSON(http.StatusOK, gin.H{"message": "Job deleted successfully"})
-	}
-}
-
-// runJob returns a handler for manually triggering a job
-func runJob(q queue.Queue, db *db.PostgresDB) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		id := c.Param("id")
-		jobID, err := strconv.Atoi(id)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid job ID"})
-			return
-		}
-
-		// Get the job details
-		var details struct {
-			Origin           string
-			Destination      string
-			DepartureDateStart time.Time
-			DepartureDateEnd   time.Time
-			ReturnDateStart   sql.NullTime
-			ReturnDateEnd     sql.NullTime
-			TripLength       sql.NullInt32
-			Adults           int
-			Children         int
-			InfantsLap       int
-			InfantsSeat      int
-			TripType         string
-			Class            string
-			Stops            string
-		}
-
-		err = db.GetDB().QueryRow(
-			`SELECT origin, destination, departure_date_start, departure_date_end, 
-			return_date_start, return_date_end, trip_length, adults, children, 
-			infants_lap, infants_seat, trip_type, class, stops 
-			FROM job_details WHERE job_id = $1`,
-			jobID,
-		).Scan(
-			&details.Origin, &details.Destination, &details.DepartureDateStart, &details.DepartureDateEnd,
-			&details.ReturnDateStart, &details.ReturnDateEnd, &details.TripLength, &details.Adults, &details.Children,
-			&details.InfantsLap, &details.InfantsSeat, &details.TripType, &details.Class, &details.Stops,
-		)
-
-		if err != nil {
-			if err == sql.ErrNoRows {
-				c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})
-				return
-			}
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		// Create a bulk search payload
-		payload := worker.BulkSearchPayload{
-			Origins:           []string{details.Origin},
-			Destinations:      []string{details.Destination},
-			DepartureDateFrom: details.DepartureDateStart,
-			DepartureDateTo:   details.DepartureDateEnd,
-			Adults:            details.Adults,
-			Children:          details.Children,
-			InfantsLap:        details.InfantsLap,
-			InfantsSeat:       details.InfantsSeat,
-			TripType:          details.TripType,
-			Class:             details.Class,
-			Stops:             details.Stops,
-			Currency:          "USD", // Default currency
-		}
-
-		// Add optional fields if present
-		if details.ReturnDateStart.Valid {
-			payload.ReturnDateFrom = details.ReturnDateStart.Time
-		}
-		if details.ReturnDateEnd.Valid {
-			payload.ReturnDateTo = details.ReturnDateEnd.Time
-		}
-		if details.TripLength.Valid {
-			payload.TripLength = int(details.TripLength.Int32)
-		}
-
-		// Enqueue the job
-		jobQueueID, err := q.Enqueue(c.Request.Context(), "bulk_search", payload)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		// Update the last run time
-		_, err = db.GetDB().Exec(
-			"UPDATE scheduled_jobs SET last_run = NOW() WHERE id = $1",
-			jobID,
-		)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		c.JSON(http.StatusAccepted, gin.H{
-			"job_id":  jobQueueID,
-			"message": "Job triggered successfully",
-		})
-	}
-}
-
-// enableJob returns a handler for enabling a job
-func enableJob(db *db.PostgresDB) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		id := c.Param("id")
-		jobID, err := strconv.Atoi(id)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid job ID"})
-			return
-		}
-
-		result, err := db.GetDB().Exec(
-			"UPDATE scheduled_jobs SET enabled = true, updated_at = NOW() WHERE id = $1",
-			jobID,
-		)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		// Check if the job was found
-		rowsAffected, err := result.RowsAffected()
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		if rowsAffected == 0 {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})
-			return
-		}
-
-		c.JSON(http.StatusOK, gin.H{"message": "Job enabled successfully"})
-	}
-}
-
-// disableJob returns a handler for disabling a job
-func disableJob(db *db.PostgresDB) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		id := c.Param("id")
-		jobID, err := strconv.Atoi(id)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid job ID"})
-			return
-		}
-
-		result, err := db.GetDB().Exec(
-			"UPDATE scheduled_jobs SET enabled = false, updated_at = NOW() WHERE id = $1",
-			jobID,
-		)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		// Check if the job was found
-		rowsAffected, err := result.RowsAffected()
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		if rowsAffected == 0 {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})
-			return
-		}
-
-		c.JSON(http.StatusOK, gin.H{"message": "Job disabled successfully"})
-	}
-}
-
-// getWorkerStatus returns a handler for getting worker status
-func getWorkerStatus(workerManager *worker.Manager) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "running"})
-	}
-}
-
-// createBulkSearch returns a handler for creating a bulk flight search
-func createBulkSearch(q queue.Queue) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		var req BulkSearchRequest
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-
-		// Create a worker payload
-		payload := worker.BulkSearchPayload{
-			Origins:           req.Origins,
-			Destinations:      req.Destinations,
-			DepartureDateFrom: req.DepartureDateFrom,
-			DepartureDateTo:   req.DepartureDateTo,
-			ReturnDateFrom:    req.ReturnDateFrom,
-			ReturnDateTo:      req.ReturnDateTo,
-			TripLength:        req.TripLength,
-			Adults:            req.Adults,
-			Children:          req.Children,
-			InfantsLap:        req.InfantsLap,
-			InfantsSeat:       req.InfantsSeat,
-			TripType:          req.TripType,
-			Class:             req.Class,
-			Stops:             req.Stops,
-			Currency:          req.Currency,
-		}
-
-		// Enqueue the job
-		jobID, err := q.Enqueue(c.Request.Context(), "bulk_search", payload)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		c.JSON(http.StatusAccepted, gin.H{
-			"job_id":  jobID,
-			"message": "Bulk flight search job created successfully",
-		})
 	}
 }
