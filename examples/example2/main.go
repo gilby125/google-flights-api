@@ -10,7 +10,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/krisukox/google-flights-api/flights"
+	"github.com/gilby125/google-flights-api/flights"
 	"golang.org/x/text/currency"
 	"golang.org/x/text/language"
 )
