@@ -29,6 +29,12 @@ async function initAdminPanel() {
     // Add event listeners
     elements.refreshBtn.addEventListener('click', refreshData);
     elements.saveJobBtn.addEventListener('click', saveJob);
+    
+    // Initialize Bootstrap modals
+    const newJobModalEl = document.getElementById('newJobModal');
+    if (newJobModalEl) {
+        new bootstrap.Modal(newJobModalEl);
+    }
 
     // Load initial data
     await refreshData();
@@ -173,11 +179,27 @@ async function loadSearchCounts() {
     }
 }
 
+// Validate cron expression format
+function validateCronExpression(cronExpr) {
+    const parts = cronExpr.trim().split(/\s+/);
+    if (parts.length !== 5) {
+        return false;
+    }
+    return true;
+}
+
 // Save a new job
 async function saveJob() {
     // Validate form
     if (!elements.newJobForm.checkValidity()) {
         elements.newJobForm.reportValidity();
+        return;
+    }
+
+    // Get and validate cron expression
+    const cronExpr = document.getElementById('cronExpression').value;
+    if (!validateCronExpression(cronExpr)) {
+        alert('Invalid cron expression format. Please use the format: minute hour day month weekday');
         return;
     }
     
@@ -225,8 +247,8 @@ async function saveJob() {
         // Show success message
         showAlert('Job created successfully!', 'success');
         
-        // Refresh jobs data
-        await loadJobs();
+        // Refresh all data to update jobs, queue status, and workers
+        await refreshData();
     } catch (error) {
         console.error('Error creating job:', error);
         showAlert(`Error creating job: ${error.message}`, 'danger');
@@ -246,7 +268,7 @@ async function runJob(jobId) {
         }
         
         showAlert('Job started successfully!', 'success');
-        await loadJobs();
+        await refreshData();
     } catch (error) {
         console.error('Error running job:', error);
         showAlert(`Error running job: ${error.message}`, 'danger');

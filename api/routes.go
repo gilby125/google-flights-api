@@ -47,15 +47,15 @@ func RegisterRoutes(router *gin.Engine, postgresDB *db.PostgresDB, neo4jDB *db.N
 		{
 			// Job routes
 			admin.GET("/jobs", listJobs(postgresDB))
-			admin.POST("/jobs", createJob(postgresDB))
+			admin.POST("/jobs", createJob(postgresDB, workerManager))
 			admin.GET("/jobs/:id", getJobById(postgresDB))
-			admin.PUT("/jobs/:id", updateJob(postgresDB))
-			admin.DELETE("/jobs/:id", deleteJob(postgresDB))
+			admin.PUT("/jobs/:id", updateJob(postgresDB, workerManager))
+			admin.DELETE("/jobs/:id", deleteJob(postgresDB, workerManager))
 
 			// Job actions
 			admin.POST("/jobs/:id/run", runJob(queue, postgresDB))
-			admin.POST("/jobs/:id/enable", enableJob(postgresDB))
-			admin.POST("/jobs/:id/disable", disableJob(postgresDB))
+			admin.POST("/jobs/:id/enable", enableJob(postgresDB, workerManager))
+			admin.POST("/jobs/:id/disable", disableJob(postgresDB, workerManager))
 
 			// Worker and queue status
 			admin.GET("/workers", getWorkerStatus(workerManager))

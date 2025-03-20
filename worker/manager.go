@@ -325,3 +325,8 @@ func (m *Manager) processBulkSearch(ctx context.Context, worker *Worker, session
 
 	return nil
 }
+
+// GetScheduler returns the scheduler instance
+func (m *Manager) GetScheduler() *Scheduler {
+	return m.scheduler
+}

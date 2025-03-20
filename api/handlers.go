@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gilby125/google-flights-api/db"
@@ -50,23 +51,23 @@ type BulkSearchRequest struct {
 
 // JobRequest represents a scheduled job request
 type JobRequest struct {
-	Name            string    `json:"name" binding:"required"`
-	CronExpression  string    `json:"cron_expression" binding:"required"`
-	Origin          string    `json:"origin" binding:"required"`
-	Destination     string    `json:"destination" binding:"required"`
-	DateStart       time.Time `json:"date_start" binding:"required"`
-	DateEnd         time.Time `json:"date_end" binding:"required"`
-	ReturnDateStart time.Time `json:"return_date_start,omitempty"`
-	ReturnDateEnd   time.Time `json:"return_date_end,omitempty"`
-	TripLength      int       `json:"trip_length,omitempty" binding:"min=0"`
-	Adults          int       `json:"adults" binding:"required,min=1"`
-	Children        int       `json:"children" binding:"min=0"`
-	InfantsLap      int       `json:"infants_lap" binding:"min=0"`
-	InfantsSeat     int       `json:"infants_seat" binding:"min=0"`
-	TripType        string    `json:"trip_type" binding:"required,oneof=one_way round_trip"`
-	Class           string    `json:"class" binding:"required,oneof=economy premium_economy business first"`
-	Stops           string    `json:"stops" binding:"required,oneof=nonstop one_stop two_stops any"`
-	Currency        string    `json:"currency" binding:"required,len=3"`
+	Name            string `json:"name" binding:"required"`
+	CronExpression  string `json:"cron_expression" binding:"required"`
+	Origin          string `json:"origin" binding:"required"`
+	Destination     string `json:"destination" binding:"required"`
+	DateStart       string `json:"date_start" binding:"required"`
+	DateEnd         string `json:"date_end" binding:"required"`
+	ReturnDateStart string `json:"return_date_start,omitempty"`
+	ReturnDateEnd   string `json:"return_date_end,omitempty"`
+	TripLength      int    `json:"trip_length,omitempty" binding:"min=0"`
+	Adults          int    `json:"adults" binding:"required,min=1"`
+	Children        int    `json:"children" binding:"min=0"`
+	InfantsLap      int    `json:"infants_lap" binding:"min=0"`
+	InfantsSeat     int    `json:"infants_seat" binding:"min=0"`
+	TripType        string `json:"trip_type" binding:"required,oneof=one_way round_trip"`
+	Class           string `json:"class" binding:"required,oneof=economy premium_economy business first"`
+	Stops           string `json:"stops" binding:"required,oneof=nonstop one_stop two_stops any"`
+	Currency        string `json:"currency" binding:"required,len=3"`
 }
 
 // getAirports returns a handler for getting all airports
@@ -408,7 +409,7 @@ func listSearches(db *db.PostgresDB) gin.HandlerFunc {
 }
 
 // deleteJob returns a handler for deleting a job
-func deleteJob(db *db.PostgresDB) gin.HandlerFunc {
+func deleteJob(db *db.PostgresDB, workerManager *worker.Manager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id := c.Param("id")
 		jobID, err := strconv.Atoi(id)
@@ -455,6 +456,10 @@ func deleteJob(db *db.PostgresDB) gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
+
+		// Remove the job from the scheduler
+		scheduler := workerManager.GetScheduler()
+		scheduler.RemoveJob(jobID)
 
 		c.JSON(http.StatusOK, gin.H{"message": "Job deleted successfully"})
 	}
@@ -561,7 +566,7 @@ func runJob(q queue.Queue, db *db.PostgresDB) gin.HandlerFunc {
 }
 
 // enableJob returns a handler for enabling a job
-func enableJob(db *db.PostgresDB) gin.HandlerFunc {
+func enableJob(db *db.PostgresDB, workerManager *worker.Manager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id := c.Param("id")
 		jobID, err := strconv.Atoi(id)
@@ -590,12 +595,27 @@ func enableJob(db *db.PostgresDB) gin.HandlerFunc {
 			return
 		}
 
+		// Get the job's cron expression
+		var cronExpr string
+		err = db.GetDB().QueryRow("SELECT cron_expression FROM scheduled_jobs WHERE id = $1", jobID).Scan(&cronExpr)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get job cron expression: " + err.Error()})
+			return
+		}
+
+		// Add the job to the scheduler
+		scheduler := workerManager.GetScheduler()
+		if err := scheduler.AddJob(jobID, cronExpr); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Job enabled in database but scheduling failed: " + err.Error()})
+			return
+		}
+
 		c.JSON(http.StatusOK, gin.H{"message": "Job enabled successfully"})
 	}
 }
 
 // disableJob returns a handler for disabling a job
-func disableJob(db *db.PostgresDB) gin.HandlerFunc {
+func disableJob(db *db.PostgresDB, workerManager *worker.Manager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id := c.Param("id")
 		jobID, err := strconv.Atoi(id)
@@ -742,12 +762,43 @@ func listJobs(db *db.PostgresDB) gin.HandlerFunc {
 }
 
 // createJob returns a handler for creating a new scheduled job
-func createJob(db *db.PostgresDB) gin.HandlerFunc {
+func createJob(db *db.PostgresDB, workerManager *worker.Manager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req JobRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
+		}
+
+		// Parse date strings to time.Time objects
+		dateStart, err := time.Parse("2006-01-02", req.DateStart)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid date_start format. Use YYYY-MM-DD: " + err.Error()})
+			return
+		}
+
+		dateEnd, err := time.Parse("2006-01-02", req.DateEnd)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid date_end format. Use YYYY-MM-DD: " + err.Error()})
+			return
+		}
+
+		// Parse optional return dates if provided
+		var returnDateStart, returnDateEnd time.Time
+		if req.ReturnDateStart != "" {
+			returnDateStart, err = time.Parse("2006-01-02", req.ReturnDateStart)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid return_date_start format. Use YYYY-MM-DD: " + err.Error()})
+				return
+			}
+		}
+
+		if req.ReturnDateEnd != "" {
+			returnDateEnd, err = time.Parse("2006-01-02", req.ReturnDateEnd)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid return_date_end format. Use YYYY-MM-DD: " + err.Error()})
+				return
+			}
 		}
 
 		// Begin a transaction
@@ -758,12 +809,19 @@ func createJob(db *db.PostgresDB) gin.HandlerFunc {
 		}
 		defer tx.Rollback()
 
+		// Validate cron expression
+		parts := strings.Fields(req.CronExpression)
+		if len(parts) != 5 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid cron expression format. Must have 5 space-separated fields: minute hour day month weekday"})
+			return
+		}
+
 		// Insert the job
 		var jobID int
 		err = tx.QueryRow(
 			`INSERT INTO scheduled_jobs (name, cron_expression, enabled) 
 			VALUES ($1, $2, $3) RETURNING id`,
-			req.Name, req.CronExpression, true,
+			req.Name, strings.Join(parts, " "), true,
 		).Scan(&jobID)
 
 		if err != nil {
@@ -778,8 +836,8 @@ func createJob(db *db.PostgresDB) gin.HandlerFunc {
 			return_date_start, return_date_end, trip_length, adults, children, 
 			infants_lap, infants_seat, trip_type, class, stops) 
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
-			jobID, req.Origin, req.Destination, req.DateStart, req.DateEnd,
-			req.ReturnDateStart, req.ReturnDateEnd, req.TripLength, req.Adults, req.Children,
+			jobID, req.Origin, req.Destination, dateStart, dateEnd,
+			returnDateStart, returnDateEnd, req.TripLength, req.Adults, req.Children,
 			req.InfantsLap, req.InfantsSeat, req.TripType, req.Class, req.Stops,
 		)
 
@@ -794,9 +852,16 @@ func createJob(db *db.PostgresDB) gin.HandlerFunc {
 			return
 		}
 
+		// Schedule the job using the scheduler
+		scheduler := workerManager.GetScheduler()
+		if err := scheduler.AddJob(jobID, req.CronExpression); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Job created in database but scheduling failed: " + err.Error()})
+			return
+		}
+
 		c.JSON(http.StatusCreated, gin.H{
 			"id":      jobID,
-			"message": "Job created successfully",
+			"message": "Job created and scheduled successfully",
 		})
 	}
 }
@@ -844,7 +909,7 @@ func createBulkSearch(q queue.Queue) gin.HandlerFunc {
 }
 
 // updateJob returns a handler for updating a job
-func updateJob(db *db.PostgresDB) gin.HandlerFunc {
+func updateJob(db *db.PostgresDB, workerManager *worker.Manager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id := c.Param("id")
 		jobID, err := strconv.Atoi(id)
@@ -900,9 +965,16 @@ func updateJob(db *db.PostgresDB) gin.HandlerFunc {
 			return
 		}
 
+		// Update the job schedule using the scheduler
+		scheduler := workerManager.GetScheduler()
+		if err := scheduler.UpdateJob(jobID, req.CronExpression); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Job updated in database but rescheduling failed: " + err.Error()})
+			return
+		}
+
 		c.JSON(http.StatusOK, gin.H{
 			"id":      jobID,
-			"message": "Job updated successfully",
+			"message": "Job updated and rescheduled successfully",
 		})
 	}
 }
