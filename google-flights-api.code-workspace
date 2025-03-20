@@ -1,0 +1,12 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"name": "SSH FS - root@192.168.7.10",
+			"uri": "ssh://root@192.168.7.10/"
+		}
+	],
+	"settings": {}
+}

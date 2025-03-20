@@ -45,112 +45,201 @@ func (p *PostgresDB) GetDB() *sql.DB {
 
 // InitSchema initializes the database schema
 func (p *PostgresDB) InitSchema() error {
-	// Create tables if they don't exist
-	_, err := p.db.Exec(`
-		-- Airports table
-		CREATE TABLE IF NOT EXISTS airports (
-			code VARCHAR(3) PRIMARY KEY,
-			name VARCHAR(255) NOT NULL,
-			city VARCHAR(255) NOT NULL,
-			country VARCHAR(255) NOT NULL,
-			latitude DECIMAL(10, 6),
-			longitude DECIMAL(10, 6)
-		);
+    // Create tables in the correct order to respect foreign key constraints
+    
+    // First create airports table
+    _, err := p.db.Exec(`
+        CREATE TABLE IF NOT EXISTS airports (
+            id SERIAL PRIMARY KEY,
+            code VARCHAR(3) UNIQUE NOT NULL,
+            name VARCHAR(255) NOT NULL,
+            city VARCHAR(100) NOT NULL,
+            country VARCHAR(100) NOT NULL,
+            latitude DOUBLE PRECISION NOT NULL,
+            longitude DOUBLE PRECISION NOT NULL,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        )
+    `)
+    if err != nil {
+        return fmt.Errorf("failed to create airports table: %w", err)
+    }
+    
+    // Then create airlines table
+    _, err = p.db.Exec(`
+        CREATE TABLE IF NOT EXISTS airlines (
+            id SERIAL PRIMARY KEY,
+            code VARCHAR(3) UNIQUE NOT NULL,
+            name VARCHAR(255) NOT NULL,
+            country VARCHAR(100) NOT NULL,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        )
+    `)
+    if err != nil {
+        return fmt.Errorf("failed to create airlines table: %w", err)
+    }
+    
+    // Only after both tables above are created, create the flights table
+    _, err = p.db.Exec(`
+        CREATE TABLE IF NOT EXISTS flights (
+            id SERIAL PRIMARY KEY,
+            flight_number VARCHAR(10) NOT NULL,
+            airline_id INTEGER REFERENCES airlines(id),
+            origin_id INTEGER REFERENCES airports(id),
+            destination_id INTEGER REFERENCES airports(id),
+            departure_time TIMESTAMP WITH TIME ZONE NOT NULL,
+            arrival_time TIMESTAMP WITH TIME ZONE NOT NULL,
+            duration INTEGER NOT NULL,
+            distance INTEGER,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        )
+    `)
+    if err != nil {
+        return fmt.Errorf("failed to create flights table: %w", err)
+    }
+    
+    // Create flight_prices table
+    _, err = p.db.Exec(`
+        CREATE TABLE IF NOT EXISTS flight_prices (
+            id SERIAL PRIMARY KEY,
+            flight_id INTEGER REFERENCES flights(id),
+            price DECIMAL(10, 2) NOT NULL,
+            currency VARCHAR(3) NOT NULL,
+            cabin_class VARCHAR(20) NOT NULL,
+            search_date TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        )
+    `)
+    if err != nil {
+        return fmt.Errorf("failed to create flight_prices table: %w", err)
+    }
 
-		-- Airlines table
-		CREATE TABLE IF NOT EXISTS airlines (
-			code VARCHAR(3) PRIMARY KEY,
-			name VARCHAR(255) NOT NULL,
-			country VARCHAR(255)
-		);
+    // Create flight_segments table
+    _, err = p.db.Exec(`
+        CREATE TABLE IF NOT EXISTS flight_segments (
+            id SERIAL PRIMARY KEY,
+            flight_id INTEGER REFERENCES flights(id),
+            segment_number INTEGER NOT NULL,
+            origin_id INTEGER REFERENCES airports(id),
+            destination_id INTEGER REFERENCES airports(id),
+            departure_time TIMESTAMP WITH TIME ZONE NOT NULL,
+            arrival_time TIMESTAMP WITH TIME ZONE NOT NULL,
+            duration INTEGER NOT NULL,
+            airline_id INTEGER REFERENCES airlines(id),
+            flight_number VARCHAR(10) NOT NULL,
+            aircraft_type VARCHAR(50),
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        )
+    `)
+    if err != nil {
+        return fmt.Errorf("failed to create flight_segments table: %w", err)
+    }
 
-		-- Search queries table
-		CREATE TABLE IF NOT EXISTS search_queries (
-			id SERIAL PRIMARY KEY,
-			origin VARCHAR(3) NOT NULL,
-			destination VARCHAR(3) NOT NULL,
-			departure_date DATE NOT NULL,
-			return_date DATE,
-			adults INT DEFAULT 1,
-			children INT DEFAULT 0,
-			infants_lap INT DEFAULT 0,
-			infants_seat INT DEFAULT 0,
-			trip_type VARCHAR(20) NOT NULL,
-			class VARCHAR(20) NOT NULL,
-			stops VARCHAR(20) NOT NULL,
-			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			status VARCHAR(20) DEFAULT 'pending',
-			FOREIGN KEY (origin) REFERENCES airports(code),
-			FOREIGN KEY (destination) REFERENCES airports(code)
-		);
+    // Create scheduled_jobs table
+    _, err = p.db.Exec(`
+        CREATE TABLE IF NOT EXISTS scheduled_jobs (
+            id SERIAL PRIMARY KEY,
+            name VARCHAR(100) NOT NULL,
+            cron_expression VARCHAR(100) NOT NULL,
+            enabled BOOLEAN DEFAULT TRUE,
+            last_run TIMESTAMP WITH TIME ZONE,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        )
+    `)
+    if err != nil {
+        return fmt.Errorf("failed to create scheduled_jobs table: %w", err)
+    }
 
-		-- Flight offers table
-		CREATE TABLE IF NOT EXISTS flight_offers (
-			id SERIAL PRIMARY KEY,
-			search_query_id INT NOT NULL,
-			price DECIMAL(10, 2) NOT NULL,
-			currency VARCHAR(3) NOT NULL,
-			departure_date DATE NOT NULL,
-			return_date DATE,
-			total_duration INT NOT NULL,
-			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (search_query_id) REFERENCES search_queries(id)
-		);
+    // Create job_details table
+    _, err = p.db.Exec(`
+        CREATE TABLE IF NOT EXISTS job_details (
+            id SERIAL PRIMARY KEY,
+            job_id INTEGER REFERENCES scheduled_jobs(id),
+            origin VARCHAR(3) NOT NULL,
+            destination VARCHAR(3) NOT NULL,
+            departure_date_start DATE NOT NULL,
+            departure_date_end DATE NOT NULL,
+            return_date_start DATE,
+            return_date_end DATE,
+            trip_length INTEGER,
+            adults INTEGER DEFAULT 1,
+            children INTEGER DEFAULT 0,
+            infants_lap INTEGER DEFAULT 0,
+            infants_seat INTEGER DEFAULT 0,
+            trip_type VARCHAR(20) DEFAULT 'round_trip',
+            class VARCHAR(20) DEFAULT 'economy',
+            stops VARCHAR(20) DEFAULT 'any',
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        )
+    `)
+    if err != nil {
+        return fmt.Errorf("failed to create job_details table: %w", err)
+    }
 
-		-- Flight segments table
-		CREATE TABLE IF NOT EXISTS flight_segments (
-			id SERIAL PRIMARY KEY,
-			flight_offer_id INT NOT NULL,
-			airline_code VARCHAR(3) NOT NULL,
-			flight_number VARCHAR(10) NOT NULL,
-			departure_airport VARCHAR(3) NOT NULL,
-			arrival_airport VARCHAR(3) NOT NULL,
-			departure_time TIMESTAMP NOT NULL,
-			arrival_time TIMESTAMP NOT NULL,
-			duration INT NOT NULL,
-			airplane VARCHAR(100),
-			legroom VARCHAR(50),
-			is_return BOOLEAN DEFAULT FALSE,
-			FOREIGN KEY (flight_offer_id) REFERENCES flight_offers(id),
-			FOREIGN KEY (airline_code) REFERENCES airlines(code),
-			FOREIGN KEY (departure_airport) REFERENCES airports(code),
-			FOREIGN KEY (arrival_airport) REFERENCES airports(code)
-		);
+    // Create search_results table
+    _, err = p.db.Exec(`
+        CREATE TABLE IF NOT EXISTS search_results (
+            id SERIAL PRIMARY KEY,
+            search_id UUID NOT NULL,
+            origin VARCHAR(3) NOT NULL,
+            destination VARCHAR(3) NOT NULL,
+            departure_date DATE NOT NULL,
+            return_date DATE,
+            adults INTEGER NOT NULL,
+            children INTEGER NOT NULL,
+            infants_lap INTEGER NOT NULL,
+            infants_seat INTEGER NOT NULL,
+            trip_type VARCHAR(20) NOT NULL,
+            class VARCHAR(20) NOT NULL,
+            stops VARCHAR(20) NOT NULL,
+            currency VARCHAR(3) NOT NULL,
+            min_price DECIMAL(10, 2),
+            max_price DECIMAL(10, 2),
+            search_time TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        )
+    `)
+    if err != nil {
+        return fmt.Errorf("failed to create search_results table: %w", err)
+    }
 
-		-- Scheduled jobs table
-		CREATE TABLE IF NOT EXISTS scheduled_jobs (
-			id SERIAL PRIMARY KEY,
-			name VARCHAR(255) NOT NULL,
-			cron_expression VARCHAR(100) NOT NULL,
-			enabled BOOLEAN DEFAULT TRUE,
-			last_run TIMESTAMP,
-			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-		);
+    // Create flight_offers table
+    _, err = p.db.Exec(`
+        CREATE TABLE IF NOT EXISTS flight_offers (
+            id SERIAL PRIMARY KEY,
+            search_id UUID NOT NULL,
+            price DECIMAL(10, 2) NOT NULL,
+            currency VARCHAR(3) NOT NULL,
+            airline_codes TEXT[] NOT NULL,
+            outbound_duration INTEGER NOT NULL,
+            outbound_stops INTEGER NOT NULL,
+            return_duration INTEGER,
+            return_stops INTEGER,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        )
+    `)
+    if err != nil {
+        return fmt.Errorf("failed to create flight_offers table: %w", err)
+    }
 
-		-- Job details table
-		CREATE TABLE IF NOT EXISTS job_details (
-			id SERIAL PRIMARY KEY,
-			job_id INT NOT NULL,
-			origin VARCHAR(3) NOT NULL,
-			destination VARCHAR(3) NOT NULL,
-			departure_date_start DATE NOT NULL,
-			departure_date_end DATE NOT NULL,
-			return_date_start DATE,
-			return_date_end DATE,
-			trip_length INT,
-			adults INT DEFAULT 1,
-			children INT DEFAULT 0,
-			infants_lap INT DEFAULT 0,
-			infants_seat INT DEFAULT 0,
-			trip_type VARCHAR(20) NOT NULL,
-			class VARCHAR(20) NOT NULL,
-			stops VARCHAR(20) NOT NULL,
-			FOREIGN KEY (job_id) REFERENCES scheduled_jobs(id),
-			FOREIGN KEY (origin) REFERENCES airports(code),
-			FOREIGN KEY (destination) REFERENCES airports(code)
-		);
-	`)
+    // Create indexes for better query performance
+    _, err = p.db.Exec(`
+        CREATE INDEX IF NOT EXISTS idx_airports_code ON airports(code);
+        CREATE INDEX IF NOT EXISTS idx_airlines_code ON airlines(code);
+        CREATE INDEX IF NOT EXISTS idx_flights_departure ON flights(departure_time);
+        CREATE INDEX IF NOT EXISTS idx_flights_arrival ON flights(arrival_time);
+        CREATE INDEX IF NOT EXISTS idx_flight_prices_search_date ON flight_prices(search_date);
+        CREATE INDEX IF NOT EXISTS idx_search_results_search_id ON search_results(search_id);
+        CREATE INDEX IF NOT EXISTS idx_flight_offers_search_id ON flight_offers(search_id);
+    `)
+    if err != nil {
+        return fmt.Errorf("failed to create indexes: %w", err)
+    }
 
-	return err
+    return nil
 }

@@ -152,7 +152,8 @@ var timeNow = time.Now
 func validateDate(date, returnDate time.Time) error {
 	now := timeNow().Truncate(time.Hour * 24)
 
-	if returnDate.Before(date) {
+	// Only validate returnDate if it's not a zero value (for one-way trips)
+	if !returnDate.IsZero() && returnDate.Before(date) {
 		return fmt.Errorf("returnDate is before date")
 	}
 	if date.Before(now) {

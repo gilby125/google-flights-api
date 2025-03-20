@@ -27,10 +27,12 @@ type Manager struct {
 	workerWg    sync.WaitGroup
 	flightCache map[string]*flights.Session
 	cacheMutex  sync.RWMutex
+	scheduler   *Scheduler
 }
 
 // NewManager creates a new worker manager
 func NewManager(queue queue.Queue, postgresDB *db.PostgresDB, neo4jDB *db.Neo4jDB, config config.WorkerConfig) *Manager {
+	scheduler := NewScheduler(queue, postgresDB)
 	return &Manager{
 		queue:       queue,
 		postgresDB:  postgresDB,
@@ -38,10 +40,11 @@ func NewManager(queue queue.Queue, postgresDB *db.PostgresDB, neo4jDB *db.Neo4jD
 		config:      config,
 		stopChan:    make(chan struct{}),
 		flightCache: make(map[string]*flights.Session),
+		scheduler:   scheduler,
 	}
 }
 
-// Start starts the worker pool
+// Start starts the worker pool and scheduler
 func (m *Manager) Start() {
 	log.Printf("Starting worker pool with %d workers", m.config.Concurrency)
 
@@ -56,11 +59,21 @@ func (m *Manager) Start() {
 		m.workerWg.Add(1)
 		go m.runWorker(i, worker)
 	}
+
+	// Start the scheduler
+	if err := m.scheduler.Start(); err != nil {
+		log.Printf("Warning: Failed to start scheduler: %v", err)
+	} else {
+		log.Println("Scheduler started successfully")
+	}
 }
 
-// Stop stops the worker pool
+// Stop stops the worker pool and scheduler
 func (m *Manager) Stop() {
-	log.Println("Stopping worker pool")
+	log.Println("Stopping worker pool and scheduler")
+
+	// Stop the scheduler
+	m.scheduler.Stop()
 
 	// Signal all workers to stop
 	close(m.stopChan)

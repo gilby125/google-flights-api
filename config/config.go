@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/joho/godotenv"
 )
 
 // Config holds all application configuration
@@ -54,6 +56,9 @@ type WorkerConfig struct {
 
 // Load loads configuration from environment variables
 func Load() (*Config, error) {
+	// Load .env file if it exists
+	_ = godotenv.Load()
+	
 	port := getEnv("PORT", "8080")
 	environment := getEnv("ENVIRONMENT", "development")
 	workerEnabled, _ := strconv.ParseBool(getEnv("WORKER_ENABLED", "true"))
