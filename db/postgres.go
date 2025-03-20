@@ -17,8 +17,7 @@ type PostgresDB struct {
 func NewPostgresDB(cfg config.PostgresConfig) (*PostgresDB, error) {
 	connStr := fmt.Sprintf(
 		"host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
-		cfg.Host, cfg.Port, cfg.User, cfg.Password, cfg.DBName, cfg.SSLMode,
-	)
+		cfg.Host, cfg.Port, cfg.User, cfg.Password, cfg.DBName, cfg.SSLMode)
 
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
@@ -151,29 +150,10 @@ func (p *PostgresDB) InitSchema() error {
         )
     `)
 
-	// Create search_queries table
-	_, err = p.db.Exec(`
-        CREATE TABLE IF NOT EXISTS search_queries (
-            id SERIAL PRIMARY KEY,
-            origin VARCHAR(3) NOT NULL,
-            destination VARCHAR(3) NOT NULL,
-            departure_date DATE NOT NULL,
-            return_date DATE,
-            adults INTEGER NOT NULL,
-            children INTEGER NOT NULL,
-            infants_lap INTEGER NOT NULL,
-            infants_seat INTEGER NOT NULL,
-            trip_type VARCHAR(20) NOT NULL,
-            class VARCHAR(20) NOT NULL,
-            stops VARCHAR(20) NOT NULL,
-            status VARCHAR(20) NOT NULL,
-            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-            updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-        )
-
 	if err != nil {
-		return fmt.Errorf("failed to create search_queries table: %w", err)
+		return fmt.Errorf("failed to create scheduled_jobs table: %w", err)
 	}
+
 	// Create job_details table
 	_, err = p.db.Exec(`
         CREATE TABLE IF NOT EXISTS job_details (

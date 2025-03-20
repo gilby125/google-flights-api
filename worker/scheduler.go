@@ -182,13 +182,13 @@ func (s *Scheduler) executeJob(jobID int) {
 	}
 
 	// Enqueue the job
-	// Line 185 needs to be fixed
-	jobIDStr, err := s.queue.Enqueue(context.Background(), "bulk_search", payload)
+	log.Printf("Job %d: Origin=%s, Destination=%s", jobID, job.Origin, job.Destination)
+	jobIDStr := fmt.Sprintf("%d", jobID)
+	_, err = s.queue.Enqueue(context.Background(), "bulk_search", payload)
 	if err != nil {
 		log.Printf("Error enqueueing bulk search job: %v", err)
 		return
 	}
-	// Use jobID as a string here
 	log.Printf("Enqueued bulk search job with ID: %s", jobIDStr)
 }
 
