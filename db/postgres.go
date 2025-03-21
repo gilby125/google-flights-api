@@ -44,6 +44,7 @@ func (p *PostgresDB) GetDB() *sql.DB {
 
 // InitSchema initializes the database schema
 func (p *PostgresDB) InitSchema() error {
+	fmt.Println("InitSchema called")
 	// Create tables in the correct order to respect foreign key constraints
 
 	// First create airports table
@@ -181,6 +182,101 @@ func (p *PostgresDB) InitSchema() error {
 		return fmt.Errorf("failed to create job_details table: %w", err)
 	}
 
+	// Drop flight_offers table if it exists - must be dropped before search_queries due to foreign key constraint
+	_, err = p.db.Exec(`DROP TABLE IF EXISTS flight_offers;`)
+	if err != nil {
+		return fmt.Errorf("failed to drop flight_offers table: %w", err)
+	}
+
+	// Drop search_results table if it exists - must be dropped before search_queries due to foreign key constraint
+	_, err = p.db.Exec(`DROP TABLE IF EXISTS search_results;`)
+	if err != nil {
+		return fmt.Errorf("failed to drop search_results table: %w", err)
+	}
+
+	// Drop search_queries table if it exists
+	_, err = p.db.Exec(`DROP TABLE IF EXISTS search_queries;`)
+	if err != nil {
+		return fmt.Errorf("failed to drop search_queries table: %w", err)
+	}
+
+	// Create search_queries table
+	_, err = p.db.Exec(`
+        CREATE TABLE IF NOT EXISTS search_queries (
+            id SERIAL PRIMARY KEY,
+            search_id UUID NOT NULL,
+            origin VARCHAR(3) NOT NULL,
+            destination VARCHAR(3) NOT NULL,
+            departure_date DATE NOT NULL,
+            return_date DATE,
+            adults INTEGER NOT NULL,
+            children INTEGER NOT NULL,
+            infants_lap INTEGER NOT NULL,
+            infants_seat INTEGER NOT NULL,
+            trip_type VARCHAR(20) NOT NULL,
+            class VARCHAR(20) NOT NULL,
+            stops VARCHAR(20) NOT NULL,
+            status VARCHAR(20) NOT NULL,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        )
+    `)
+	if err != nil {
+		return fmt.Errorf("failed to create search_queries table: %w", err)
+	}
+
+	// Create search_results table
+	_, err = p.db.Exec(`
+        CREATE TABLE IF NOT EXISTS search_results (
+            id SERIAL PRIMARY KEY,
+            search_id UUID NOT NULL,
+            origin VARCHAR(3) NOT NULL,
+            destination VARCHAR(3) NOT NULL,
+            departure_date DATE NOT NULL,
+            return_date DATE,
+            adults INTEGER NOT NULL,
+            children INTEGER NOT NULL,
+            infants_lap INTEGER NOT NULL,
+            infants_seat INTEGER NOT NULL,
+            trip_type VARCHAR(20) NOT NULL,
+            class VARCHAR(20) NOT NULL,
+            stops VARCHAR(20) NOT NULL,
+            currency VARCHAR(3) NOT NULL,
+            min_price DECIMAL(10, 2),
+            max_price DECIMAL(10, 2),
+            search_time TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        )
+    `)
+	if err != nil {
+		return fmt.Errorf("failed to create search_results table: %w", err)
+	}
+
+	// Create search_queries table
+	_, err = p.db.Exec(`
+        CREATE TABLE IF NOT EXISTS search_queries (
+            id SERIAL PRIMARY KEY,
+            search_id UUID NOT NULL,
+            origin VARCHAR(3) NOT NULL,
+            destination VARCHAR(3) NOT NULL,
+            departure_date DATE NOT NULL,
+            return_date DATE,
+            adults INTEGER NOT NULL,
+            children INTEGER NOT NULL,
+            infants_lap INTEGER NOT NULL,
+            infants_seat INTEGER NOT NULL,
+            trip_type VARCHAR(20) NOT NULL,
+            class VARCHAR(20) NOT NULL,
+            stops VARCHAR(20) NOT NULL,
+            status VARCHAR(20) NOT NULL,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        )
+    `)
+	if err != nil {
+		return fmt.Errorf("failed to create search_queries table: %w", err)
+	}
+
 	// Create search_results table
 	_, err = p.db.Exec(`
         CREATE TABLE IF NOT EXISTS search_results (
@@ -212,17 +308,21 @@ func (p *PostgresDB) InitSchema() error {
 	_, err = p.db.Exec(`
         CREATE TABLE IF NOT EXISTS flight_offers (
             id SERIAL PRIMARY KEY,
+            search_query_id INTEGER REFERENCES search_queries(id),
             search_id UUID NOT NULL,
+            departure_date DATE NOT NULL,
+            return_date DATE,
             price DECIMAL(10, 2) NOT NULL,
             currency VARCHAR(3) NOT NULL,
-            airline_codes TEXT[] NOT NULL,
-            outbound_duration INTEGER NOT NULL,
-            outbound_stops INTEGER NOT NULL,
-            return_duration INTEGER,
-            return_stops INTEGER,
-            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-        )
-    `)
+			airline_codes TEXT[] NOT NULL,
+			outbound_duration INTEGER NOT NULL,
+			outbound_stops INTEGER,
+			return_duration INTEGER,
+			return_stops INTEGER,
+			total_duration INTEGER,
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+		)
+	`)
 	if err != nil {
 		return fmt.Errorf("failed to create flight_offers table: %w", err)
 	}

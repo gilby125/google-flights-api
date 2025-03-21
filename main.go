@@ -22,11 +22,17 @@ import (
 )
 
 func main() {
+	// Log that the main function has been entered
+	log.Println("Entering main function")
+
 	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
+
+	// Log that the configuration has been loaded successfully
+	log.Println("Configuration loaded successfully")
 
 	// Initialize database connections
 	postgresDB, err := db.NewPostgresDB(cfg.PostgresConfig)
@@ -43,6 +49,7 @@ func main() {
 
 	// Initialize database schemas
 	log.Println("Initializing database schemas...")
+	log.Println("Entering InitSchema function")
 	if err := postgresDB.InitSchema(); err != nil {
 		log.Fatalf("Failed to initialize PostgreSQL schema: %v", err)
 	}
@@ -71,6 +78,9 @@ func main() {
 
 	// Initialize worker manager
 	workerManager := worker.NewManager(queue, postgresDB, neo4jDB, cfg.WorkerConfig)
+
+	// Log the value of cfg.WorkerEnabled
+	log.Printf("cfg.WorkerEnabled: %v", cfg.WorkerEnabled)
 
 	// Start worker pool if enabled
 	if cfg.WorkerEnabled {

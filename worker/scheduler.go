@@ -84,6 +84,9 @@ func (s *Scheduler) scheduleJob(jobID int, cronExpr string) error {
 		delete(s.jobs, jobID)
 	}
 
+	// Log the cron expression
+	log.Printf("Attempting to schedule job %d with cron expression: %s", jobID, cronExpr)
+
 	// Schedule the job
 	entryID, err := s.cron.AddFunc(cronExpr, func() {
 		s.executeJob(jobID)

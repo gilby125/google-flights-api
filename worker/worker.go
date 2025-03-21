@@ -3,9 +3,11 @@ package worker
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/gilby125/google-flights-api/flights"
+	"github.com/google/uuid"
 	"golang.org/x/text/currency"
 	"golang.org/x/text/language"
 
@@ -61,12 +63,14 @@ func (w *Worker) storeFlightOffers(ctx context.Context, payload FlightSearchPayl
 
 	// Insert the search query
 	var queryID int
+	searchID := uuid.New().String()
 	err = tx.QueryRowContext(
 		ctx,
 		`INSERT INTO search_queries 
-		(origin, destination, departure_date, return_date, adults, children, infants_lap, infants_seat, trip_type, class, stops, status) 
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) 
+		(search_id, origin, destination, departure_date, return_date, adults, children, infants_lap, infants_seat, trip_type, class, stops, status) 
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) 
 		RETURNING id`,
+		searchID,
 		payload.Origin,
 		payload.Destination,
 		payload.DepartureDate,
@@ -90,18 +94,42 @@ func (w *Worker) storeFlightOffers(ctx context.Context, payload FlightSearchPayl
 		// Insert the flight offer
 		var offerID int
 		totalDuration := int(offer.FlightDuration.Minutes())
+		var searchID string
+		err = tx.QueryRowContext(
+			ctx,
+			`SELECT search_id FROM search_queries WHERE id = $1`,
+			queryID,
+		).Scan(&searchID)
+		if err != nil {
+			return fmt.Errorf("failed to get search_id from search_queries: %w", err)
+		}
+		// Extract airline codes from the offer (using the first flight segment for now)
+		airlineCodes := []string{}
+		if len(offer.Flight) > 0 {
+			airlineCodes = append(airlineCodes, offer.Flight[0].FlightNumber[:2])
+		}
+
+		// Convert airlineCodes slice to PostgreSQL array string format
+		airlineCodesStr := "{" + strings.Join(airlineCodes, ",") + "}"
+
 		err = tx.QueryRowContext(
 			ctx,
 			`INSERT INTO flight_offers 
-			(search_query_id, price, currency, departure_date, return_date, total_duration) 
-			VALUES ($1, $2, $3, $4, $5, $6) 
+			(search_query_id, search_id, price, currency, departure_date, return_date, total_duration, airline_codes, outbound_duration, outbound_stops, return_duration, return_stops) 
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) 
 			RETURNING id`,
 			queryID,
+			searchID,
 			offer.Price,
 			payload.Currency,
 			offer.StartDate,
 			offer.ReturnDate,
 			totalDuration,
+			airlineCodesStr, // Use PostgreSQL array string here
+			totalDuration,   // Using totalDuration as placeholder for outbound_duration for now
+			0,               // Placeholder for outbound_stops
+			0,               // Placeholder for return_duration
+			0,               // Placeholder for return_stops
 		).Scan(&offerID)
 
 		if err != nil {
