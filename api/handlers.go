@@ -52,7 +52,6 @@ type BulkSearchRequest struct {
 // JobRequest represents a scheduled job request
 type JobRequest struct {
 	Name            string `json:"name" binding:"required"`
-	CronExpression  string `json:"cron_expression" binding:"required"`
 	Origin          string `json:"origin" binding:"required"`
 	Destination     string `json:"destination" binding:"required"`
 	DateStart       string `json:"date_start" binding:"required"`
@@ -68,6 +67,8 @@ type JobRequest struct {
 	Class           string `json:"class" binding:"required,oneof=economy premium_economy business first"`
 	Stops           string `json:"stops" binding:"required,oneof=nonstop one_stop two_stops any"`
 	Currency        string `json:"currency" binding:"required,len=3"`
+	Interval        string `json:"interval" binding:"required"`
+	Time            string `json:"time" binding:"required"`
 }
 
 // getAirports returns a handler for getting all airports

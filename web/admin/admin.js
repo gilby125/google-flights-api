@@ -62,22 +62,22 @@ async function refreshData() {
 async function loadJobs() {
     const response = await fetch(ENDPOINTS.JOBS);
     if (!response.ok) throw new Error('Failed to load jobs');
-    
+
     const jobs = await response.json();
-    
+
     // Update jobs count
     elements.jobsCount.textContent = jobs.length;
-    
+
     // Clear table
     elements.jobsTable.innerHTML = '';
-    
+
     // Add jobs to table
     jobs.forEach(job => {
         const row = document.createElement('tr');
         row.innerHTML = `
             <td>${job.id}</td>
             <td>${job.name}</td>
-            <td>${job.cron_expression}</td>
+            <td>${job.friendly_schedule}</td>
             <td>${job.origin} → ${job.destination}</td>
             <td>
                 <span class="badge ${job.enabled ? 'bg-success' : 'bg-secondary'}">
@@ -90,8 +90,8 @@ async function loadJobs() {
                     <button class="btn btn-outline-primary" onclick="runJob(${job.id})">
                         <i class="bi bi-play-fill"></i>
                     </button>
-                    <button class="btn btn-outline-${job.enabled ? 'warning' : 'success'}" 
-                            onclick="${job.enabled ? 'disableJob' : 'enableJob'}(${job.id})">
+                    <button class="btn btn-outline-${job.enabled ? 'warning' : 'success'}"
+                        onclick="${job.enabled ? 'disableJob' : 'enableJob'}(${job.id})">
                         <i class="bi bi-${job.enabled ? 'pause-fill' : 'check-lg'}"></i>
                     </button>
                     <button class="btn btn-outline-danger" onclick="deleteJob(${job.id})">
@@ -179,15 +179,6 @@ async function loadSearchCounts() {
     }
 }
 
-// Validate cron expression format
-function validateCronExpression(cronExpr) {
-    const parts = cronExpr.trim().split(/\s+/);
-    if (parts.length !== 5) {
-        return false;
-    }
-    return true;
-}
-
 // Save a new job
 async function saveJob() {
     // Validate form
@@ -196,17 +187,9 @@ async function saveJob() {
         return;
     }
 
-    // Get and validate cron expression
-    const cronExpr = document.getElementById('cronExpression').value;
-    if (!validateCronExpression(cronExpr)) {
-        alert('Invalid cron expression format. Please use the format: minute hour day month weekday');
-        return;
-    }
-    
     // Get form values
     const jobData = {
         name: document.getElementById('jobName').value,
-        cron_expression: document.getElementById('cronExpression').value,
         origin: document.getElementById('origin').value,
         destination: document.getElementById('destination').value,
         date_start: document.getElementById('dateStart').value,
@@ -220,9 +203,12 @@ async function saveJob() {
         children: parseInt(document.getElementById('children').value),
         infants_lap: parseInt(document.getElementById('infantsLap').value),
         infants_seat: parseInt(document.getElementById('infantsSeat').value),
-        currency: document.getElementById('currency').value
+        currency: document.getElementById('currency').value,
+        interval: document.getElementById('interval').value,
+        time: document.getElementById('time').value,
+        friendly_schedule: ''
     };
-    
+
     try {
         const response = await fetch(ENDPOINTS.JOBS, {
             method: 'POST',
@@ -231,22 +217,22 @@ async function saveJob() {
             },
             body: JSON.stringify(jobData)
         });
-        
+
         if (!response.ok) {
             const error = await response.json();
             throw new Error(error.error || 'Failed to create job');
         }
-        
+
         // Close modal and refresh data
         const modal = bootstrap.Modal.getInstance(document.getElementById('newJobModal'));
         modal.hide();
-        
+
         // Reset form
         elements.newJobForm.reset();
-        
+
         // Show success message
         showAlert('Job created successfully!', 'success');
-        
+
         // Refresh all data to update jobs, queue status, and workers
         await refreshData();
     } catch (error) {

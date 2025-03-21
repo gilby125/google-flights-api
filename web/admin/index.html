@@ -217,11 +217,24 @@
                                 <input type="text" class="form-control" id="jobName" required>
                             </div>
                             <div class="col-md-6">
-                                <label for="cronExpression" class="form-label">Cron Expression</label>
-                                <input type="text" class="form-control" id="cronExpression" placeholder="0 0 * * *" required>
-                                <small class="text-muted">Format: minute hour day month weekday</small>
+                                <label class="form-label">Schedule</label>
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <label for="interval" class="form-label">Interval</label>
+                                        <select class="form-select" id="interval" required>
+                                            <option value="daily">Daily</option>
+                                            <option value="weekly">Weekly</option>
+                                            <option value="monthly">Monthly</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label for="time" class="form-label">Time</label>
+                                        <input type="time" class="form-control" id="time" value="12:00" required>
+                                    </div>
+                                </div>
                             </div>
                         </div>
+                        
                         <div class="row mb-3">
                             <div class="col-md-6">
                                 <label for="origin" class="form-label">Origin</label>

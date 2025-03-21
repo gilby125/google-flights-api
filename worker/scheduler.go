@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -36,7 +37,7 @@ func NewScheduler(queue queue.Queue, postgresDB *db.PostgresDB) *Scheduler {
 func (s *Scheduler) Start() error {
 	// Load all enabled jobs from the database
 	rows, err := s.postgresDB.GetDB().Query(
-		"SELECT id, name, cron_expression FROM scheduled_jobs WHERE enabled = true",
+		"SELECT id, name, friendly_schedule FROM scheduled_jobs WHERE enabled = true",
 	)
 	if err != nil {
 		return fmt.Errorf("failed to load scheduled jobs: %w", err)
@@ -46,17 +47,17 @@ func (s *Scheduler) Start() error {
 	// Schedule each job
 	for rows.Next() {
 		var id int
-		var name, cronExpr string
-		if err := rows.Scan(&id, &name, &cronExpr); err != nil {
+		var name, friendlySchedule string
+		if err := rows.Scan(&id, &name, &friendlySchedule); err != nil {
 			return fmt.Errorf("failed to scan job row: %w", err)
 		}
 
-		if err := s.scheduleJob(id, cronExpr); err != nil {
+		if err := s.scheduleJobWithFriendlySchedule(id, friendlySchedule); err != nil {
 			log.Printf("Warning: Failed to schedule job %d (%s): %v", id, name, err)
 			continue
 		}
 
-		log.Printf("Scheduled job %d (%s) with cron expression: %s", id, name, cronExpr)
+		log.Printf("Scheduled job %d (%s) with schedule: %s", id, name, friendlySchedule)
 	}
 
 	// Start the cron scheduler
@@ -73,8 +74,8 @@ func (s *Scheduler) Stop() {
 	log.Println("Scheduler stopped")
 }
 
-// scheduleJob schedules a job with the given ID and cron expression
-func (s *Scheduler) scheduleJob(jobID int, cronExpr string) error {
+// scheduleJob schedules a job with the given ID and friendly schedule format
+func (s *Scheduler) scheduleJobWithFriendlySchedule(jobID int, friendlySchedule string) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -82,6 +83,11 @@ func (s *Scheduler) scheduleJob(jobID int, cronExpr string) error {
 	if entryID, exists := s.jobs[jobID]; exists {
 		s.cron.Remove(entryID)
 		delete(s.jobs, jobID)
+	}
+
+	cronExpr, err := s.parseFriendlySchedule(friendlySchedule)
+	if err != nil {
+		return fmt.Errorf("failed to parse friendly schedule '%s': %w", friendlySchedule, err)
 	}
 
 	// Log the cron expression
@@ -99,6 +105,139 @@ func (s *Scheduler) scheduleJob(jobID int, cronExpr string) error {
 	s.jobs[jobID] = entryID
 
 	return nil
+}
+
+func (s *Scheduler) parseFriendlySchedule(friendlySchedule string) (string, error) {
+	log.Printf("Parsing friendly schedule: %s", friendlySchedule)
+	if friendlySchedule == "" {
+		return "", fmt.Errorf("friendly schedule cannot be empty")
+	}
+
+	var n int
+	var err error
+	var hour, min, sec int
+
+	// every N minutes
+	var intervalMinutes int
+	n, err = fmt.Sscanf(friendlySchedule, "every %d minutes", &intervalMinutes)
+	if err == nil && n == 1 {
+		if intervalMinutes > 0 {
+			cronExpr := fmt.Sprintf("0 */%d * * *", intervalMinutes)
+			log.Printf("Parsed cron expression: %s", cronExpr)
+			return cronExpr, nil
+		}
+		return "", fmt.Errorf("invalid interval for minutes schedule")
+	}
+
+	// every N hours
+	var intervalHours int
+	n, err = fmt.Sscanf(friendlySchedule, "every %d hours", &intervalHours)
+	if err == nil && n == 1 {
+		if intervalHours > 0 {
+			cronExpr := fmt.Sprintf("0 0 */%d * *", intervalHours)
+			log.Printf("Parsed cron expression: %s", cronExpr)
+			return cronExpr, nil
+		}
+		return "", fmt.Errorf("invalid interval for hours schedule")
+	}
+
+	// daily at HH:mm:ss
+	n, err = fmt.Sscanf(friendlySchedule, "daily at %d:%d:%d", &hour, &min, &sec)
+	if err == nil && n == 3 {
+		if hour >= 0 && hour <= 23 && min >= 0 && min <= 59 && sec >= 0 && sec <= 59 {
+			cronExpr := fmt.Sprintf("%d %d %d * *", min, hour, "*", "*")
+			log.Printf("Parsed cron expression: %s", cronExpr)
+			return cronExpr, nil
+		}
+		return "", fmt.Errorf("invalid time format for daily schedule")
+	}
+
+	// daily at HH:mm
+	n, err = fmt.Sscanf(friendlySchedule, "daily at %d:%d", &hour, &min)
+	if err == nil && n == 2 {
+		if hour >= 0 && hour <= 23 && min >= 0 && min <= 59 {
+			cronExpr := fmt.Sprintf("0 %d %d * * *", min, hour)
+			log.Printf("Parsed cron expression: %s", cronExpr)
+			return cronExpr, nil
+		}
+		return "", fmt.Errorf("invalid time format for daily schedule")
+	}
+
+	// weekly on days at HH:mm:ss
+	var daysStr string
+	n, err = fmt.Sscanf(friendlySchedule, "weekly on %s at %d:%d:%d", &daysStr, &hour, &min, &sec)
+	if err == nil && n == 4 {
+		if hour >= 0 && hour <= 23 && min >= 0 && min <= 59 && sec >= 0 && sec <= 59 {
+			days := strings.ToLower(daysStr)
+			daysOfWeek := []string{}
+			for _, day := range strings.Split(days, ",") {
+				switch strings.TrimSpace(day) {
+				case "monday", "mon":
+					daysOfWeek = append(daysOfWeek, "mon")
+				case "tuesday", "tue":
+					daysOfWeek = append(daysOfWeek, "tue")
+				case "wednesday", "wed":
+					daysOfWeek = append(daysOfWeek, "wed")
+				case "thursday", "thu":
+					daysOfWeek = append(daysOfWeek, "thu")
+				case "friday", "fri":
+					daysOfWeek = append(daysOfWeek, "fri")
+				case "saturday", "sat":
+					daysOfWeek = append(daysOfWeek, "sat")
+				case "sunday", "sun":
+					daysOfWeek = append(daysOfWeek, "sun")
+				default:
+					return "", fmt.Errorf("invalid day of week: %s", day)
+				}
+			}
+			cronDays := strings.Join(daysOfWeek, ",")
+			cronExpr := fmt.Sprintf("%d %d %d * %s", min, hour, "*", cronDays)
+			log.Printf("Parsed cron expression: %s", cronExpr)
+			return cronExpr, nil
+		}
+		return "", fmt.Errorf("invalid time format for weekly schedule")
+	}
+
+	// weekly on days at HH:mm
+	n, err = fmt.Sscanf(friendlySchedule, "weekly on %s at %d:%d", &daysStr, &hour, &min)
+	if err == nil && n == 3 {
+		if hour >= 0 && hour <= 23 && min >= 0 && min <= 59 {
+			days := strings.ToLower(daysStr)
+			daysOfWeek := []string{}
+			for _, day := range strings.Split(days, ",") {
+				switch strings.TrimSpace(day) {
+				case "monday", "mon":
+					daysOfWeek = append(daysOfWeek, "mon")
+				case "tuesday", "tue":
+					daysOfWeek = append(daysOfWeek, "tue")
+				case "wednesday", "wed":
+					daysOfWeek = append(daysOfWeek, "wed")
+				case "thursday", "thu":
+					daysOfWeek = append(daysOfWeek, "thu")
+				case "friday", "fri":
+					daysOfWeek = append(daysOfWeek, "fri")
+				case "saturday", "sat":
+					daysOfWeek = append(daysOfWeek, "sat")
+				case "sunday", "sun":
+					daysOfWeek = append(daysOfWeek, "sun")
+				default:
+					return "", fmt.Errorf("invalid day of week: %s", day)
+				}
+			}
+			cronDays := strings.Join(daysOfWeek, ",")
+			cronExpr := fmt.Sprintf("0 %d %d * * %s", min, hour, cronDays)
+			log.Printf("Parsed cron expression: %s", cronExpr)
+			return cronExpr, nil
+		}
+		return "", fmt.Errorf("invalid time format for weekly schedule")
+	}
+	if err != nil && n != 0 {
+		return "", fmt.Errorf("failed to parse friendly schedule: %w", err)
+	}
+
+	// Add more formats here (e.g., monthly, yearly) as needed
+
+	return "", fmt.Errorf("unrecognized friendly schedule format")
 }
 
 // executeJob executes a job with the given ID
@@ -196,8 +335,8 @@ func (s *Scheduler) executeJob(jobID int) {
 }
 
 // AddJob adds a new job to the scheduler
-func (s *Scheduler) AddJob(jobID int, cronExpr string) error {
-	return s.scheduleJob(jobID, cronExpr)
+func (s *Scheduler) AddJob(jobID int, friendlySchedule string) error {
+	return s.scheduleJobWithFriendlySchedule(jobID, friendlySchedule)
 }
 
 // RemoveJob removes a job from the scheduler
@@ -213,6 +352,6 @@ func (s *Scheduler) RemoveJob(jobID int) {
 }
 
 // UpdateJob updates an existing job in the scheduler
-func (s *Scheduler) UpdateJob(jobID int, cronExpr string) error {
-	return s.scheduleJob(jobID, cronExpr)
+func (s *Scheduler) UpdateJob(jobID int, friendlySchedule string) error {
+	return s.scheduleJobWithFriendlySchedule(jobID, friendlySchedule)
 }
