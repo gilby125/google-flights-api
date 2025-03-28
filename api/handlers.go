@@ -69,6 +69,7 @@ type JobRequest struct {
 	Currency        string `json:"currency" binding:"required,len=3"`
 	Interval        string `json:"interval" binding:"required"`
 	Time            string `json:"time" binding:"required"`
+	CronExpression  string `json:"cron_expression" binding:"required"`
 }
 
 // getAirports returns a handler for getting all airports
