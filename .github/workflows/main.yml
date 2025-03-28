@@ -143,7 +143,33 @@ jobs:
         username: ${{ secrets.SWARM_USER }}
         key: ${{ secrets.SWARM_SSH_KEY }}
         script: |
+          # Capture current running version
+          PREV_IMAGE=$(docker service inspect --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}' flight-api_web)
+          echo "PREV_IMAGE=${PREV_IMAGE}" >> $GITHUB_ENV
+          
+          # Deploy new version
           docker stack deploy \
             --with-registry-auth \
             -c docker-compose.prod.yml \
             flight-api
+          
+          # Verify deployment health
+          MAX_RETRIES=3
+          RETRY_DELAY=30
+          for i in $(seq 1 $MAX_RETRIES); do
+            if docker service inspect --format '{{.UpdateStatus.State}}' flight-api_web | grep -q "completed"; then
+              echo "Deployment verified healthy"
+              exit 0
+            fi
+            echo "Waiting for healthy deployment (attempt $i/$MAX_RETRIES)"
+            sleep $RETRY_DELAY
+          done
+          
+          # Rollback if verification fails
+          echo "Deployment failed - rolling back to ${PREV_IMAGE}"
+          docker service update \
+            --image ${PREV_IMAGE} \
+            --rollback-parallelism 1 \
+            --update-delay 30s \
+            flight-api_web
+          exit 1
