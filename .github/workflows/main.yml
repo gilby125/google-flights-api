@@ -29,6 +29,12 @@ jobs:
         go test -p 4 -coverprofile=coverage.out ./...
         go tool cover -html=coverage.out -o coverage.html
 
+    - name: Check for vulnerabilities
+      run: |
+        go list -m all
+        go install golang.org/x/vuln/cmd/govulncheck@latest
+        govulncheck ./...
+
   docker-build:
     runs-on: ubuntu-latest
     needs: build-test
@@ -101,9 +107,33 @@ jobs:
         fail-build: true
         severity-cutoff: high
 
-  deploy-swarm:
+  deploy-kubernetes-staging:
     runs-on: ubuntu-latest
     needs: [docker-build, security-scan]
+    if: github.event_name == 'push'
+    permissions:
+      contents: read
+      deployments: write
+    environment: staging
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Configure Kubernetes
+      uses: azure/setup-kubectl@v3
+      with:
+        version: '1.27.3'
+
+    - name: Deploy to Staging
+      working-directory: kubernetes/manifests/staging
+      run: |
+        echo "${{ secrets.KUBECONFIG_DATA }}" | base64 -d > ${HOME}/.kube/config
+        kubectl apply -k .
+        kubectl rollout status deployment/flight-api-staging
+
+  deploy-swarm:
+    runs-on: ubuntu-latest
+    needs: [deploy-kubernetes-staging]
     if: github.event_name == 'push'
     steps:
     - name: Deploy to Docker Swarm
