@@ -131,9 +131,49 @@ jobs:
         kubectl apply -k .
         kubectl rollout status deployment/flight-api-staging
 
-  deploy-swarm:
+  performance-test:
     runs-on: ubuntu-latest
     needs: [deploy-kubernetes-staging]
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - name: Install hey
+      run: go install github.com/rakyll/hey@latest
+
+    - name: Run performance tests
+      env:
+        KUBECONFIG: ${{ secrets.KUBECONFIG_DATA }}
+      run: |
+        echo "Starting performance tests against staging..."
+        mkdir -p $HOME/.kube
+        echo "$KUBECONFIG" | base64 -d > $HOME/.kube/config
+        
+        STAGING_URL=$(kubectl get svc flight-api-staging -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+        
+        echo "Testing health endpoint:"
+        hey -n 1000 -c 50 http://$STAGING_URL:8080/healthz
+        
+        echo "Testing search endpoint:"
+        hey -n 5000 -c 100 -m POST \
+          -T "application/json" \
+          -D test/load/search_payload.json \
+          http://$STAGING_URL:8080/api/v1/search
+        
+        echo "Verifying latency thresholds:"
+        if ! hey -n 1000 -c 50 http://$STAGING_URL:8080/healthz | grep -q '95% in 500ms'; then
+          echo "Performance threshold exceeded!"
+          exit 1
+        fi
+
+  deploy-swarm:
+    runs-on: ubuntu-latest
+    needs: [deploy-kubernetes-staging, performance-test]
     if: github.event_name == 'push'
     steps:
     - name: Deploy to Docker Swarm

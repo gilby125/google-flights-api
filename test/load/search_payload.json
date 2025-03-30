@@ -1,0 +1,11 @@
+{
+  "origin": "JFK",
+  "destination": "LAX",
+  "departure_date": "2025-04-15",
+  "return_date": "2025-04-20",
+  "adults": 2,
+  "children": 1,
+  "infants": 0,
+  "cabin_class": "economy",
+  "currency": "USD"
+}
