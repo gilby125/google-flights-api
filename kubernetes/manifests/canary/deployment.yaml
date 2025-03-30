@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flights-api-canary
+  labels:
+    app: flights-api
+    track: canary
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: flights-api
+      track: canary
+  template:
+    metadata:
+      labels:
+        app: flights-api  
+        track: canary
+      annotations:
+        sidecar.istio.io/rewriteAppHTTPProbers: "true"
+    spec:
+      containers:
+      - name: api
+        image: ghcr.io/gilby/flights-api:${COMMIT_SHA}
+        envFrom:
+        - configMapRef:
+            name: flights-config
+        - secretRef:
+            name: flights-secrets
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits: 
+            memory: "512Mi"
+            cpu: "500m"

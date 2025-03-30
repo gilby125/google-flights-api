@@ -1,0 +1,29 @@
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: flights-api
+spec:
+  hosts:
+  - flights-api.prod.svc.cluster.local
+  http:
+  - route:
+    - destination:
+        host: flights-api.prod.svc.cluster.local
+        subset: stable
+      weight: 95
+    - destination:
+        host: flights-api.prod.svc.cluster.local  
+        subset: canary
+      weight: 5
+    headers:
+      request:
+        set:
+          x-canary-version: "${COMMIT_SHA}"
+  - match:
+    - headers:
+        x-canary-test:
+          exact: "true"
+    route:
+    - destination:
+        host: flights-api.prod.svc.cluster.local
+        subset: canary
