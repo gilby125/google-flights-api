@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flight-api
+  labels:
+    app: flight-api
+    tier: backend
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: flight-api
+  template:
+    metadata:
+      labels:
+        app: flight-api
+    spec:
+      securityContext:
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+      containers:
+      - name: api
+        image: flight-api:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+        envFrom:
+        - configMapRef:
+            name: flight-api-config
+        - secretRef:
+            name: postgres-credentials
+        volumeMounts:
+        - name: config-volume
+          mountPath: /app/config
+        - name: certs-volume
+          mountPath: /app/certs
+          readOnly: true
+        resources:
+          limits:
+            cpu: "1"
+            memory: 512Mi
+          requests:
+            cpu: "0.5"
+            memory: 256Mi
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+      volumes:
+      - name: config-volume
+        configMap:
+          name: flight-api-config
+      - name: certs-volume
+        secret:
+          secretName: flight-api-certs
