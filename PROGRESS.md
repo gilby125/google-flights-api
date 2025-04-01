@@ -40,7 +40,3 @@
     *   `test/mocks/postgres_mock.go`: Mocking for complex scenarios (nested rows, specific transaction errors) might need enhancement.
     *   `test/mocks/mocks.go`: Neo4j mock (`MockNeo4jResult`) needs refinement for realistic iteration simulation. Scheduler mock might be needed for job enable/disable tests.
 
-**Notes:**
-*   The goal is to systematically create a production-ready app.
-*   Prioritize getting an MVP running and tested first, then work on productionalizing and hardening after we have a running and tested app.
-*   The app should initially be self-hosted on Docker with future expansion to cloud or Kubernetes.
