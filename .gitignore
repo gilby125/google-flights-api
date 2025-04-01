@@ -41,3 +41,6 @@ tls/ca-*
 
 # Documentation files
 *.md
+PROGRESS.md
+planning.md
+README.md
