@@ -3,7 +3,110 @@ package flights
 import (
 	"testing"
 	"time"
+	"strings"
 )
+
+func TestFlightString(t *testing.T) {
+	// Use correct field names based on flights/types.go
+	f := Flight{
+		DepTime:        time.Date(2025, 3, 30, 15, 30, 0, 0, time.UTC),
+		ArrTime:        time.Date(2025, 3, 30, 18, 45, 0, 0, time.UTC),
+		DepAirportCode: "JFK",
+		ArrAirportCode: "LAX",
+		FlightNumber:   "AA123",
+		AirlineName:    "American Airlines",
+		DepCity:        "New York",
+		ArrCity:        "Los Angeles",
+		DepAirportName: "John F. Kennedy International Airport",
+		ArrAirportName: "Los Angeles International Airport",
+		Duration:       3*time.Hour + 15*time.Minute,
+		Airplane:       "Boeing 737",
+		Legroom:        "Average",
+	}
+
+	// Adjust expected substrings based on the actual String() method output and correct fields
+	expectedSubstrings := []string{
+		"DepAirportCode: JFK",
+		"DepAirportName: John F. Kennedy International Airport",
+		"DepCity: New York",
+		"ArrAirportName: Los Angeles International Airport",
+		"ArrAirportCode: LAX",
+		"ArrCity: Los Angeles",
+		"DepTime: 2025-03-30 15:30:00", // Check actual format
+		"ArrTime: 2025-03-30 18:45:00", // Check actual format
+		"Duration: 3h15m0s",           // Check actual format
+		"Airplane: Boeing 737",
+		"FlightNumber: AA123",
+		"AirlineName: American Airlines",
+		"Legroom: Average",
+	}
+	result := f.String()
+
+	for _, substr := range expectedSubstrings {
+		if !strings.Contains(result, substr) {
+			t.Errorf("String() output missing expected substring %q", substr)
+		}
+	}
+}
+
+func TestOfferString(t *testing.T) {
+	// Use correct field names based on flights/types.go
+	o := Offer{
+		StartDate:  time.Date(2025, 4, 10, 0, 0, 0, 0, time.UTC),
+		ReturnDate: time.Date(2025, 4, 17, 0, 0, 0, 0, time.UTC),
+		Price:      499.99,
+	}
+
+	output := o.String()
+	// Check against the actual String() format: "{YYYY-MM-DD YYYY-MM-DD Price}"
+	expected := "{2025-04-10 2025-04-17 499}" // Price is formatted as int in String()
+	if output != expected {
+		t.Errorf("Offer String() incorrect. Got: %q, Want: %q", output, expected)
+	}
+}
+
+func TestFullOfferString(t *testing.T) {
+	// Use correct field names based on flights/types.go
+	// FullOffer embeds Offer, so it has StartDate, ReturnDate, Price
+	fo := FullOffer{
+		Offer: Offer{
+			StartDate:  time.Date(2025, 5, 1, 0, 0, 0, 0, time.UTC),
+			ReturnDate: time.Date(2025, 5, 8, 0, 0, 0, 0, time.UTC),
+			Price:      799.99,
+		},
+		Flight: []Flight{
+			{DepAirportCode: "LHR", ArrAirportCode: "CDG", FlightNumber: "BA308"},
+		},
+		SrcAirportCode: "LHR",
+		DstAirportCode: "CDG",
+		SrcCity:        "London",
+		DstCity:        "Paris",
+		FlightDuration: 1*time.Hour + 15*time.Minute,
+	}
+
+	output := fo.String()
+	// Check for substrings based on the actual String() method
+	expectedSubstrings := []string{
+		"StartDate: 2025-05-01", // Check format
+		"ReturnDate: 2025-05-08", // Check format
+		"Price: 799",             // Price formatted as int
+		"Flight: [",              // Start of flight details
+		"DepAirportCode: LHR",
+		"ArrAirportCode: CDG",
+		"FlightNumber: BA308",
+		"SrcAirportCode: LHR",
+		"DstAirportCode: CDG",
+		"SrcCity: London",
+		"DstCity: Paris",
+		"FlightDuration: 1h15m0s", // Check format
+	}
+
+	for _, substr := range expectedSubstrings {
+		if !strings.Contains(output, substr) {
+			t.Errorf("FullOffer String() output missing expected substring %q in %q", substr, output)
+		}
+	}
+}
 
 const wrongAirportCode = "wrong"
 

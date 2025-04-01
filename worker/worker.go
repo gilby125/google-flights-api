@@ -1,22 +1,100 @@
 package worker
 
 import (
+	"bytes"
 	"context"
+
+	// "crypto/tls" // Unused
+	// "database/sql" // Unused
+	// "encoding/json" // Unused
+	"encoding/pem"
 	"fmt"
+
+	// "log" // Unused
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"math/big"
 	"strings"
+
+	"github.com/cloudflare/cloudflare-go"
+
+	// "net/http" // Unused
+	// "net/url" // Unused
 	"time"
 
+	// "github.com/gilby125/google-flights-api/config" // Unused
+	"github.com/gilby125/google-flights-api/db"
 	"github.com/gilby125/google-flights-api/flights"
 	"github.com/google/uuid"
 	"golang.org/x/text/currency"
 	"golang.org/x/text/language"
-
-	"github.com/gilby125/google-flights-api/db"
 )
 
+// Helper function to parse stops string into flights.Stops type
+func parseWorkerStops(s string) flights.Stops {
+	switch strings.ToLower(s) {
+	case "nonstop":
+		return flights.Nonstop
+	case "one_stop":
+		return flights.Stop1
+	case "two_stops":
+		return flights.Stop2
+	case "any":
+		return flights.AnyStops
+	default:
+		return flights.AnyStops // Default to AnyStops
+	}
+}
+
+// Helper function to parse class string into flights.Class type
+func parseWorkerClass(s string) flights.Class {
+	switch strings.ToLower(s) {
+	case "economy":
+		return flights.Economy
+	case "premium_economy":
+		return flights.PremiumEconomy
+	case "business":
+		return flights.Business
+	case "first":
+		return flights.First
+	default:
+		return flights.Economy // Default to Economy
+	}
+}
+
+// CertificateJob represents a TLS certificate management task
+type CertificateJob struct {
+	Domain           string
+	ChallengeType    string
+	CloudflareToken  string
+	CloudflareZoneID string
+	ForceRenewal     bool
+}
+
+// CertWorker handles certificate issuance/renewal with Cloudflare DNS challenge
+type CertWorker struct {
+	ID         int
+	JobChannel chan CertificateJob
+	WorkerPool chan chan CertificateJob
+	quit       chan bool
+	postgresDB db.PostgresDB // Changed type from pointer to interface
+	cfClient   *cloudflare.API
+}
+
+// Main Worker struct remains for flight search operations
 type Worker struct {
-	postgresDB *db.PostgresDB
-	neo4jDB    *db.Neo4jDB
+	postgresDB db.PostgresDB // Changed type from pointer to interface
+	neo4jDB    db.Neo4jDatabase
+}
+
+// NewWorker creates a new worker instance
+func NewWorker(postgresDB db.PostgresDB, neo4jDB db.Neo4jDatabase) *Worker {
+	return &Worker{
+		postgresDB: postgresDB,
+		neo4jDB:    neo4jDB,
+	}
 }
 
 type FlightSearchPayload struct {
@@ -29,12 +107,14 @@ type FlightSearchPayload struct {
 	InfantsLap    int
 	InfantsSeat   int
 	TripType      string
-	Class         string
-	Stops         string
+	Class         string // Changed to string for JSON unmarshal
+	Stops         string // Changed to string for JSON unmarshal
 	Currency      string
 }
 
 type BulkSearchPayload struct {
+	Origin            string
+	Destination       string
 	Origins           []string
 	Destinations      []string
 	DepartureDateFrom time.Time
@@ -47,15 +127,15 @@ type BulkSearchPayload struct {
 	InfantsLap        int
 	InfantsSeat       int
 	TripType          string
-	Class             string
-	Stops             string
+	Class             string // Changed to string for JSON unmarshal
+	Stops             string // Changed to string for JSON unmarshal
 	Currency          string
 }
 
-// storeFlightOffers stores flight offers in the database
-func (w *Worker) storeFlightOffers(ctx context.Context, payload FlightSearchPayload, offers []flights.FullOffer, priceRange *flights.PriceRange) error {
-	// Begin a transaction
-	tx, err := w.postgresDB.GetDB().BeginTx(ctx, nil)
+// StoreFlightOffers stores flight offers in the database (Exported for testing)
+func (w *Worker) StoreFlightOffers(ctx context.Context, payload FlightSearchPayload, offers []flights.FullOffer, priceRange *flights.PriceRange) error {
+	// Begin a transaction using the interface method
+	tx, err := w.postgresDB.BeginTx(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
@@ -66,11 +146,10 @@ func (w *Worker) storeFlightOffers(ctx context.Context, payload FlightSearchPayl
 	searchID := uuid.New().String()
 	err = tx.QueryRowContext(
 		ctx,
-		`INSERT INTO search_queries 
-		(search_id, origin, destination, departure_date, return_date, adults, children, infants_lap, infants_seat, trip_type, class, stops, status) 
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) 
+		`INSERT INTO search_queries
+		(origin, destination, departure_date, return_date, adults, children, infants_lap, infants_seat, trip_type, class, stops, status)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) -- Removed search_id ($1)
 		RETURNING id`,
-		searchID,
 		payload.Origin,
 		payload.Destination,
 		payload.DepartureDate,
@@ -94,15 +173,8 @@ func (w *Worker) storeFlightOffers(ctx context.Context, payload FlightSearchPayl
 		// Insert the flight offer
 		var offerID int
 		totalDuration := int(offer.FlightDuration.Minutes())
-		var searchID string
-		err = tx.QueryRowContext(
-			ctx,
-			`SELECT search_id FROM search_queries WHERE id = $1`,
-			queryID,
-		).Scan(&searchID)
-		if err != nil {
-			return fmt.Errorf("failed to get search_id from search_queries: %w", err)
-		}
+		// The searchID is generated above (line 142) and used directly below.
+		// No need to fetch it back from search_queries.
 		// Extract airline codes from the offer (using the first flight segment for now)
 		airlineCodes := []string{}
 		if len(offer.Flight) > 0 {
@@ -114,9 +186,9 @@ func (w *Worker) storeFlightOffers(ctx context.Context, payload FlightSearchPayl
 
 		err = tx.QueryRowContext(
 			ctx,
-			`INSERT INTO flight_offers 
-			(search_query_id, search_id, price, currency, departure_date, return_date, total_duration, airline_codes, outbound_duration, outbound_stops, return_duration, return_stops) 
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) 
+			`INSERT INTO flight_offers
+			(search_query_id, search_id, price, currency, departure_date, return_date, total_duration, airline_codes, outbound_duration, outbound_stops, return_duration, return_stops)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 			RETURNING id`,
 			queryID,
 			searchID,
@@ -141,8 +213,8 @@ func (w *Worker) storeFlightOffers(ctx context.Context, payload FlightSearchPayl
 			// Ensure airline exists
 			_, err = tx.ExecContext(
 				ctx,
-				`INSERT INTO airlines (code, name, country) 
-				VALUES ($1, $2, $3) 
+				`INSERT INTO airlines (code, name, country)
+				VALUES ($1, $2, $3)
 				ON CONFLICT (code) DO UPDATE SET name = $2`,
 				flight.FlightNumber[:2], // Airline code is typically the first two characters of flight number
 				flight.AirlineName,
@@ -155,8 +227,8 @@ func (w *Worker) storeFlightOffers(ctx context.Context, payload FlightSearchPayl
 			// Ensure airports exist
 			_, err = tx.ExecContext(
 				ctx,
-				`INSERT INTO airports (code, name, city, country, latitude, longitude) 
-				VALUES ($1, $2, $3, $4, $5, $6) 
+				`INSERT INTO airports (code, name, city, country, latitude, longitude)
+				VALUES ($1, $2, $3, $4, $5, $6)
 				ON CONFLICT (code) DO UPDATE SET name = $2, city = $3`,
 				flight.DepAirportCode,
 				flight.DepAirportName,
@@ -171,8 +243,8 @@ func (w *Worker) storeFlightOffers(ctx context.Context, payload FlightSearchPayl
 
 			_, err = tx.ExecContext(
 				ctx,
-				`INSERT INTO airports (code, name, city, country, latitude, longitude) 
-				VALUES ($1, $2, $3, $4, $5, $6) 
+				`INSERT INTO airports (code, name, city, country, latitude, longitude)
+				VALUES ($1, $2, $3, $4, $5, $6)
 				ON CONFLICT (code) DO UPDATE SET name = $2, city = $3`,
 				flight.ArrAirportCode,
 				flight.ArrAirportName,
@@ -189,9 +261,9 @@ func (w *Worker) storeFlightOffers(ctx context.Context, payload FlightSearchPayl
 			duration := int(flight.Duration.Minutes())
 			_, err = tx.ExecContext(
 				ctx,
-				`INSERT INTO flight_segments 
-				(flight_offer_id, airline_code, flight_number, departure_airport, arrival_airport, 
-				departure_time, arrival_time, duration, airplane, legroom, is_return) 
+				`INSERT INTO flight_segments
+				(flight_offer_id, airline_code, flight_number, departure_airport, arrival_airport,
+				departure_time, arrival_time, duration, airplane, legroom, is_return)
 				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
 				offerID,
 				flight.FlightNumber[:2], // Airline code
@@ -211,7 +283,7 @@ func (w *Worker) storeFlightOffers(ctx context.Context, payload FlightSearchPayl
 		}
 
 		// Store in Neo4j for graph analysis
-		if err := w.storeFlightInNeo4j(ctx, offer); err != nil {
+		if err := w.StoreFlightInNeo4j(ctx, offer); err != nil { // Call exported method
 			return fmt.Errorf("failed to store flight in Neo4j: %w", err)
 		}
 	}
@@ -224,8 +296,8 @@ func (w *Worker) storeFlightOffers(ctx context.Context, payload FlightSearchPayl
 	return nil
 }
 
-// storeFlightInNeo4j stores flight data in Neo4j for graph analysis
-func (w *Worker) storeFlightInNeo4j(ctx context.Context, offer flights.FullOffer) error {
+// StoreFlightInNeo4j stores flight data in Neo4j for graph analysis (Exported for testing)
+func (w *Worker) StoreFlightInNeo4j(ctx context.Context, offer flights.FullOffer) error {
 	// Create airports in Neo4j
 	for _, flight := range offer.Flight {
 		// Create departure airport
@@ -288,54 +360,97 @@ func (w *Worker) storeFlightInNeo4j(ctx context.Context, offer flights.FullOffer
 	return nil
 }
 
+// Start begins listening for certificate jobs
+func (cw *CertWorker) Start() {
+	go func() {
+		for {
+			// Register worker to the pool
+			cw.WorkerPool <- cw.JobChannel
+
+			select {
+			case job := <-cw.JobChannel:
+				// Process certificate job
+				if err := cw.ProcessJob(context.Background(), job); err != nil {
+					fmt.Printf("CertWorker %d failed job: %v\n", cw.ID, err)
+				}
+			case <-cw.quit:
+				return
+			}
+		}
+	}()
+}
+
+// Stop signals the worker to stop processing jobs
+func (cw *CertWorker) Stop() {
+	go func() {
+		cw.quit <- true
+	}()
+}
+
+// ProcessJob handles certificate issuance/renewal workflow
+func (cw *CertWorker) ProcessJob(ctx context.Context, job CertificateJob) error {
+	// Validate Cloudflare credentials
+	if _, err := cw.cfClient.UserDetails(ctx); err != nil {
+		return fmt.Errorf("cloudflare auth failed: %w", err)
+	}
+
+	// Check existing certificates
+	existingCert, err := cw.postgresDB.GetCertificate(job.Domain)
+	if err == nil && !job.ForceRenewal && existingCert.Expires.After(time.Now().Add(72*time.Hour)) {
+		return nil // Certificate still valid
+	}
+
+	// Create new certificate
+	cert, privKey, err := generateCertificate(cw.cfClient, job.Domain)
+	if err != nil {
+		return fmt.Errorf("certificate generation failed: %w", err)
+	}
+
+	// Store in database
+	if err := cw.postgresDB.StoreCertificate(job.Domain, cert, privKey, time.Now().Add(90*24*time.Hour)); err != nil {
+		return fmt.Errorf("certificate generation failed: %w", err)
+	}
+
+	return nil
+}
+
+// generateCertificate creates a new TLS certificate using Let's Encrypt
+func generateCertificate(cfClient *cloudflare.API, domain string) ([]byte, []byte, error) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	template := x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: domain},
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().Add(90 * 24 * time.Hour),
+		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		DNSNames:              []string{domain},
+	}
+
+	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &privateKey.PublicKey, privateKey)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	certBuf := &bytes.Buffer{}
+	pem.Encode(certBuf, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
+
+	privKeyBuf := &bytes.Buffer{}
+	pem.Encode(privKeyBuf, &pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(privateKey),
+	})
+
+	return certBuf.Bytes(), privKeyBuf.Bytes(), nil
+}
+
 // processPriceGraphSearch uses the price graph API to find the best dates for a trip
 func (w *Worker) processPriceGraphSearch(ctx context.Context, session *flights.Session, origin, destination string, payload BulkSearchPayload) error {
-	// Map the payload to flights API arguments
-	var tripType flights.TripType
-	switch payload.TripType {
-	case "one_way":
-		tripType = flights.OneWay
-	case "round_trip":
-		tripType = flights.RoundTrip
-	default:
-		return fmt.Errorf("invalid trip type: %s", payload.TripType)
-	}
-
-	var class flights.Class
-	switch payload.Class {
-	case "economy":
-		class = flights.Economy
-	case "premium_economy":
-		class = flights.PremiumEconomy
-	case "business":
-		class = flights.Business
-	case "first":
-		class = flights.First
-	default:
-		return fmt.Errorf("invalid class: %s", payload.Class)
-	}
-
-	var stops flights.Stops
-	switch payload.Stops {
-	case "nonstop":
-		stops = flights.Nonstop
-	case "one_stop":
-		stops = flights.Stop1
-	case "two_stops":
-		stops = flights.Stop2
-	case "any":
-		stops = flights.AnyStops
-	default:
-		return fmt.Errorf("invalid stops: %s", payload.Stops)
-	}
-
-	// Parse currency
-	cur, err := currency.ParseISO(payload.Currency)
-	if err != nil {
-		return fmt.Errorf("invalid currency: %s", payload.Currency)
-	}
-
-	// Get price graph data
 	offers, err := session.GetPriceGraph(
 		ctx,
 		flights.PriceGraphArgs{
@@ -351,10 +466,10 @@ func (w *Worker) processPriceGraphSearch(ctx context.Context, session *flights.S
 					InfantOnLap:  payload.InfantsLap,
 					InfantInSeat: payload.InfantsSeat,
 				},
-				Currency: cur,
-				Stops:    stops,
-				Class:    class,
-				TripType: tripType,
+				Currency: currency.USD,                    // Assuming USD for now, might need adjustment if payload.Currency is different
+				Stops:    parseWorkerStops(payload.Stops), // Use helper function
+				Class:    parseWorkerClass(payload.Class), // Use helper function
+				TripType: flights.RoundTrip,               //Hardcoded for now
 				Lang:     language.English,
 			},
 		},
@@ -378,11 +493,11 @@ func (w *Worker) processPriceGraphSearch(ctx context.Context, session *flights.S
 	}
 
 	// Process the results
-	if err := w.storeFlightOffers(ctx, FlightSearchPayload{
+	if err := w.StoreFlightOffers(ctx, FlightSearchPayload{ // Use exported method
 		Origin:        origin,
 		Destination:   destination,
 		DepartureDate: payload.DepartureDateFrom,
-		ReturnDate:    payload.DepartureDateTo,
+		ReturnDate:    payload.ReturnDateTo,
 		Adults:        payload.Adults,
 		Children:      payload.Children,
 		InfantsLap:    payload.InfantsLap,

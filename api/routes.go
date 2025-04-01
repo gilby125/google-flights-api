@@ -11,7 +11,7 @@ import (
 )
 
 // RegisterRoutes registers all API routes
-func RegisterRoutes(router *gin.Engine, postgresDB *db.PostgresDB, neo4jDB *db.Neo4jDB, queue queue.Queue, workerManager *worker.Manager, cfg *config.Config) {
+func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Neo4jDB, queue queue.Queue, workerManager *worker.Manager, cfg *config.Config) { // Changed postgresDB type
 	// Setup middleware
 	router.Use(gin.Logger())
 	router.Use(gin.Recovery())
@@ -25,18 +25,18 @@ func RegisterRoutes(router *gin.Engine, postgresDB *db.PostgresDB, neo4jDB *db.N
 	v1 := router.Group("/api/v1")
 	{
 		// Airport routes
-		v1.GET("/airports", getAirports(postgresDB))
+		v1.GET("/airports", GetAirports(postgresDB))
 
 		// Airline routes
-		v1.GET("/airlines", getAirlines(postgresDB))
+		v1.GET("/airlines", GetAirlines(postgresDB))
 
 		// Flight search routes
-		v1.POST("/search", createSearch(queue))
-		v1.GET("/search/:id", getSearchById(postgresDB))
-		v1.GET("/search", listSearches(postgresDB))
+		v1.POST("/search", CreateSearch(queue))
+		v1.GET("/search/:id", GetSearchByID(postgresDB))
+		v1.GET("/search", ListSearches(postgresDB))
 
 		// Bulk search routes
-		v1.POST("/bulk-search", createBulkSearch(queue))
+		v1.POST("/bulk-search", CreateBulkSearch(queue))
 		v1.GET("/bulk-search/:id", getBulkSearchById(postgresDB))
 
 		// Price history routes
@@ -50,7 +50,7 @@ func RegisterRoutes(router *gin.Engine, postgresDB *db.PostgresDB, neo4jDB *db.N
 			admin.POST("/jobs", createJob(postgresDB, workerManager))
 			admin.GET("/jobs/:id", getJobById(postgresDB))
 			admin.PUT("/jobs/:id", updateJob(postgresDB, workerManager))
-			admin.DELETE("/jobs/:id", deleteJob(postgresDB, workerManager))
+			admin.DELETE("/jobs/:id", DeleteJob(postgresDB, workerManager))
 
 			// Job actions
 			admin.POST("/jobs/:id/run", runJob(queue, postgresDB))
@@ -58,8 +58,8 @@ func RegisterRoutes(router *gin.Engine, postgresDB *db.PostgresDB, neo4jDB *db.N
 			admin.POST("/jobs/:id/disable", disableJob(postgresDB, workerManager))
 
 			// Worker and queue status
-			admin.GET("/workers", getWorkerStatus(workerManager))
-			admin.GET("/queue", getQueueStatus(queue))
+			admin.GET("/workers", GetWorkerStatus(workerManager))
+			admin.GET("/queue", GetQueueStatus(queue))
 		}
 	}
 

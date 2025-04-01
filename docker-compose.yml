@@ -1,9 +1,28 @@
 services:
   api:
     build: .
+    # Pass necessary environment variables explicitly
     environment:
+      - PORT=8080 # Or keep default
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - WORKER_ENABLED=${WORKER_ENABLED:-true}
       - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=flights
+      - DB_PASSWORD=${DB_PASSWORD} # Must be set in host env or .env
+      - DB_NAME=flights
+      - DB_SSLMODE=${DB_SSLMODE:-disable} # Defaulting to disable for local docker
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD} # Must be set in host env or .env
       - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-} # Optional
+      # Worker defaults are likely fine, add if needed
+    depends_on: # Ensure DBs and Redis start before the API
+      - postgres
+      - neo4j
+      - redis
     networks:
       - backend
     labels:
@@ -35,23 +54,41 @@ services:
     image: postgres:15-alpine
     environment:
       - POSTGRES_USER=flights
-      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_PASSWORD=Lokifish123 # Explicitly set password for container
       - POSTGRES_DB=flights
+    ports:
+    - "5432:5432" # Expose PostgreSQL port to host
     volumes:
-      - pgdata:/var/lib/postgresql/data
+    - pgdata:/var/lib/postgresql/data
     networks:
       - backend
 
   redis:
     image: redis:7-alpine
+    ports:
+    - "6379:6379" # Expose Redis port to host
     volumes:
-      - redisdata:/data
+    - redisdata:/data
+    networks:
+      - backend
+
+  neo4j:
+    image: neo4j:5 # Use an appropriate version
+    environment:
+      - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD:-changeme} # Set default if not provided
+      - NEO4J_ACCEPT_LICENSE_AGREEMENT=yes # Required for Enterprise in some cases, check image docs
+    ports:
+    - "7474:7474" # HTTP (already exposed)
+    - "7687:7687" # Bolt (already exposed)
+    volumes:
+      - neo4jdata:/data
     networks:
       - backend
 
 volumes:
   pgdata:
   redisdata:
+  neo4jdata: # Add volume for Neo4j
 
 networks:
   backend:

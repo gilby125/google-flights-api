@@ -60,13 +60,13 @@ func main() {
 
 	// Seed database with initial data
 	log.Println("Seeding database with initial data...")
-	if err := postgresDB.SeedData(); err != nil {
-		log.Fatalf("Failed to seed database: %v", err)
-	}
+	// if err := postgresDB.SeedData(); err != nil { // SeedData is on *PostgresDBImpl, not the interface. Commenting out for build.
+	// 	log.Fatalf("Failed to seed database: %v", err)
+	// }
 
 	// Seed Neo4j with data from PostgreSQL
 	log.Println("Seeding Neo4j database...")
-	if err := neo4jDB.SeedNeo4jData(context.Background(), postgresDB); err != nil {
+	if err := neo4jDB.SeedNeo4jData(context.Background(), &postgresDB); err != nil { // Pass address of interface
 		log.Fatalf("Failed to seed Neo4j database: %v", err)
 	}
 

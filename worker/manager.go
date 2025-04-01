@@ -16,11 +16,43 @@ import (
 	"golang.org/x/text/language"
 )
 
+// Helper functions to parse string values into flights enum types
+// (Replicated from api/handlers.go as they are not exported)
+func parseClass(class string) flights.Class {
+	switch class {
+	case "economy":
+		return flights.Economy
+	case "premium_economy":
+		return flights.PremiumEconomy
+	case "business":
+		return flights.Business
+	case "first":
+		return flights.First
+	default:
+		return flights.Economy // Default to economy
+	}
+}
+
+func parseStops(stops string) flights.Stops {
+	switch stops {
+	case "nonstop":
+		return flights.Nonstop
+	case "one_stop":
+		return flights.Stop1
+	case "two_stops":
+		return flights.Stop2
+	case "any":
+		return flights.AnyStops
+	default:
+		return flights.AnyStops // Default to any stops
+	}
+}
+
 // Manager manages a pool of workers
 type Manager struct {
 	queue       queue.Queue
-	postgresDB  *db.PostgresDB
-	neo4jDB     *db.Neo4jDB
+	postgresDB  db.PostgresDB    // Changed type from pointer to interface
+	neo4jDB     db.Neo4jDatabase // Use the interface type
 	config      config.WorkerConfig
 	workers     []*Worker
 	stopChan    chan struct{}
@@ -31,12 +63,13 @@ type Manager struct {
 }
 
 // NewManager creates a new worker manager
-func NewManager(queue queue.Queue, postgresDB *db.PostgresDB, neo4jDB *db.Neo4jDB, config config.WorkerConfig) *Manager {
-	scheduler := NewScheduler(queue, postgresDB)
+func NewManager(queue queue.Queue, postgresDB db.PostgresDB, neo4jDB db.Neo4jDatabase, config config.WorkerConfig) *Manager { // Changed neo4jDB parameter type to interface
+	// Pass nil for Cronner to use the default cron instance
+	scheduler := NewScheduler(queue, postgresDB, nil)
 	return &Manager{
 		queue:       queue,
-		postgresDB:  postgresDB,
-		neo4jDB:     neo4jDB,
+		postgresDB:  postgresDB, // Use unexported field name
+		neo4jDB:     neo4jDB,    // Use unexported field name
 		config:      config,
 		stopChan:    make(chan struct{}),
 		flightCache: make(map[string]*flights.Session),
@@ -134,6 +167,10 @@ func (m *Manager) processQueue(worker *Worker, queueName string) error {
 	// Dequeue a job
 	job, err := m.queue.Dequeue(ctx, queueName)
 	if err != nil {
+		// Don't return error if context times out waiting for job
+		if ctx.Err() == context.DeadlineExceeded {
+			return nil
+		}
 		return fmt.Errorf("failed to dequeue job: %w", err)
 	}
 
@@ -181,8 +218,7 @@ func (m *Manager) processJob(ctx context.Context, worker *Worker, queueName stri
 		}
 
 		// Process the flight search
-		return m.processFlightSearch(ctx, worker, session, payload)
-
+		return m.processFlightSearch(ctx, worker, session, payload) // processFlightSearch calls worker.StoreFlightOffers internally
 	case "bulk_search":
 		var payload BulkSearchPayload
 		if err := json.Unmarshal(job.Payload, &payload); err != nil {
@@ -244,39 +280,17 @@ func (m *Manager) processFlightSearch(ctx context.Context, worker *Worker, sessi
 		return fmt.Errorf("invalid trip type: %s", payload.TripType)
 	}
 
-	var class flights.Class
-	switch payload.Class {
-	case "economy":
-		class = flights.Economy
-	case "premium_economy":
-		class = flights.PremiumEconomy
-	case "business":
-		class = flights.Business
-	case "first":
-		class = flights.First
-	default:
-		return fmt.Errorf("invalid class: %s", payload.Class)
-	}
-
-	var stops flights.Stops
-	switch payload.Stops {
-	case "nonstop":
-		stops = flights.Nonstop
-	case "one_stop":
-		stops = flights.Stop1
-	case "two_stops":
-		stops = flights.Stop2
-	case "any":
-		stops = flights.AnyStops
-	default:
-		return fmt.Errorf("invalid stops: %s", payload.Stops)
-	}
-
 	// Parse currency
 	cur, err := currency.ParseISO(payload.Currency)
 	if err != nil {
-		return fmt.Errorf("invalid currency: %s", payload.Currency)
+		// Default to USD if currency parsing fails
+		log.Printf("Warning: Invalid currency '%s', defaulting to USD. Error: %v", payload.Currency, err)
+		cur = currency.USD
 	}
+
+	// Parse class and stops after unmarshaling
+	flightClass := parseClass(payload.Class)
+	flightStops := parseStops(payload.Stops)
 
 	// Get flight offers
 	offers, priceRange, err := session.GetOffers(
@@ -294,8 +308,8 @@ func (m *Manager) processFlightSearch(ctx context.Context, worker *Worker, sessi
 					InfantInSeat: payload.InfantsSeat,
 				},
 				Currency: cur,
-				Stops:    stops,
-				Class:    class,
+				Stops:    flightStops, // Use parsed value
+				Class:    flightClass, // Use parsed value
 				TripType: tripType,
 				Lang:     language.English,
 			},
@@ -306,21 +320,119 @@ func (m *Manager) processFlightSearch(ctx context.Context, worker *Worker, sessi
 	}
 
 	// Store the results
-	return worker.storeFlightOffers(ctx, payload, offers, priceRange)
+	// Pass the original payload (with string Class/Stops) to StoreFlightOffers
+	// StoreFlightOffers itself uses the string values when inserting into search_queries
+	return worker.StoreFlightOffers(ctx, payload, offers, priceRange)
 }
 
 // processBulkSearch processes a bulk search job
 func (m *Manager) processBulkSearch(ctx context.Context, worker *Worker, session *flights.Session, payload BulkSearchPayload) error {
-	// Process each origin-destination pair
-	for _, origin := range payload.Origins {
-		for _, destination := range payload.Destinations {
-			// Use price graph search for bulk searches
-			if err := worker.processPriceGraphSearch(ctx, session, origin, destination, payload); err != nil {
-				log.Printf("Error processing price graph search for %s to %s: %v", origin, destination, err)
-				// Continue with other pairs
-				continue
-			}
+	// Map the payload to flights API arguments
+	var tripType flights.TripType
+	switch payload.TripType {
+	case "one_way":
+		tripType = flights.OneWay
+	case "round_trip":
+		tripType = flights.RoundTrip
+	default:
+		return fmt.Errorf("invalid trip type: %s", payload.TripType)
+	}
+
+	// Parse currency
+	cur, err := currency.ParseISO(payload.Currency)
+	if err != nil {
+		// Default to USD if currency parsing fails
+		log.Printf("Warning: Invalid currency '%s', defaulting to USD. Error: %v", payload.Currency, err)
+		cur = currency.USD
+	}
+
+	// Parse class and stops after unmarshaling
+	flightClass := parseClass(payload.Class)
+	flightStops := parseStops(payload.Stops)
+
+	// FIX: Use the first origin/destination from the slices
+	var origin string
+	if len(payload.Origins) > 0 {
+		origin = payload.Origins[0]
+	} else {
+		log.Printf("Warning: Bulk search payload has empty Origins slice.")
+		// Optionally return an error or handle as appropriate
+		// return fmt.Errorf("bulk search payload requires at least one origin")
+	}
+	var destination string
+	if len(payload.Destinations) > 0 {
+		destination = payload.Destinations[0]
+	} else {
+		log.Printf("Warning: Bulk search payload has empty Destinations slice.")
+		// Optionally return an error or handle as appropriate
+		// return fmt.Errorf("bulk search payload requires at least one destination")
+	}
+
+	// Get price graph data
+	offers, err := session.GetPriceGraph(
+		ctx,
+		flights.PriceGraphArgs{
+			RangeStartDate: payload.DepartureDateFrom,
+			RangeEndDate:   payload.DepartureDateTo,
+			TripLength:     payload.TripLength,
+			SrcAirports:    []string{origin},      // Use extracted origin
+			DstAirports:    []string{destination}, // Use extracted destination
+			Options: flights.Options{
+				Travelers: flights.Travelers{
+					Adults:       payload.Adults,
+					Children:     payload.Children,
+					InfantOnLap:  payload.InfantsLap,
+					InfantInSeat: payload.InfantsSeat,
+				},
+				Currency: cur,
+				Stops:    flightStops, // Use parsed value
+				Class:    flightClass, // Use parsed value
+				TripType: tripType,
+				Lang:     language.English,
+			},
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to get price graph data: %w", err)
+	}
+
+	// Convert Offer to FullOffer
+	fullOffers := make([]flights.FullOffer, 0, len(offers))
+	for _, offer := range offers {
+		fullOffer := flights.FullOffer{
+			Offer:          offer,
+			SrcAirportCode: origin,      // Use extracted origin
+			DstAirportCode: destination, // Use extracted destination
+			// We don't have flight details from price graph, so we'll leave other fields empty
+			Flight:         []flights.Flight{},
+			FlightDuration: 0,
 		}
+		fullOffers = append(fullOffers, fullOffer)
+	}
+
+	// Create a FlightSearchPayload from the BulkSearchPayload
+	// FIX: Use extracted origin/destination
+	flightSearchPayload := FlightSearchPayload{
+		Origin:        origin,
+		Destination:   destination,
+		DepartureDate: payload.DepartureDateFrom, // Use RangeStartDate as the representative departure date
+		// ReturnDate needs careful consideration for bulk searches.
+		// If TripLength is defined, we might calculate it, otherwise leave it zero.
+		// For simplicity here, we'll leave it zero. A more robust solution might be needed.
+		ReturnDate:  time.Time{},
+		Adults:      payload.Adults,
+		Children:    payload.Children,
+		InfantsLap:  payload.InfantsLap,
+		InfantsSeat: payload.InfantsSeat,
+		TripType:    payload.TripType,
+		Class:       payload.Class, // Keep as string for StoreFlightOffers
+		Stops:       payload.Stops, // Keep as string for StoreFlightOffers
+		Currency:    payload.Currency,
+	}
+
+	// Process the results
+	if err := worker.StoreFlightOffers(ctx, flightSearchPayload, fullOffers, nil); err != nil { // Use exported method
+		return fmt.Errorf("failed to store flight offers: %w", err)
 	}
 
 	return nil

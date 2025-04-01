@@ -1,101 +1,46 @@
-# Project Progress Tracker
+# Progress Report
 
-This document tracks the progress of the Google Flights API project implementation based on the architecture plan outlined in PROJECT_PLAN.md.
+## Current Status (2025-03-31)
+*   Core API handlers implemented (`api/handlers.go`).
+*   Database schemas defined (`db/postgres.go`, `db/neo4j.go`).
+*   Queue implementation exists (`queue/redis.go`).
+*   Worker and scheduler components exist (`worker/`).
+*   Docker setup exists (`Dockerfile`, `docker-compose.yml`), updated to include Neo4j service and basic API env vars.
+*   Refactoring for testability of DB interactions completed:
+    *   Updated `db.PostgresDB` and `db.Neo4jDatabase` interfaces.
+    *   Refactored `api/handlers.go` to use new DB interface methods.
+    *   Updated mocks in `test/mocks/` for new interfaces.
+*   Unit testing added for several API handlers (`test/unit/api/handlers_test.go`).
+*   Previous testing gaps identified (see below).
 
-## Core Components Status
+## Next Steps to Run the Application
+1.  **Verify/Document Environment Configuration:** Identify and document all required environment variables (Postgres credentials, Neo4j credentials, Redis URL/credentials, API keys, etc.) in `README.md`, based on `config/config.go`.
+2.  **Confirm Docker Compose Setup:** Double-check `docker-compose.yml` for correct service definitions, links, ports, and volumes for Postgres, Neo4j, Redis, and the Go app.
+3.  **Database Seeding:** Confirm if `db/seed.go` needs to be run initially and document the process in `README.md`.
+4.  **Build Process:** Document the command to build the Go application binary (e.g., `go build .`) in `README.md`.
+5.  **Running the App:** Document the command to start all services (e.g., `docker-compose up -d --build`) in `README.md`.
+6.  **Testing Connectivity:** Add steps to `README.md` to verify the application can connect to Postgres, Neo4j, and Redis after starting.
 
-### API Service
+## Known Issues/Blockers for Running
+*   Required environment variables (`DB_PASSWORD`, `NEO4J_PASSWORD`) need to be set by the user.
+*   Database seeding process (`db/seed.go`) needs confirmation and documentation.
+*   End-to-end run instructions in `README.md` need to be created/updated.
 
-- [x] Basic API structure setup (2023-07-15)
-- [x] Route registration (2023-07-15)
-- [x] Airport endpoints (2023-07-20)
-- [x] Airline endpoints (2023-07-20)
-- [x] Search endpoints structure (2023-07-25)
-- [ ] Complete search implementation
-- [ ] Bulk search implementation
-- [ ] Price history endpoints
+## Previously Identified Testing Gaps (Needs Prioritization)
+*   **Integration Tests:**
+    *   `test/integration/get_search_test.go`: Missing tests for database connection errors, input validation (long strings, special characters, SQL injection), and full response body validation.
+    *   `test/integration/search_results_test.go`: Missing tests for empty offers/segments, partial data, different currencies, and large number of offers/segments.
+    *   `test/integration/search_test.go`: Missing tests for invalid airport codes, number of adults, class, and all possible values for the `Stops` parameter.
+*   **Unit Tests:**
+    *   `test/unit/worker/scheduler_test.go`: Missing tests for job retries, job cancellation, concurrency, error handling (full queue), and persistence.
+    *   `test/unit/worker/manager_test.go`: Missing tests for worker availability, job prioritization, error handling (scheduler errors), and configuration.
+    *   `test/unit/worker/worker_test.go`: Missing tests for data validation, and the `processPriceGraphSearch` and `validateCronExpression` methods.
+    *   `test/unit/api/handlers_test.go`: Remaining handlers need tests (job management, bulk search retrieval, price history).
+*   **Mocks:**
+    *   `test/mocks/postgres_mock.go`: Mocking for complex scenarios (nested rows, specific transaction errors) might need enhancement.
+    *   `test/mocks/mocks.go`: Neo4j mock (`MockNeo4jResult`) needs refinement for realistic iteration simulation. Scheduler mock might be needed for job enable/disable tests.
 
-### Database Layer
-
-- [x] PostgreSQL connection setup (2023-07-10)
-- [x] Neo4j connection setup (2023-07-10)
-- [x] Database schema initialization (2023-07-12)
-- [ ] Data migration scripts
-- [ ] Seed data for airports and airlines
-
-### Worker System
-
-- [x] Worker manager structure (2023-07-18)
-- [x] Basic worker implementation (2023-07-18)
-- [ ] Worker scaling and distribution
-- [ ] Error handling and retry logic
-
-### Queue System
-
-- [x] Redis queue implementation (2023-07-15)
-- [ ] Queue monitoring
-- [ ] Dead letter queue handling
-
-### Web Interfaces
-
-- [x] Basic web structure setup (2023-07-22)
-- [ ] Admin panel implementation
-- [ ] Search interface implementation
-- [ ] Results visualization
-
-## API Endpoints Implementation
-
-### Flight Search API
-
-- [x] GET /api/v1/airports - List all airports
-- [x] GET /api/v1/airlines - List all airlines
-- [x] POST /api/v1/search - Create a new search (structure only)
-- [ ] GET /api/v1/search/{id} - Get search results by ID
-- [ ] GET /api/v1/search - List recent searches
-- [ ] POST /api/v1/bulk-search - Create a bulk search
-- [ ] GET /api/v1/bulk-search/{id} - Get bulk search results
-- [ ] GET /api/v1/price-history/{origin}/{destination} - Get price history
-
-### Admin API
-
-- [ ] GET /api/v1/admin/jobs - List all jobs
-- [ ] POST /api/v1/admin/jobs - Create a new job
-- [ ] GET /api/v1/admin/jobs/{id} - Get job by ID
-- [ ] PUT /api/v1/admin/jobs/{id} - Update job
-- [ ] DELETE /api/v1/admin/jobs/{id} - Delete job
-- [ ] POST /api/v1/admin/jobs/{id}/run - Run job
-- [ ] POST /api/v1/admin/jobs/{id}/enable - Enable job
-- [ ] POST /api/v1/admin/jobs/{id}/disable - Disable job
-- [ ] GET /api/v1/admin/workers - Get worker status
-- [ ] GET /api/v1/admin/queue - Get queue status
-
-## Infrastructure
-
-- [x] Docker configuration (2023-07-05)
-- [x] Docker Compose setup (2023-07-05)
-- [ ] CI/CD pipeline
-- [ ] Deployment scripts
-- [ ] Monitoring setup
-
-## Documentation
-
-- [x] Basic README (2023-07-01)
-- [x] Project architecture plan (2023-07-03)
-- [x] Progress tracker (this document) (2023-07-28)
-- [ ] API documentation
-- [ ] User guide
-
-## Next Steps
-
-1. Complete the search implementation
-2. Implement bulk search functionality
-3. Develop the admin panel interface
-4. Add seed data for airports and airlines
-5. Implement price history endpoints
-6. Set up monitoring for workers and queue
-
-## Notes
-
-- The dates in this document are approximate and for tracking purposes only
-- Priority should be given to completing the core search functionality before expanding to additional features
-- Regular updates to this document will help track progress and identify bottlenecks
+**Notes:**
+*   The goal is to systematically create a production-ready app.
+*   Prioritize getting an MVP running and tested first, then work on productionalizing and hardening after we have a running and tested app.
+*   The app should initially be self-hosted on Docker with future expansion to cloud or Kubernetes.

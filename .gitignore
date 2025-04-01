@@ -1,4 +1,43 @@
-/example1
-/example2
+# Binaries
+/google-flights-api*
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test artifacts
+coverage.out
+*.test
+
+# Dependency directories
+vendor/
+/node_modules/
+
+# Environment files
 *.env
+.env.local
+.env.development
+.env.production
+
+# IDE files
+.idea/
+.vscode/
+
+# Build artifacts
+dist/
+bin/
+
+# Logs
+*.log
+
+# Local development files
+docker-compose.override.yml
+
+# TLS certificates
+tls/*.key
+tls/*.crt
+tls/*.pem
+tls/ca-*
+
+# Documentation files
 *.md
