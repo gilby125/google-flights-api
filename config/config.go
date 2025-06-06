@@ -13,12 +13,19 @@ import (
 type Config struct {
 	Port              string
 	Environment       string
+	LoggingConfig     LoggingConfig
 	PostgresConfig    PostgresConfig
 	Neo4jConfig       Neo4jConfig
 	RedisConfig       RedisConfig
 	WorkerConfig      WorkerConfig
 	LetsEncryptConfig LetsEncryptConfig
 	WorkerEnabled     bool
+}
+
+// LoggingConfig holds logging configuration
+type LoggingConfig struct {
+	Level  string
+	Format string
 }
 
 // LetsEncryptConfig holds ACME/LetsEncrypt configuration
@@ -79,6 +86,11 @@ func Load() (*Config, error) {
 	environment := getEnv("ENVIRONMENT", "development")
 	workerEnabled, _ := strconv.ParseBool(getEnv("WORKER_ENABLED", "true"))
 
+	loggingConfig := LoggingConfig{
+		Level:  getEnv("LOG_LEVEL", "info"),
+		Format: getEnv("LOG_FORMAT", "json"),
+	}
+
 	postgresConfig := PostgresConfig{
 		Host:        getEnv("DB_HOST", "postgres"),
 		Port:        getEnv("DB_PORT", "5432"),
@@ -122,6 +134,7 @@ func Load() (*Config, error) {
 	return &Config{
 		Port:           port,
 		Environment:    environment,
+		LoggingConfig:  loggingConfig,
 		PostgresConfig: postgresConfig,
 		Neo4jConfig:    neo4jConfig,
 		RedisConfig:    redisConfig,

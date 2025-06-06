@@ -1,8 +1,9 @@
 package api
 
-// Trivial comment added to force re-evaluation
 import (
 	"database/sql"
+	"fmt"
+	"log"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -10,11 +11,15 @@ import (
 	"time"
 
 	"github.com/gilby125/google-flights-api/db"
-	"github.com/gilby125/google-flights-api/flights" // Added missing flights import
+	"github.com/gilby125/google-flights-api/flights"
+	"github.com/gilby125/google-flights-api/pkg/cache"
+	"github.com/gilby125/google-flights-api/pkg/logger"
 	"github.com/gilby125/google-flights-api/queue"
 	"github.com/gilby125/google-flights-api/worker"
 	"github.com/gin-gonic/gin"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"golang.org/x/text/currency"
+	"golang.org/x/text/language"
 )
 
 // SearchRequest represents a flight search request
@@ -1219,5 +1224,322 @@ func getJobById(pgDB db.PostgresDB) gin.HandlerFunc { // Changed parameter type
 		}
 
 		c.JSON(http.StatusOK, jobMap)
+	}
+}
+
+// DirectSearchRequest represents a direct flight search request (non-queued)
+type DirectSearchRequest struct {
+	Origin        string `json:"origin" form:"origin"`
+	Destination   string `json:"destination" form:"destination"`
+	DepartureDate string `json:"departure_date" form:"departure_date"`
+	ReturnDate    string `json:"return_date" form:"return_date"`
+	TripType      string `json:"trip_type" form:"trip_type"`
+	Class         string `json:"class" form:"class"`
+	Stops         string `json:"stops" form:"stops"`
+	Adults        int    `json:"adults" form:"adults"`
+	Children      int    `json:"children" form:"children"`
+	InfantsLap    int    `json:"infants_lap" form:"infants_lap"`
+	InfantsSeat   int    `json:"infants_seat" form:"infants_seat"`
+	Currency      string `json:"currency" form:"currency"`
+}
+
+// DirectFlightSearch handles direct flight searches (bypasses queue for immediate results)
+func DirectFlightSearch() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		log.Println("Direct search flights handler called")
+
+		var searchRequest DirectSearchRequest
+
+		// Try to bind JSON first, then form data if that fails
+		if err := c.ShouldBindJSON(&searchRequest); err != nil {
+			log.Printf("JSON binding failed, trying form binding: %v", err)
+			if err := c.ShouldBind(&searchRequest); err != nil {
+				log.Printf("Form binding also failed: %v", err)
+			}
+		}
+
+		// Set defaults for optional fields
+		if searchRequest.Adults <= 0 {
+			searchRequest.Adults = 1
+		}
+		if searchRequest.Currency == "" {
+			searchRequest.Currency = "USD"
+		}
+		if searchRequest.Class == "" {
+			searchRequest.Class = "economy"
+		}
+		if searchRequest.Stops == "" {
+			searchRequest.Stops = "any"
+		}
+		if searchRequest.TripType == "" {
+			searchRequest.TripType = "one_way"
+		}
+
+		// Validate required fields
+		if searchRequest.Origin == "" || searchRequest.Destination == "" || searchRequest.DepartureDate == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Origin, destination, and departure date are required"})
+			return
+		}
+
+		// Parse dates
+		departureDate, err := time.Parse("2006-01-02", searchRequest.DepartureDate)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid departure date format. Use YYYY-MM-DD"})
+			return
+		}
+
+		var returnDate time.Time
+		if searchRequest.ReturnDate != "" {
+			returnDate, err = time.Parse("2006-01-02", searchRequest.ReturnDate)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid return date format. Use YYYY-MM-DD"})
+				return
+			}
+		} else if searchRequest.TripType == "round_trip" {
+			returnDate = departureDate.AddDate(0, 0, 7)
+		} else {
+			returnDate = departureDate.AddDate(0, 0, 1)
+		}
+
+		// Create flight session
+		session, err := flights.New()
+		if err != nil {
+			log.Printf("Error creating flight session: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to initialize flight search"})
+			return
+		}
+
+		// Map trip type
+		var tripType flights.TripType
+		switch searchRequest.TripType {
+		case "one_way":
+			tripType = flights.OneWay
+		case "round_trip":
+			tripType = flights.RoundTrip
+		default:
+			tripType = flights.RoundTrip
+		}
+
+		// Map class
+		var class flights.Class
+		switch searchRequest.Class {
+		case "economy":
+			class = flights.Economy
+		case "premium_economy":
+			class = flights.PremiumEconomy
+		case "business":
+			class = flights.Business
+		case "first":
+			class = flights.First
+		default:
+			class = flights.Economy
+		}
+
+		// Map stops
+		var stops flights.Stops
+		switch searchRequest.Stops {
+		case "nonstop":
+			stops = flights.Nonstop
+		case "one_stop":
+			stops = flights.Stop1
+		case "two_stops":
+			stops = flights.Stop2
+		case "any":
+			stops = flights.AnyStops
+		default:
+			stops = flights.AnyStops
+		}
+
+		// Parse currency
+		cur, err := currency.ParseISO(searchRequest.Currency)
+		if err != nil {
+			log.Printf("Invalid currency %s, using USD", searchRequest.Currency)
+			cur = currency.USD
+		}
+
+		// Perform the flight search
+		offers, priceRange, err := session.GetOffers(
+			c.Request.Context(),
+			flights.Args{
+				Date:        departureDate,
+				ReturnDate:  returnDate,
+				SrcAirports: []string{searchRequest.Origin},
+				DstAirports: []string{searchRequest.Destination},
+				Options: flights.Options{
+					Travelers: flights.Travelers{
+						Adults:       searchRequest.Adults,
+						Children:     searchRequest.Children,
+						InfantOnLap:  searchRequest.InfantsLap,
+						InfantInSeat: searchRequest.InfantsSeat,
+					},
+					Currency: cur,
+					Stops:    stops,
+					Class:    class,
+					TripType: tripType,
+					Lang:     language.English,
+				},
+			},
+		)
+
+		if err != nil {
+			log.Printf("Error searching flights: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to search flights: " + err.Error()})
+			return
+		}
+
+		// Convert offers to response format
+		responseOffers := make([]map[string]interface{}, 0, len(offers))
+		for i, offer := range offers {
+			// Create segments from flights
+			segments := make([]map[string]interface{}, 0, len(offer.Flight))
+			for _, flight := range offer.Flight {
+				segment := map[string]interface{}{
+					"departure_airport": flight.DepAirportCode,
+					"arrival_airport":   flight.ArrAirportCode,
+					"departure_time":    flight.DepTime.Format(time.RFC3339),
+					"arrival_time":      flight.ArrTime.Format(time.RFC3339),
+					"airline":           flight.AirlineName,
+					"flight_number":     flight.FlightNumber,
+					"duration":          int(flight.Duration.Minutes()),
+					"airplane":          flight.Airplane,
+					"legroom":           flight.Legroom,
+				}
+				segments = append(segments, segment)
+			}
+
+			// Generate Google Flights URL
+			googleFlightsUrl, err := session.SerializeURL(
+				c.Request.Context(),
+				flights.Args{
+					Date:        offer.StartDate,
+					ReturnDate:  offer.ReturnDate,
+					SrcAirports: []string{searchRequest.Origin},
+					DstAirports: []string{searchRequest.Destination},
+					Options: flights.Options{
+						Travelers: flights.Travelers{
+							Adults:       searchRequest.Adults,
+							Children:     searchRequest.Children,
+							InfantOnLap:  searchRequest.InfantsLap,
+							InfantInSeat: searchRequest.InfantsSeat,
+						},
+						Currency: cur,
+						Stops:    stops,
+						Class:    class,
+						TripType: tripType,
+						Lang:     language.English,
+					},
+				},
+			)
+			if err != nil {
+				log.Printf("Error generating Google Flights URL: %v", err)
+				googleFlightsUrl = ""
+			}
+
+			responseOffer := map[string]interface{}{
+				"id":                 fmt.Sprintf("offer%d", i+1),
+				"price":              offer.Price,
+				"currency":           searchRequest.Currency,
+				"total_duration":     int(offer.FlightDuration.Minutes()),
+				"segments":           segments,
+				"departure_date":     offer.StartDate.Format("2006-01-02"),
+				"return_date":        offer.ReturnDate.Format("2006-01-02"),
+				"google_flights_url": googleFlightsUrl,
+			}
+
+			responseOffers = append(responseOffers, responseOffer)
+		}
+
+		// Build the response
+		response := map[string]interface{}{
+			"offers":        responseOffers,
+			"search_params": searchRequest,
+		}
+
+		// Add price range if available
+		if priceRange != nil {
+			response["price_range"] = map[string]interface{}{
+				"low":  priceRange.Low,
+				"high": priceRange.High,
+			}
+		}
+
+		c.JSON(http.StatusOK, response)
+	}
+}
+
+// CachedAirportsHandler provides cached airport data
+func CachedAirportsHandler(cacheManager *cache.CacheManager) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		cacheKey := cache.AirportsKey()
+		
+		// Try to get from cache first
+		var airports []map[string]string
+		err := cacheManager.GetJSON(c.Request.Context(), cacheKey, &airports)
+		if err == nil {
+			logger.WithField("cache_key", cacheKey).Debug("Airport data served from cache")
+			c.Header("X-Cache", "HIT")
+			c.JSON(http.StatusOK, airports)
+			return
+		}
+
+		if err != cache.ErrCacheMiss {
+			logger.WithField("cache_key", cacheKey).Error(err, "Cache get error for airports")
+		}
+
+		// Cache miss - generate data and cache it
+		airports = []map[string]string{
+			{"code": "JFK", "name": "John F. Kennedy International Airport", "city": "New York"},
+			{"code": "LAX", "name": "Los Angeles International Airport", "city": "Los Angeles"},
+			{"code": "ORD", "name": "O'Hare International Airport", "city": "Chicago"},
+			{"code": "LHR", "name": "Heathrow Airport", "city": "London"},
+			{"code": "CDG", "name": "Charles de Gaulle Airport", "city": "Paris"},
+			{"code": "DXB", "name": "Dubai International Airport", "city": "Dubai"},
+			{"code": "NRT", "name": "Narita International Airport", "city": "Tokyo"},
+			{"code": "SIN", "name": "Singapore Changi Airport", "city": "Singapore"},
+		}
+
+		// Cache the data for 24 hours
+		if err := cacheManager.SetJSON(c.Request.Context(), cacheKey, airports, cache.LongTTL); err != nil {
+			logger.WithField("cache_key", cacheKey).Error(err, "Cache set error for airports")
+		} else {
+			logger.WithField("cache_key", cacheKey).Debug("Airport data cached")
+		}
+
+		c.Header("X-Cache", "MISS")
+		c.JSON(http.StatusOK, airports)
+	}
+}
+
+// MockAirportsHandler provides mock airport data (deprecated - use CachedAirportsHandler)
+func MockAirportsHandler() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		airports := []map[string]string{
+			{"code": "JFK", "name": "John F. Kennedy International Airport", "city": "New York"},
+			{"code": "LAX", "name": "Los Angeles International Airport", "city": "Los Angeles"},
+			{"code": "ORD", "name": "O'Hare International Airport", "city": "Chicago"},
+			{"code": "LHR", "name": "Heathrow Airport", "city": "London"},
+			{"code": "CDG", "name": "Charles de Gaulle Airport", "city": "Paris"},
+		}
+		c.JSON(http.StatusOK, airports)
+	}
+}
+
+// MockPriceHistoryHandler provides mock price history data
+func MockPriceHistoryHandler() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		origin := c.Query("origin")
+		destination := c.Query("destination")
+
+		priceHistory := []map[string]interface{}{
+			{"date": "2023-06-01", "price": 299, "origin": origin, "destination": destination},
+			{"date": "2023-06-02", "price": 310, "origin": origin, "destination": destination},
+			{"date": "2023-06-03", "price": 305, "origin": origin, "destination": destination},
+			{"date": "2023-06-04", "price": 295, "origin": origin, "destination": destination},
+			{"date": "2023-06-05", "price": 320, "origin": origin, "destination": destination},
+			{"date": "2023-06-06", "price": 315, "origin": origin, "destination": destination},
+			{"date": "2023-06-07", "price": 300, "origin": origin, "destination": destination},
+		}
+
+		c.JSON(http.StatusOK, priceHistory)
 	}
 }

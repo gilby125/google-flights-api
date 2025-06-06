@@ -19,6 +19,9 @@ vendor/
 .env.development
 .env.production
 
+# MCP configuration (contains secrets)
+.mcp.json
+
 # IDE files
 .idea/
 .vscode/
