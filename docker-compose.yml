@@ -20,9 +20,12 @@ services:
       - REDIS_PASSWORD=${REDIS_PASSWORD:-} # Optional
       # Worker defaults are likely fine, add if needed
     depends_on: # Ensure DBs and Redis start before the API
-      - postgres
-      - neo4j
-      - redis
+      postgres:
+        condition: service_started
+      neo4j:
+        condition: service_healthy
+      redis:
+        condition: service_started
     networks:
       - backend
     ports:
@@ -53,7 +56,7 @@ services:
   neo4j:
     image: neo4j:5 # Use an appropriate version
     environment:
-      - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD:-changeme} # Set default if not provided
+      - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD:-Lokifish123} # Set default if not provided
       - NEO4J_ACCEPT_LICENSE_AGREEMENT=yes # Required for Enterprise in some cases, check image docs
     ports:
     - "7474:7474" # HTTP (already exposed)
@@ -62,6 +65,12 @@ services:
       - neo4jdata:/data
     networks:
       - backend
+    healthcheck:
+      test: ["CMD", "neo4j", "status"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 40s
 
 volumes:
   pgdata:
