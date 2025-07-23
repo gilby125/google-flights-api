@@ -4,14 +4,10 @@ WORKDIR /app
 COPY . .
 # Install openssl for certificate validation
 RUN apk add --no-cache openssl
-# Validate TLS certificates
-RUN if [ ! -f tls/tls.crt ] || [ ! -f tls/tls.key ] || [ ! -f tls/ca.crt ]; then \
-        echo "Missing required TLS certificate files"; \
-        exit 1; \
-    fi
-RUN openssl x509 -in tls/tls.crt -noout -dates && \
-    openssl x509 -in tls/ca.crt -noout -dates && \
-    openssl rsa -in tls/tls.key -check -noout
+# Create empty tls directory if it doesn't exist
+RUN mkdir -p tls
+# Note: TLS certificates should be mounted at runtime or generated in deployment
+# They are not included in the image for security reasons
 RUN go mod download
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /flight-api
 
@@ -29,7 +25,7 @@ WORKDIR /app
 
 # Copy artifacts
 COPY --from=builder --chown=nonroot:nonroot /flight-api /app/
-# TLS certificates with secure permissions
+# Copy empty tls directory from builder (created during build)
 COPY --from=builder --chown=nonroot:nonroot /app/tls/ /app/tls/
 COPY --from=builder --chown=nonroot:nonroot /app/web/ /app/web/
 
