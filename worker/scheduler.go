@@ -47,15 +47,10 @@ func (s *Scheduler) Start() error {
 	log.Println("Starting scheduler")
 	s.cron.Start() // Call interface method
 
-	// Example: Schedule a job to run every minute
-	// This is just an example, replace with actual scheduled jobs from the database
-	_, err := s.cron.AddFunc("@every 1m", func() { // Call interface method
-		log.Println("Running scheduled job")
-		// Fetch pending searches from the database
-		// Enqueue them to the queue
-	})
+	// Load and schedule bulk search jobs from database
+	err := s.loadScheduledBulkSearches()
 	if err != nil {
-		return fmt.Errorf("failed to add example cron function: %w", err)
+		return fmt.Errorf("failed to load scheduled bulk searches: %w", err)
 	}
 
 	return nil
@@ -104,6 +99,171 @@ func (s *Scheduler) AddJob(payload []byte) error {
 
 	log.Printf("Scheduled job %s to queue %s", jobID, queueName)
 	return nil
+}
+
+// loadScheduledBulkSearches loads and schedules bulk search jobs from the database
+func (s *Scheduler) loadScheduledBulkSearches() error {
+	ctx := context.Background()
+	
+	// Get all enabled scheduled jobs
+	rows, err := s.postgresDB.ListJobs(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to list scheduled jobs: %w", err)
+	}
+	defer rows.Close()
+
+	jobCount := 0
+	for rows.Next() {
+		var job struct {
+			ID             int
+			Name           string
+			CronExpression string
+			Enabled        bool
+			LastRun        *time.Time
+			CreatedAt      time.Time
+			UpdatedAt      time.Time
+		}
+		
+		err := rows.Scan(&job.ID, &job.Name, &job.CronExpression, &job.Enabled, &job.LastRun, &job.CreatedAt, &job.UpdatedAt)
+		if err != nil {
+			log.Printf("Error scanning scheduled job: %v", err)
+			continue
+		}
+
+		// Only schedule enabled jobs
+		if !job.Enabled {
+			log.Printf("Skipping disabled job: %s (ID: %d)", job.Name, job.ID)
+			continue
+		}
+
+		// Add the job to the cron scheduler
+		_, err = s.cron.AddFunc(job.CronExpression, func() {
+			s.executeScheduledBulkSearch(job.ID, job.Name)
+		})
+		
+		if err != nil {
+			log.Printf("Failed to schedule job %s (ID: %d): %v", job.Name, job.ID, err)
+			continue
+		}
+		
+		jobCount++
+		log.Printf("Scheduled bulk search job: %s (ID: %d) with cron: %s", job.Name, job.ID, job.CronExpression)
+	}
+	
+	log.Printf("Successfully scheduled %d bulk search jobs", jobCount)
+	return nil
+}
+
+// executeScheduledBulkSearch executes a scheduled bulk search job
+func (s *Scheduler) executeScheduledBulkSearch(jobID int, jobName string) {
+	ctx := context.Background()
+	log.Printf("Executing scheduled bulk search: %s (ID: %d)", jobName, jobID)
+	
+	// Get job details from database
+	details, err := s.postgresDB.GetJobDetailsByID(ctx, jobID)
+	if err != nil {
+		log.Printf("Error getting job details for %s (ID: %d): %v", jobName, jobID, err)
+		return
+	}
+
+	// Calculate dates based on execution time if dynamic dates are enabled
+	var departureDateFrom, departureDateTo, returnDateFrom, returnDateTo time.Time
+	
+	if details.DynamicDates {
+		// Use dates relative to current execution time
+		now := time.Now()
+		
+		// Get days from execution (default to 0 if not set)
+		daysFromExecution := 0
+		if details.DaysFromExecution.Valid {
+			daysFromExecution = int(details.DaysFromExecution.Int32)
+		}
+		
+		// Get search window days (default to 1 if not set)
+		searchWindowDays := 1
+		if details.SearchWindowDays.Valid {
+			searchWindowDays = int(details.SearchWindowDays.Int32)
+		}
+		
+		// Calculate departure date range relative to execution time
+		departureDateFrom = now.AddDate(0, 0, daysFromExecution)
+		departureDateTo = departureDateFrom.AddDate(0, 0, searchWindowDays-1)
+		
+		log.Printf("Dynamic dates for job %s: searching %d days from now (%s to %s)", 
+			jobName, daysFromExecution, departureDateFrom.Format("2006-01-02"), departureDateTo.Format("2006-01-02"))
+		
+		// For round trips, calculate return dates if trip length is specified
+		if details.TripType == "round_trip" && details.TripLength.Valid {
+			tripLength := int(details.TripLength.Int32)
+			returnDateFrom = departureDateFrom.AddDate(0, 0, tripLength)
+			returnDateTo = departureDateTo.AddDate(0, 0, tripLength)
+			log.Printf("Round trip return dates: %s to %s (trip length: %d days)", 
+				returnDateFrom.Format("2006-01-02"), returnDateTo.Format("2006-01-02"), tripLength)
+		}
+	} else {
+		// Use static dates from job details
+		departureDateFrom = details.DepartureDateStart
+		departureDateTo = details.DepartureDateEnd
+		
+		if details.ReturnDateStart.Valid {
+			returnDateFrom = details.ReturnDateStart.Time
+		}
+		if details.ReturnDateEnd.Valid {
+			returnDateTo = details.ReturnDateEnd.Time
+		}
+		
+		log.Printf("Static dates for job %s: departure %s to %s", 
+			jobName, departureDateFrom.Format("2006-01-02"), departureDateTo.Format("2006-01-02"))
+	}
+	
+	// Get trip length
+	tripLength := 0
+	if details.TripLength.Valid {
+		tripLength = int(details.TripLength.Int32)
+	}
+
+	// Create bulk search payload with calculated dates
+	bulkSearchPayload := BulkSearchPayload{
+		Origins:           []string{details.Origin},
+		Destinations:      []string{details.Destination},
+		DepartureDateFrom: departureDateFrom,
+		DepartureDateTo:   departureDateTo,
+		ReturnDateFrom:    returnDateFrom,
+		ReturnDateTo:      returnDateTo,
+		TripLength:        tripLength,
+		Adults:            details.Adults,
+		Children:          details.Children,
+		InfantsLap:        details.InfantsLap,
+		InfantsSeat:       details.InfantsSeat,
+		TripType:          details.TripType,
+		Class:             details.Class,
+		Stops:             details.Stops,
+		Currency:          details.Currency,
+	}
+
+	// Serialize the payload
+	payloadBytes, err := json.Marshal(bulkSearchPayload)
+	if err != nil {
+		log.Printf("Error serializing bulk search payload for job %s: %v", jobName, err)
+		return
+	}
+
+	// Enqueue the bulk search job
+	bulkJobID := fmt.Sprintf("scheduled_bulk_search-%d-%d", jobID, time.Now().Unix())
+	_, err = s.queue.Enqueue(ctx, "bulk_search", payloadBytes)
+	if err != nil {
+		log.Printf("Error enqueuing bulk search for job %s: %v", jobName, err)
+		return
+	}
+
+	// Update the last run time
+	err = s.postgresDB.UpdateJobLastRun(ctx, jobID)
+	if err != nil {
+		log.Printf("Error updating last run time for job %s: %v", jobName, err)
+		// Don't return - the job was successfully enqueued
+	}
+
+	log.Printf("Successfully enqueued scheduled bulk search: %s (bulk job ID: %s)", jobName, bulkJobID)
 }
 
 // processFlightSearch processes a flight search job

@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin UI Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .test-section { margin-bottom: 20px; padding: 10px; border: 1px solid #ccc; border-radius: 5px; }
+        .success { color: green; }
+        .error { color: red; }
+        pre { background: #f5f5f5; padding: 10px; border-radius: 3px; }
+    </style>
+</head>
+<body>
+    <h1>Admin UI API Test</h1>
+    
+    <div class="test-section">
+        <h3>Jobs Endpoint Test</h3>
+        <button onclick="testJobs()">Test Jobs API</button>
+        <div id="jobsResult"></div>
+    </div>
+    
+    <div class="test-section">
+        <h3>Workers Endpoint Test</h3>
+        <button onclick="testWorkers()">Test Workers API</button>
+        <div id="workersResult"></div>
+    </div>
+    
+    <div class="test-section">
+        <h3>Queue Endpoint Test</h3>
+        <button onclick="testQueue()">Test Queue API</button>
+        <div id="queueResult"></div>
+    </div>
+    
+    <div class="test-section">
+        <h3>Create Job Test</h3>
+        <button onclick="testCreateJob()">Test Create Job</button>
+        <div id="createJobResult"></div>
+    </div>
+
+    <script>
+        async function testJobs() {
+            const resultDiv = document.getElementById('jobsResult');
+            try {
+                const response = await fetch('/api/v1/admin/jobs');
+                const text = await response.text();
+                
+                resultDiv.innerHTML = `
+                    <div class="success">✅ Response received</div>
+                    <strong>Status:</strong> ${response.status}<br>
+                    <strong>Raw Response:</strong><pre>${text}</pre>
+                `;
+                
+                try {
+                    const parsed = JSON.parse(text);
+                    resultDiv.innerHTML += `<div class="success">✅ JSON parsing successful</div>`;
+                    resultDiv.innerHTML += `<strong>Parsed Data:</strong><pre>${JSON.stringify(parsed, null, 2)}</pre>`;
+                } catch (e) {
+                    resultDiv.innerHTML += `<div class="error">❌ JSON parsing failed: ${e.message}</div>`;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="error">❌ Request failed: ${error.message}</div>`;
+            }
+        }
+
+        async function testWorkers() {
+            const resultDiv = document.getElementById('workersResult');
+            try {
+                const response = await fetch('/api/v1/admin/workers');
+                const text = await response.text();
+                
+                resultDiv.innerHTML = `
+                    <div class="success">✅ Response received</div>
+                    <strong>Status:</strong> ${response.status}<br>
+                    <strong>Raw Response:</strong><pre>${text}</pre>
+                `;
+                
+                try {
+                    const parsed = JSON.parse(text);
+                    resultDiv.innerHTML += `<div class="success">✅ JSON parsing successful</div>`;
+                    resultDiv.innerHTML += `<strong>Parsed Data:</strong><pre>${JSON.stringify(parsed, null, 2)}</pre>`;
+                } catch (e) {
+                    resultDiv.innerHTML += `<div class="error">❌ JSON parsing failed: ${e.message}</div>`;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="error">❌ Request failed: ${error.message}</div>`;
+            }
+        }
+
+        async function testQueue() {
+            const resultDiv = document.getElementById('queueResult');
+            try {
+                const response = await fetch('/api/v1/admin/queue');
+                const text = await response.text();
+                
+                resultDiv.innerHTML = `
+                    <div class="success">✅ Response received</div>
+                    <strong>Status:</strong> ${response.status}<br>
+                    <strong>Raw Response:</strong><pre>${text}</pre>
+                `;
+                
+                try {
+                    const parsed = JSON.parse(text);
+                    resultDiv.innerHTML += `<div class="success">✅ JSON parsing successful</div>`;
+                    resultDiv.innerHTML += `<strong>Parsed Data:</strong><pre>${JSON.stringify(parsed, null, 2)}</pre>`;
+                } catch (e) {
+                    resultDiv.innerHTML += `<div class="error">❌ JSON parsing failed: ${e.message}</div>`;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="error">❌ Request failed: ${error.message}</div>`;
+            }
+        }
+
+        async function testCreateJob() {
+            const resultDiv = document.getElementById('createJobResult');
+            const futureDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+            
+            const jobData = {
+                name: 'UI Test Job',
+                origin: 'JFK',
+                destination: 'LAX',
+                date_start: futureDate,
+                date_end: futureDate,
+                adults: 1,
+                children: 0,
+                infants_lap: 0,
+                infants_seat: 0,
+                trip_type: 'one_way',
+                class: 'economy',
+                stops: 'any',
+                currency: 'USD',
+                interval: 'daily',
+                time: '12:00',
+                cron_expression: '0 12 * * *'
+            };
+            
+            try {
+                const response = await fetch('/api/v1/admin/jobs', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(jobData)
+                });
+                
+                const text = await response.text();
+                
+                resultDiv.innerHTML = `
+                    <div class="${response.ok ? 'success' : 'error'}">${response.ok ? '✅' : '❌'} Response received</div>
+                    <strong>Status:</strong> ${response.status}<br>
+                    <strong>Raw Response:</strong><pre>${text}</pre>
+                `;
+                
+                if (response.ok) {
+                    try {
+                        const parsed = JSON.parse(text);
+                        resultDiv.innerHTML += `<div class="success">✅ Job created successfully!</div>`;
+                        resultDiv.innerHTML += `<strong>Job ID:</strong> ${parsed.id}<br>`;
+                    } catch (e) {
+                        resultDiv.innerHTML += `<div class="error">❌ JSON parsing failed: ${e.message}</div>`;
+                    }
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="error">❌ Request failed: ${error.message}</div>`;
+            }
+        }
+    </script>
+</body>
+</html>

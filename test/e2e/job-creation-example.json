@@ -1,0 +1,21 @@
+{
+  "name": "Example Flight Search Job",
+  "origin": "JFK",
+  "destination": "LAX",
+  "date_start": "2025-08-23",
+  "date_end": "2025-08-23",
+  "return_date_start": "2025-08-30",
+  "return_date_end": "2025-08-30",
+  "trip_length": 7,
+  "adults": 1,
+  "children": 0,
+  "infants_lap": 0,
+  "infants_seat": 0,
+  "trip_type": "round_trip",
+  "class": "economy",
+  "stops": "any",
+  "currency": "USD",
+  "interval": "daily",
+  "time": "12:00",
+  "cron_expression": "0 12 * * *"
+}

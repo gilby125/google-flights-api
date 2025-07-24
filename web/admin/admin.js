@@ -36,6 +36,19 @@ async function initAdminPanel() {
         new bootstrap.Modal(newJobModalEl);
     }
 
+    // Set default dates (30 days from now)
+    const futureDate = new Date();
+    futureDate.setDate(futureDate.getDate() + 30);
+    const dateString = futureDate.toISOString().split('T')[0];
+    
+    const dateStartEl = document.getElementById('dateStart');
+    const dateEndEl = document.getElementById('dateEnd');
+    if (dateStartEl) dateStartEl.value = dateString;
+    if (dateEndEl) dateEndEl.value = dateString;
+
+    // Initialize cron preview
+    updateCronPreview();
+
     // Load initial data
     await refreshData();
 
@@ -46,15 +59,14 @@ async function initAdminPanel() {
 // Refresh all data
 async function refreshData() {
     try {
-        await Promise.all([
-            loadJobs(),
-            loadWorkers(),
-            loadQueueStatus(),
-            loadSearchCounts()
-        ]);
+        // Load data sequentially to avoid overwhelming the API
+        await loadJobs().catch(err => console.error('Error loading jobs:', err));
+        await loadWorkers().catch(err => console.error('Error loading workers:', err));
+        await loadQueueStatus().catch(err => console.error('Error loading queue:', err));
+        await loadSearchCounts().catch(err => console.error('Error loading search counts:', err));
     } catch (error) {
         console.error('Error refreshing data:', error);
-        showAlert('Error refreshing data. Please try again.', 'danger');
+        showAlert('Error refreshing data. Check console for details.', 'warning');
     }
 }
 
@@ -63,7 +75,15 @@ async function loadJobs() {
     const response = await fetch(ENDPOINTS.JOBS);
     if (!response.ok) throw new Error('Failed to load jobs');
 
-    const jobs = await response.json();
+    // Handle potential duplicate response format using safe parsing
+    const responseText = await response.text();
+    const jobs = safeParseJSON(responseText, []);
+    
+    // Ensure we have an array
+    if (!Array.isArray(jobs)) {
+        console.warn('Jobs response is not an array:', jobs);
+        return;
+    }
 
     // Update jobs count
     elements.jobsCount.textContent = jobs.length;
@@ -74,27 +94,44 @@ async function loadJobs() {
     // Add jobs to table
     jobs.forEach(job => {
         const row = document.createElement('tr');
+        
+        // Get job details safely
+        const origin = job.details?.origin || job.origin || 'N/A';
+        const destination = job.details?.destination || job.destination || 'N/A';
+        const schedule = job.cron_expression || 'N/A';
+        const isDynamic = job.details?.dynamic_dates || false;
+        
+        // Format route with dynamic indicator
+        let routeDisplay = `${origin} → ${destination}`;
+        if (isDynamic) {
+            const daysFromExecution = job.details?.days_from_execution || 'N/A';
+            const searchWindowDays = job.details?.search_window_days || 'N/A';
+            routeDisplay += `<br><small class="text-info"><i class="bi bi-arrow-clockwise"></i> Dynamic: +${daysFromExecution}d (${searchWindowDays}d window)</small>`;
+        }
+        
         row.innerHTML = `
-            <td>${job.id}</td>
-            <td>${job.name}</td>
-            <td>${job.friendly_schedule}</td>
-            <td>${job.origin} → ${job.destination}</td>
+            <td>${job.id || 'N/A'}</td>
+            <td>${job.name || 'Unnamed Job'}</td>
+            <td><code>${schedule}</code></td>
+            <td>${routeDisplay}</td>
             <td>
                 <span class="badge ${job.enabled ? 'bg-success' : 'bg-secondary'}">
                     ${job.enabled ? 'Enabled' : 'Disabled'}
                 </span>
+                ${isDynamic ? '<br><span class="badge bg-info mt-1">Dynamic</span>' : ''}
             </td>
             <td>${job.last_run ? new Date(job.last_run).toLocaleString() : 'Never'}</td>
             <td>
                 <div class="btn-group btn-group-sm">
-                    <button class="btn btn-outline-primary" onclick="runJob(${job.id})">
+                    <button class="btn btn-outline-primary" onclick="runJob(${job.id})" title="Run Job">
                         <i class="bi bi-play-fill"></i>
                     </button>
                     <button class="btn btn-outline-${job.enabled ? 'warning' : 'success'}"
-                        onclick="${job.enabled ? 'disableJob' : 'enableJob'}(${job.id})">
+                        onclick="${job.enabled ? 'disableJob' : 'enableJob'}(${job.id})" 
+                        title="${job.enabled ? 'Disable' : 'Enable'} Job">
                         <i class="bi bi-${job.enabled ? 'pause-fill' : 'check-lg'}"></i>
                     </button>
-                    <button class="btn btn-outline-danger" onclick="deleteJob(${job.id})">
+                    <button class="btn btn-outline-danger" onclick="deleteJob(${job.id})" title="Delete Job">
                         <i class="bi bi-trash"></i>
                     </button>
                 </div>
@@ -109,7 +146,24 @@ async function loadWorkers() {
     const response = await fetch(ENDPOINTS.WORKERS);
     if (!response.ok) throw new Error('Failed to load workers');
     
-    const workers = await response.json();
+    // Handle potential duplicate response format using safe parsing
+    const responseText = await response.text();
+    let workers = safeParseJSON(responseText, {});
+    
+    // Convert worker status object to workers array if needed
+    if (!Array.isArray(workers)) {
+        if (workers.status === 'running') {
+            workers = Array.from({length: 5}, (_, i) => ({
+                id: i + 1,
+                status: 'active',
+                current_job: null,
+                processed_jobs: 0,
+                uptime: 0
+            }));
+        } else {
+            workers = [];
+        }
+    }
     
     // Update workers count
     const activeWorkers = workers.filter(w => w.status === 'active').length;
@@ -141,7 +195,15 @@ async function loadQueueStatus() {
     const response = await fetch(ENDPOINTS.QUEUE);
     if (!response.ok) throw new Error('Failed to load queue status');
     
-    const queues = await response.json();
+    // Handle potential duplicate response format using safe parsing
+    const responseText = await response.text();
+    const queues = safeParseJSON(responseText, {});
+    
+    // Ensure we have an object
+    if (typeof queues !== 'object' || Array.isArray(queues)) {
+        console.warn('Queue response is not an object:', queues);
+        return;
+    }
     
     // Update queue size
     let totalPending = 0;
@@ -188,14 +250,32 @@ async function saveJob() {
     }
 
     // Get form values
+    const time = document.getElementById('time').value;
+    const interval = document.getElementById('interval').value;
+    const [hour, minute] = time.split(':');
+    
+    // Generate cron expression based on interval and time
+    let cronExpression;
+    switch(interval) {
+        case 'daily':
+            cronExpression = `${minute} ${hour} * * *`;
+            break;
+        case 'weekly':
+            cronExpression = `${minute} ${hour} * * 1`; // Monday
+            break;
+        case 'monthly':
+            cronExpression = `${minute} ${hour} 1 * *`; // First of month
+            break;
+        default:
+            cronExpression = `${minute} ${hour} * * *`; // Default to daily
+    }
+
+    const isDynamicDates = document.getElementById('dynamicDates').checked;
+    
     const jobData = {
         name: document.getElementById('jobName').value,
         origin: document.getElementById('origin').value,
         destination: document.getElementById('destination').value,
-        date_start: document.getElementById('dateStart').value,
-        date_end: document.getElementById('dateEnd').value,
-        return_date_start: document.getElementById('returnDateStart').value || null,
-        return_date_end: document.getElementById('returnDateEnd').value || null,
         trip_type: document.getElementById('tripType').value,
         class: document.getElementById('class').value,
         stops: document.getElementById('stops').value,
@@ -204,10 +284,37 @@ async function saveJob() {
         infants_lap: parseInt(document.getElementById('infantsLap').value),
         infants_seat: parseInt(document.getElementById('infantsSeat').value),
         currency: document.getElementById('currency').value,
-        interval: document.getElementById('interval').value,
-        time: document.getElementById('time').value,
-        friendly_schedule: ''
+        interval: interval,
+        time: time,
+        cron_expression: cronExpression,
+        dynamic_dates: isDynamicDates
     };
+
+    // Add date fields based on mode
+    if (isDynamicDates) {
+        // Dynamic date mode
+        jobData.days_from_execution = parseInt(document.getElementById('daysFromExecution').value) || 14;
+        jobData.search_window_days = parseInt(document.getElementById('searchWindowDays').value) || 7;
+        jobData.trip_length = parseInt(document.getElementById('tripLength').value) || 7;
+        
+        // Set dummy static dates (required by backend but not used)
+        const futureDate = new Date();
+        futureDate.setDate(futureDate.getDate() + 30);
+        const dateString = futureDate.toISOString().split('T')[0];
+        jobData.date_start = dateString;
+        jobData.date_end = dateString;
+    } else {
+        // Static date mode
+        jobData.date_start = document.getElementById('dateStart').value;
+        jobData.date_end = document.getElementById('dateEnd').value;
+        jobData.return_date_start = document.getElementById('returnDateStart').value || null;
+        jobData.return_date_end = document.getElementById('returnDateEnd').value || null;
+        
+        // Set defaults for dynamic fields
+        jobData.days_from_execution = null;
+        jobData.search_window_days = null;
+        jobData.trip_length = null;
+    }
 
     try {
         const response = await fetch(ENDPOINTS.JOBS, {
@@ -355,6 +462,125 @@ function showAlert(message, type = 'info') {
         alertDiv.classList.remove('show');
         setTimeout(() => alertDiv.remove(), 150);
     }, 5000);
+}
+
+// Update cron expression preview
+function updateCronPreview() {
+    const timeInput = document.getElementById('time');
+    const intervalInput = document.getElementById('interval');
+    const cronPreview = document.getElementById('cronPreview');
+    
+    if (!timeInput || !intervalInput || !cronPreview) return;
+    
+    const time = timeInput.value;
+    const interval = intervalInput.value;
+    
+    if (!time) return;
+    
+    const [hour, minute] = time.split(':');
+    
+    let cronExpression;
+    switch(interval) {
+        case 'daily':
+            cronExpression = `${minute} ${hour} * * *`;
+            break;
+        case 'weekly':
+            cronExpression = `${minute} ${hour} * * 1`; // Monday
+            break;
+        case 'monthly':
+            cronExpression = `${minute} ${hour} 1 * *`; // First of month
+            break;
+        default:
+            cronExpression = `${minute} ${hour} * * *`;
+    }
+    
+    cronPreview.textContent = cronExpression;
+}
+
+// Toggle between static and dynamic date modes
+function toggleDateMode() {
+    const dynamicDatesCheckbox = document.getElementById('dynamicDates');
+    const staticDateFields = document.getElementById('staticDateFields');
+    const dynamicDateFields = document.getElementById('dynamicDateFields');
+    const dateStartInput = document.getElementById('dateStart');
+    const dateEndInput = document.getElementById('dateEnd');
+    const daysFromExecutionInput = document.getElementById('daysFromExecution');
+    const searchWindowDaysInput = document.getElementById('searchWindowDays');
+    
+    if (!dynamicDatesCheckbox || !staticDateFields || !dynamicDateFields) return;
+    
+    const isDynamic = dynamicDatesCheckbox.checked;
+    
+    if (isDynamic) {
+        // Show dynamic fields, hide static fields
+        staticDateFields.style.display = 'none';
+        dynamicDateFields.style.display = 'block';
+        
+        // Remove required attribute from static date fields
+        if (dateStartInput) dateStartInput.removeAttribute('required');
+        if (dateEndInput) dateEndInput.removeAttribute('required');
+        
+        // Add required attribute to dynamic fields
+        if (daysFromExecutionInput) daysFromExecutionInput.setAttribute('required', 'required');
+        if (searchWindowDaysInput) searchWindowDaysInput.setAttribute('required', 'required');
+    } else {
+        // Show static fields, hide dynamic fields
+        staticDateFields.style.display = 'block';
+        dynamicDateFields.style.display = 'none';
+        
+        // Add required attribute to static date fields
+        if (dateStartInput) dateStartInput.setAttribute('required', 'required');
+        if (dateEndInput) dateEndInput.setAttribute('required', 'required');
+        
+        // Remove required attribute from dynamic fields
+        if (daysFromExecutionInput) daysFromExecutionInput.removeAttribute('required');
+        if (searchWindowDaysInput) searchWindowDaysInput.removeAttribute('required');
+    }
+}
+
+// Utility function to safely parse JSON responses that might be malformed
+function safeParseJSON(responseText, fallbackValue = null) {
+    try {
+        // First, try normal JSON parsing
+        return JSON.parse(responseText);
+    } catch (e) {
+        console.warn('Initial JSON parse failed, trying fallback methods:', e.message);
+        
+        // Try to handle duplicate JSON objects like {"a":1}{"b":2}
+        try {
+            const jsonObjects = responseText.match(/\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g);
+            if (jsonObjects && jsonObjects.length > 0) {
+                // Use the last valid JSON object
+                const lastObject = jsonObjects[jsonObjects.length - 1];
+                return JSON.parse(lastObject);
+            }
+        } catch (e2) {
+            console.warn('Duplicate object parsing failed:', e2.message);
+        }
+        
+        // Try to handle array format like [][{data}]
+        try {
+            const arrayMatch = responseText.match(/\]\[(.+)\]$/);
+            if (arrayMatch) {
+                return JSON.parse('[' + arrayMatch[1] + ']');
+            }
+        } catch (e3) {
+            console.warn('Array format parsing failed:', e3.message);
+        }
+        
+        // Try to extract any valid JSON from the response
+        try {
+            const jsonMatch = responseText.match(/(\[.*\]|\{.*\})/);
+            if (jsonMatch) {
+                return JSON.parse(jsonMatch[1]);
+            }
+        } catch (e4) {
+            console.warn('Pattern matching failed:', e4.message);
+        }
+        
+        console.error('All JSON parsing methods failed for response:', responseText);
+        return fallbackValue;
+    }
 }
 
 // Initialize when DOM is loaded

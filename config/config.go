@@ -1,3 +1,4 @@
+
 package config
 
 import (
@@ -79,8 +80,7 @@ type WorkerConfig struct {
 // Load loads configuration from environment variables
 func Load() (*Config, error) {
 	// Load .env file if it exists
-	// Explicitly load .env from the parent directory relative to the 'google-flights-api' execution context
-	_ = godotenv.Load("../.env")
+	_ = godotenv.Load(".env")
 
 	port := getEnv("PORT", "8080")
 	environment := getEnv("ENVIRONMENT", "development")
@@ -120,7 +120,7 @@ func Load() (*Config, error) {
 	concurrency, _ := strconv.Atoi(getEnv("WORKER_CONCURRENCY", "5"))
 	maxRetries, _ := strconv.Atoi(getEnv("WORKER_MAX_RETRIES", "3"))
 	retryDelay, _ := time.ParseDuration(getEnv("WORKER_RETRY_DELAY", "30s"))
-	jobTimeout, _ := time.ParseDuration(getEnv("WORKER_JOB_TIMEOUT", "5m"))
+	jobTimeout, _ := time.ParseDuration(getEnv("WORKER_JOB_TIMEOUT", "10m"))
 	shutdownTimeout, _ := time.ParseDuration(getEnv("WORKER_SHUTDOWN_TIMEOUT", "30s"))
 
 	workerConfig := WorkerConfig{

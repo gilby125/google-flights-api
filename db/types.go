@@ -52,14 +52,15 @@ type SearchQuery struct {
 
 // FlightOffer represents the data structure for a single flight offer row
 type FlightOffer struct {
-	ID            int
-	SearchQueryID int // Foreign key
-	Price         float64
-	Currency      string
-	DepartureDate time.Time
-	ReturnDate    sql.NullTime
-	TotalDuration int
-	CreatedAt     time.Time
+	ID                int
+	Price             float64
+	Currency          string
+	AirlineCodes      sql.NullString
+	OutboundDuration  sql.NullInt64
+	OutboundStops     sql.NullInt64
+	ReturnDuration    sql.NullInt64
+	ReturnStops       sql.NullInt64
+	CreatedAt         time.Time
 }
 
 // FlightSegment represents the data structure for a single flight segment row
@@ -99,6 +100,9 @@ type JobDetails struct {
 	ReturnDateStart    sql.NullTime
 	ReturnDateEnd      sql.NullTime
 	TripLength         sql.NullInt32
+	DynamicDates       bool             // Use dates relative to execution time
+	DaysFromExecution  sql.NullInt32    // Start searching X days from now
+	SearchWindowDays   sql.NullInt32    // Search within X days window
 	Adults             int
 	Children           int
 	InfantsLap         int

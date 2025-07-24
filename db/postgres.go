@@ -302,10 +302,13 @@ func (p *PostgresDBImpl) GetSearchQueryByID(ctx context.Context, id int) (*Searc
 }
 
 func (p *PostgresDBImpl) GetFlightOffersBySearchID(ctx context.Context, searchID int) (Rows, error) {
-	// Assuming search_query_id is the foreign key in flight_offers
+	// First get the UUID search_id from search_queries table, then query flight_offers
+	// This joins the integer search_queries.id with the UUID flight_offers.search_id
 	return p.db.QueryContext(ctx,
-		`SELECT id, price, currency, departure_date, return_date, total_duration, created_at
-		FROM flight_offers WHERE search_query_id = $1`, // Adjust column name if needed
+		`SELECT fo.id, fo.price, fo.currency, fo.airline_codes, fo.outbound_duration, fo.outbound_stops, fo.return_duration, fo.return_stops, fo.created_at
+		FROM flight_offers fo
+		JOIN search_results sr ON fo.search_id = sr.search_id
+		WHERE sr.search_query_id = $1`,
 		searchID,
 	)
 }
@@ -361,14 +364,14 @@ func (p *PostgresDBImpl) GetJobDetailsByID(ctx context.Context, jobID int) (*Job
 	var details JobDetails
 	err := p.db.QueryRowContext(ctx,
 		`SELECT job_id, origin, destination, departure_date_start, departure_date_end,
-		return_date_start, return_date_end, trip_length, adults, children,
-		infants_lap, infants_seat, trip_type, class, stops
+		return_date_start, return_date_end, trip_length, dynamic_dates, days_from_execution, search_window_days, adults, children,
+		infants_lap, infants_seat, trip_type, class, stops, currency
 		FROM job_details WHERE job_id = $1`,
 		jobID,
 	).Scan(
 		&details.JobID, &details.Origin, &details.Destination, &details.DepartureDateStart, &details.DepartureDateEnd,
-		&details.ReturnDateStart, &details.ReturnDateEnd, &details.TripLength, &details.Adults, &details.Children,
-		&details.InfantsLap, &details.InfantsSeat, &details.TripType, &details.Class, &details.Stops,
+		&details.ReturnDateStart, &details.ReturnDateEnd, &details.TripLength, &details.DynamicDates, &details.DaysFromExecution, &details.SearchWindowDays, &details.Adults, &details.Children,
+		&details.InfantsLap, &details.InfantsSeat, &details.TripType, &details.Class, &details.Stops, &details.Currency,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -376,8 +379,6 @@ func (p *PostgresDBImpl) GetJobDetailsByID(ctx context.Context, jobID int) (*Job
 		}
 		return nil, fmt.Errorf("error getting job details for job ID %d: %w", jobID, err)
 	}
-	// Assuming Currency is not in job_details, set default or fetch separately if needed
-	details.Currency = "USD" // Example default
 	return &details, nil
 }
 
@@ -421,8 +422,11 @@ func (p *PostgresDBImpl) GetJobCronExpression(ctx context.Context, jobID int) (s
 
 func (p *PostgresDBImpl) ListJobs(ctx context.Context) (Rows, error) {
 	return p.db.QueryContext(ctx,
-		`SELECT id, name, cron_expression, enabled, last_run, created_at, updated_at
-		FROM scheduled_jobs ORDER BY created_at DESC`,
+		`SELECT sj.id, sj.name, sj.cron_expression, sj.enabled, sj.last_run, sj.created_at, sj.updated_at,
+				jd.origin, jd.destination, jd.dynamic_dates, jd.days_from_execution, jd.search_window_days, jd.trip_length
+		 FROM scheduled_jobs sj
+		 LEFT JOIN job_details jd ON sj.id = jd.job_id
+		 ORDER BY sj.created_at DESC`,
 	)
 }
 
@@ -443,11 +447,11 @@ func (p *PostgresDBImpl) CreateJobDetails(tx Tx, details JobDetails) error {
 	_, err := tx.ExecContext(context.Background(),
 		`INSERT INTO job_details
 		(job_id, origin, destination, departure_date_start, departure_date_end,
-		return_date_start, return_date_end, trip_length, adults, children,
+		return_date_start, return_date_end, trip_length, dynamic_dates, days_from_execution, search_window_days, adults, children,
 		infants_lap, infants_seat, trip_type, class, stops)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
 		details.JobID, details.Origin, details.Destination, details.DepartureDateStart, details.DepartureDateEnd,
-		details.ReturnDateStart, details.ReturnDateEnd, details.TripLength, details.Adults, details.Children,
+		details.ReturnDateStart, details.ReturnDateEnd, details.TripLength, details.DynamicDates, details.DaysFromExecution, details.SearchWindowDays, details.Adults, details.Children,
 		details.InfantsLap, details.InfantsSeat, details.TripType, details.Class, details.Stops,
 	)
 	if err != nil {
@@ -708,6 +712,9 @@ func (p *PostgresDBImpl) InitSchema() error {
             return_date_start DATE,
             return_date_end DATE,
             trip_length INTEGER,
+            dynamic_dates BOOLEAN DEFAULT FALSE,
+            days_from_execution INTEGER,
+            search_window_days INTEGER,
             adults INTEGER DEFAULT 1,
             children INTEGER DEFAULT 0,
             infants_lap INTEGER DEFAULT 0,
@@ -715,6 +722,7 @@ func (p *PostgresDBImpl) InitSchema() error {
             trip_type VARCHAR(20) DEFAULT 'round_trip',
             class VARCHAR(20) DEFAULT 'economy',
             stops VARCHAR(20) DEFAULT 'any',
+            currency VARCHAR(3) DEFAULT 'USD',
             created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
             updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
         )
@@ -743,7 +751,8 @@ func (p *PostgresDBImpl) InitSchema() error {
             min_price DECIMAL(10, 2),
             max_price DECIMAL(10, 2),
             search_time TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            search_query_id INTEGER REFERENCES search_queries(id)
         )
     `)
 	if err != nil {

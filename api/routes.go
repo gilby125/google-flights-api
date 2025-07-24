@@ -42,7 +42,7 @@ func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Ne
 	router.Use(middleware.ResponseCache(cacheManager, middleware.CacheConfig{
 		TTL:       cache.MediumTTL,
 		KeyPrefix: "http_cache",
-		SkipPaths: []string{"/api/v1/search", "/api/search", "/health"},
+		SkipPaths: []string{"/api/v1/search", "/api/search", "/health", "/api/v1/admin"},
 		OnlyMethods: []string{"GET"},
 	}))
 	
@@ -123,6 +123,7 @@ func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Ne
 			// Job routes
 			admin.GET("/jobs", listJobs(postgresDB))
 			admin.POST("/jobs", createJob(postgresDB, workerManager))
+			admin.POST("/bulk-jobs", createBulkJob(postgresDB, workerManager))
 			admin.GET("/jobs/:id", getJobById(postgresDB))
 			admin.PUT("/jobs/:id", updateJob(postgresDB, workerManager))
 			admin.DELETE("/jobs/:id", DeleteJob(postgresDB, workerManager))
@@ -143,9 +144,22 @@ func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Ne
 		c.Header("Content-Type", "text/html")
 		c.File("./web/search/index.html")
 	})
+	
+	// Search page route - serve index.html directly
+	router.GET("/search", func(c *gin.Context) {
+		c.Header("Content-Type", "text/html")
+		c.File("./web/search/index.html")
+	})
+
+	// Bulk search results page
+	router.GET("/bulk-search", func(c *gin.Context) {
+		c.Header("Content-Type", "text/html")
+		c.File("./web/bulk-search/index.html")
+	})
 
 	// Serve static files for the web UI
 	router.Static("/admin", "./web/admin")
 	router.Static("/search", "./web/search")
+	router.Static("/bulk-search", "./web/bulk-search")
 	router.StaticFile("/", "./web/index.html")
 }

@@ -59,25 +59,52 @@ type BulkSearchRequest struct {
 
 // JobRequest represents a scheduled job request
 type JobRequest struct {
-	Name            string `json:"name" binding:"required"`
-	Origin          string `json:"origin" binding:"required"`
-	Destination     string `json:"destination" binding:"required"`
-	DateStart       string `json:"date_start" binding:"required"`
-	DateEnd         string `json:"date_end" binding:"required"`
-	ReturnDateStart string `json:"return_date_start,omitempty"`
-	ReturnDateEnd   string `json:"return_date_end,omitempty"`
-	TripLength      int    `json:"trip_length,omitempty" binding:"min=0"`
-	Adults          int    `json:"adults" binding:"required,min=1"`
-	Children        int    `json:"children" binding:"min=0"`
-	InfantsLap      int    `json:"infants_lap" binding:"min=0"`
-	InfantsSeat     int    `json:"infants_seat" binding:"min=0"`
-	TripType        string `json:"trip_type" binding:"required,oneof=one_way round_trip"`
-	Class           string `json:"class" binding:"required,oneof=economy premium_economy business first"`
-	Stops           string `json:"stops" binding:"required,oneof=nonstop one_stop two_stops any"`
-	Currency        string `json:"currency" binding:"required,len=3"`
-	Interval        string `json:"interval" binding:"required"`
-	Time            string `json:"time" binding:"required"`
-	CronExpression  string `json:"cron_expression" binding:"required"`
+	Name              string `json:"name" binding:"required"`
+	Origin            string `json:"origin" binding:"required"`
+	Destination       string `json:"destination" binding:"required"`
+	DateStart         string `json:"date_start" binding:"required"`
+	DateEnd           string `json:"date_end" binding:"required"`
+	ReturnDateStart   string `json:"return_date_start,omitempty"`
+	ReturnDateEnd     string `json:"return_date_end,omitempty"`
+	TripLength        int    `json:"trip_length,omitempty" binding:"min=0"`
+	DynamicDates      bool   `json:"dynamic_dates,omitempty"`          // Use dates relative to execution time
+	DaysFromExecution int    `json:"days_from_execution,omitempty"`    // Start searching X days from now
+	SearchWindowDays  int    `json:"search_window_days,omitempty"`     // Search within X days window
+	Adults            int    `json:"adults" binding:"required,min=1"`
+	Children          int    `json:"children" binding:"min=0"`
+	InfantsLap        int    `json:"infants_lap" binding:"min=0"`
+	InfantsSeat       int    `json:"infants_seat" binding:"min=0"`
+	TripType          string `json:"trip_type" binding:"required,oneof=one_way round_trip"`
+	Class             string `json:"class" binding:"required,oneof=economy premium_economy business first"`
+	Stops             string `json:"stops" binding:"required,oneof=nonstop one_stop two_stops any"`
+	Currency          string `json:"currency" binding:"required,len=3"`
+	Interval          string `json:"interval" binding:"required"`
+	Time              string `json:"time" binding:"required"`
+	CronExpression    string `json:"cron_expression" binding:"required"`
+}
+
+// BulkJobRequest represents a request to create a scheduled bulk search job
+type BulkJobRequest struct {
+	Name               string   `json:"name" binding:"required"`
+	Origins            []string `json:"origins" binding:"required,min=1"`
+	Destinations       []string `json:"destinations" binding:"required,min=1"`
+	DateStart          string   `json:"date_start" binding:"required"`
+	DateEnd            string   `json:"date_end" binding:"required"`
+	ReturnDateStart    string   `json:"return_date_start,omitempty"`
+	ReturnDateEnd      string   `json:"return_date_end,omitempty"`
+	TripLength         int      `json:"trip_length,omitempty" binding:"min=0"`
+	DynamicDates       bool     `json:"dynamic_dates,omitempty"`          // Use dates relative to execution time
+	DaysFromExecution  int      `json:"days_from_execution,omitempty"`    // Start searching X days from now
+	SearchWindowDays   int      `json:"search_window_days,omitempty"`     // Search within X days window
+	Adults             int      `json:"adults" binding:"required,min=1"`
+	Children           int      `json:"children" binding:"min=0"`
+	InfantsLap         int      `json:"infants_lap" binding:"min=0"`
+	InfantsSeat        int      `json:"infants_seat" binding:"min=0"`
+	TripType           string   `json:"trip_type" binding:"required,oneof=one_way round_trip"`
+	Class              string   `json:"class" binding:"required,oneof=economy premium_economy business first"`
+	Stops              string   `json:"stops" binding:"required,oneof=nonstop one_stop two_stops any"`
+	Currency           string   `json:"currency" binding:"required,len=3"`
+	CronExpression     string   `json:"cron_expression" binding:"required"`
 }
 
 // getAirports returns a handler for getting all airports
@@ -304,7 +331,7 @@ func GetSearchByID(pgDB db.PostgresDB) gin.HandlerFunc {
 		offers := []map[string]interface{}{}
 		for offerRows.Next() {
 			var offer db.FlightOffer // Use the defined struct
-			if err := offerRows.Scan(&offer.ID, &offer.Price, &offer.Currency, &offer.DepartureDate, &offer.ReturnDate, &offer.TotalDuration, &offer.CreatedAt); err != nil {
+			if err := offerRows.Scan(&offer.ID, &offer.Price, &offer.Currency, &offer.AirlineCodes, &offer.OutboundDuration, &offer.OutboundStops, &offer.ReturnDuration, &offer.ReturnStops, &offer.CreatedAt); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scan flight offer: " + err.Error()})
 				return
 			}
@@ -336,17 +363,27 @@ func GetSearchByID(pgDB db.PostgresDB) gin.HandlerFunc {
 			}
 
 			offerMap := map[string]interface{}{
-				"id":             offer.ID,
-				"price":          offer.Price,
-				"currency":       offer.Currency,
-				"departure_date": offer.DepartureDate,
-				"total_duration": offer.TotalDuration,
-				"created_at":     offer.CreatedAt,
-				"segments":       segments, // Use the struct slice directly
+				"id":         offer.ID,
+				"price":      offer.Price,
+				"currency":   offer.Currency,
+				"created_at": offer.CreatedAt,
+				"segments":   segments, // Use the struct slice directly
 			}
 
-			if offer.ReturnDate.Valid {
-				offerMap["return_date"] = offer.ReturnDate.Time
+			if offer.AirlineCodes.Valid {
+				offerMap["airline_codes"] = offer.AirlineCodes.String
+			}
+			if offer.OutboundDuration.Valid {
+				offerMap["outbound_duration"] = offer.OutboundDuration.Int64
+			}
+			if offer.OutboundStops.Valid {
+				offerMap["outbound_stops"] = offer.OutboundStops.Int64
+			}
+			if offer.ReturnDuration.Valid {
+				offerMap["return_duration"] = offer.ReturnDuration.Int64
+			}
+			if offer.ReturnStops.Valid {
+				offerMap["return_stops"] = offer.ReturnStops.Int64
 			}
 
 			offers = append(offers, offerMap)
@@ -809,20 +846,33 @@ func getPriceHistory(neo4jDB db.Neo4jDatabase) gin.HandlerFunc {
 // listJobs returns a handler for listing all scheduled jobs
 func listJobs(pgDB db.PostgresDB) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		log.Printf("ListJobs called") // Debug log
 		rows, err := pgDB.ListJobs(c.Request.Context())
 		if err != nil {
+			log.Printf("ListJobs query error: %v", err) // Debug log
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list jobs: " + err.Error()})
 			return
 		}
 		defer rows.Close()
+		log.Printf("ListJobs query successful, starting to scan rows") // Debug log
 
 		jobs := []map[string]interface{}{}
 		for rows.Next() {
 			var job db.ScheduledJob // Use the defined struct
-			if err := rows.Scan(&job.ID, &job.Name, &job.CronExpression, &job.Enabled, &job.LastRun, &job.CreatedAt, &job.UpdatedAt); err != nil {
+			
+			// Variables for the job details from LEFT JOIN
+			var origin, destination sql.NullString
+			var dynamicDates sql.NullBool
+			var daysFromExecution, searchWindowDays, tripLength sql.NullInt32
+			
+			if err := rows.Scan(&job.ID, &job.Name, &job.CronExpression, &job.Enabled, &job.LastRun, &job.CreatedAt, &job.UpdatedAt,
+				&origin, &destination, &dynamicDates, &daysFromExecution, &searchWindowDays, &tripLength); err != nil {
+				log.Printf("Scan error: %v", err) // Debug log
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scan job: " + err.Error()})
 				return
 			}
+			
+			log.Printf("Scanned job %d: %s (origin=%v, dest=%v, dynamic=%v)", job.ID, job.Name, origin.String, destination.String, dynamicDates.Bool)
 
 			jobMap := map[string]interface{}{
 				"id":              job.ID,
@@ -838,6 +888,34 @@ func listJobs(pgDB db.PostgresDB) gin.HandlerFunc {
 			} else {
 				jobMap["last_run"] = nil // Explicitly set null if not valid
 			}
+
+			// Add job details from database
+			details := map[string]interface{}{}
+			
+			if origin.Valid && destination.Valid {
+				// Use real data from database
+				details["origin"] = origin.String
+				details["destination"] = destination.String
+				details["dynamic_dates"] = dynamicDates.Bool
+				
+				if daysFromExecution.Valid {
+					details["days_from_execution"] = daysFromExecution.Int32
+				}
+				if searchWindowDays.Valid {
+					details["search_window_days"] = searchWindowDays.Int32
+				}
+				if tripLength.Valid {
+					details["trip_length"] = tripLength.Int32
+				}
+			} else {
+				// Fallback - this should not happen for properly created jobs
+				log.Printf("Job %d has no details in database", job.ID)
+				details["origin"] = "N/A"
+				details["destination"] = "N/A"
+				details["dynamic_dates"] = false
+			}
+			
+			jobMap["details"] = details
 
 			jobs = append(jobs, jobMap)
 		}
@@ -925,6 +1003,7 @@ func createJob(pgDB db.PostgresDB, workerManager *worker.Manager) gin.HandlerFun
 			Destination:        req.Destination,
 			DepartureDateStart: dateStart,
 			DepartureDateEnd:   dateEnd,
+			DynamicDates:       req.DynamicDates,
 			Adults:             req.Adults,
 			Children:           req.Children,
 			InfantsLap:         req.InfantsLap,
@@ -943,13 +1022,23 @@ func createJob(pgDB db.PostgresDB, workerManager *worker.Manager) gin.HandlerFun
 		if req.TripLength > 0 { // Assuming 0 means not set
 			details.TripLength = sql.NullInt32{Int32: int32(req.TripLength), Valid: true}
 		}
+		if req.DaysFromExecution > 0 {
+			details.DaysFromExecution = sql.NullInt32{Int32: int32(req.DaysFromExecution), Valid: true}
+		}
+		if req.SearchWindowDays > 0 {
+			details.SearchWindowDays = sql.NullInt32{Int32: int32(req.SearchWindowDays), Valid: true}
+		}
 
 		// Insert the job details
+		log.Printf("Creating job details for job ID %d: origin=%s, destination=%s, dynamic_dates=%v", 
+			jobID, req.Origin, req.Destination, req.DynamicDates)
 		err = pgDB.CreateJobDetails(tx, details)
 		if err != nil {
+			log.Printf("Failed to create job details: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create job details: " + err.Error()})
 			return
 		}
+		log.Printf("Successfully created job details for job ID %d", jobID)
 
 		// Commit the transaction
 		if err := tx.Commit(); err != nil {
@@ -1541,5 +1630,150 @@ func MockPriceHistoryHandler() gin.HandlerFunc {
 		}
 
 		c.JSON(http.StatusOK, priceHistory)
+	}
+}
+
+// createBulkJob returns a handler for creating a new scheduled bulk search job
+func createBulkJob(pgDB db.PostgresDB, workerManager *worker.Manager) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var req BulkJobRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		if req.CronExpression == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "CronExpression is required"})
+			return
+		}
+
+		// Parse date strings
+		dateStart, err := time.Parse("2006-01-02", req.DateStart)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid date_start format. Use YYYY-MM-DD: " + err.Error()})
+			return
+		}
+		dateEnd, err := time.Parse("2006-01-02", req.DateEnd)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid date_end format. Use YYYY-MM-DD: " + err.Error()})
+			return
+		}
+
+		var returnDateStart, returnDateEnd sql.NullTime
+		if req.ReturnDateStart != "" {
+			parsedDate, err := time.Parse("2006-01-02", req.ReturnDateStart)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid return_date_start format. Use YYYY-MM-DD: " + err.Error()})
+				return
+			}
+			returnDateStart = sql.NullTime{Time: parsedDate, Valid: true}
+		}
+		if req.ReturnDateEnd != "" {
+			parsedDate, err := time.Parse("2006-01-02", req.ReturnDateEnd)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid return_date_end format. Use YYYY-MM-DD: " + err.Error()})
+				return
+			}
+			returnDateEnd = sql.NullTime{Time: parsedDate, Valid: true}
+		}
+
+		// Create multiple scheduled jobs - one for each origin/destination combination
+		createdJobs := []map[string]interface{}{}
+		
+		for _, origin := range req.Origins {
+			for _, destination := range req.Destinations {
+				// Create job name
+				jobName := fmt.Sprintf("%s: %s→%s", req.Name, origin, destination)
+				
+				// Begin transaction for each job
+				tx, err := pgDB.BeginTx(c.Request.Context())
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to begin transaction: " + err.Error()})
+					return
+				}
+
+				// Create the scheduled job
+				jobID, err := pgDB.CreateScheduledJob(tx, jobName, req.CronExpression, true)
+				if err != nil {
+					tx.Rollback()
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create scheduled job: " + err.Error()})
+					return
+				}
+
+				// Create job details with nullable fields
+				var tripLength sql.NullInt32
+				if req.TripLength > 0 {
+					tripLength = sql.NullInt32{Int32: int32(req.TripLength), Valid: true}
+				}
+				
+				var daysFromExecution sql.NullInt32
+				if req.DaysFromExecution > 0 {
+					daysFromExecution = sql.NullInt32{Int32: int32(req.DaysFromExecution), Valid: true}
+				}
+				
+				var searchWindowDays sql.NullInt32
+				if req.SearchWindowDays > 0 {
+					searchWindowDays = sql.NullInt32{Int32: int32(req.SearchWindowDays), Valid: true}
+				}
+
+				details := db.JobDetails{
+					JobID:             jobID,
+					Origin:            origin,
+					Destination:       destination,
+					DepartureDateStart: dateStart,
+					DepartureDateEnd:   dateEnd,
+					ReturnDateStart:    returnDateStart,
+					ReturnDateEnd:      returnDateEnd,
+					TripLength:        tripLength,
+					DynamicDates:      req.DynamicDates,
+					DaysFromExecution: daysFromExecution,
+					SearchWindowDays:  searchWindowDays,
+					Adults:            req.Adults,
+					Children:          req.Children,
+					InfantsLap:        req.InfantsLap,
+					InfantsSeat:       req.InfantsSeat,
+					TripType:          req.TripType,
+					Class:             req.Class,
+					Stops:             req.Stops,
+					Currency:          req.Currency,
+				}
+
+				if err := pgDB.CreateJobDetails(tx, details); err != nil {
+					tx.Rollback()
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create job details: " + err.Error()})
+					return
+				}
+
+				// Commit the transaction
+				if err := tx.Commit(); err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to commit transaction: " + err.Error()})
+					return
+				}
+
+				createdJobs = append(createdJobs, map[string]interface{}{
+					"id":              jobID,
+					"name":            jobName,
+					"origin":          origin,
+					"destination":     destination,
+					"cron_expression": req.CronExpression,
+				})
+
+				log.Printf("Created scheduled bulk search job: %s (ID: %d)", jobName, jobID)
+			}
+		}
+
+		// Restart the scheduler to pick up the new jobs
+		if scheduler := workerManager.GetScheduler(); scheduler != nil {
+			log.Printf("Restarting scheduler to load new bulk search jobs")
+			scheduler.Stop()
+			if err := scheduler.Start(); err != nil {
+				log.Printf("Warning: Failed to restart scheduler: %v", err)
+			}
+		}
+
+		c.JSON(http.StatusCreated, gin.H{
+			"message": fmt.Sprintf("Created %d scheduled bulk search jobs", len(createdJobs)),
+			"jobs":    createdJobs,
+		})
 	}
 }

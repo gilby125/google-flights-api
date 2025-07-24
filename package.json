@@ -1,0 +1,30 @@
+{
+  "name": "google-flights-api",
+  "version": "1.0.0",
+  "description": "[![Go Reference](https://pkg.go.dev/badge/github.com/krisukox/google-flights-api/flights.svg)](https://pkg.go.dev/github.com/krisukox/google-flights-api/flights)",
+  "main": "index.js",
+  "directories": {
+    "example": "examples",
+    "test": "test"
+  },
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:debug": "playwright test --debug",
+    "test:report": "playwright show-report"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gilby125/google-flights-api.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/gilby125/google-flights-api/issues"
+  },
+  "homepage": "https://github.com/gilby125/google-flights-api#readme",
+  "devDependencies": {
+    "@playwright/test": "^1.54.1"
+  }
+}

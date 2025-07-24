@@ -1,0 +1,22 @@
+{
+  "name": "Test Dynamic Date Job",
+  "origin": "JFK",
+  "destination": "LAX",
+  "date_start": "2025-08-15",
+  "date_end": "2025-08-15",
+  "trip_type": "one_way",
+  "class": "economy",
+  "stops": "any",
+  "adults": 1,
+  "children": 0,
+  "infants_lap": 0,
+  "infants_seat": 0,
+  "currency": "USD",
+  "interval": "daily",
+  "time": "09:00",
+  "cron_expression": "0 9 * * *",
+  "dynamic_dates": true,
+  "days_from_execution": 14,
+  "search_window_days": 7,
+  "trip_length": 7
+}

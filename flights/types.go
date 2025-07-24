@@ -258,6 +258,11 @@ func (a *PriceGraphArgs) Validate() error {
 	a.RangeStartDate = truncateToDay(a.RangeStartDate)
 	a.RangeEndDate = truncateToDay(a.RangeEndDate)
 
+	// Auto-adjust end date for single-day searches to create a valid range
+	if a.RangeEndDate.Equal(a.RangeStartDate) {
+		a.RangeEndDate = a.RangeStartDate.AddDate(0, 0, 1) // Add 1 day
+	}
+
 	if err := validateRangeDate(a.RangeStartDate, a.RangeEndDate); err != nil {
 		return err
 	}

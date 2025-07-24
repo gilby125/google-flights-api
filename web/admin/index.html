@@ -221,7 +221,7 @@
                                 <div class="row">
                                     <div class="col-md-6">
                                         <label for="interval" class="form-label">Interval</label>
-                                        <select class="form-select" id="interval" required>
+                                        <select class="form-select" id="interval" required onchange="updateCronPreview()">
                                             <option value="daily">Daily</option>
                                             <option value="weekly">Weekly</option>
                                             <option value="monthly">Monthly</option>
@@ -229,8 +229,11 @@
                                     </div>
                                     <div class="col-md-6">
                                         <label for="time" class="form-label">Time</label>
-                                        <input type="time" class="form-control" id="time" value="12:00" required>
+                                        <input type="time" class="form-control" id="time" value="12:00" required onchange="updateCronPreview()">
                                     </div>
+                                </div>
+                                <div class="mt-2">
+                                    <small class="text-muted">Cron Expression: <code id="cronPreview">0 12 * * *</code></small>
                                 </div>
                             </div>
                         </div>
@@ -245,24 +248,63 @@
                                 <input type="text" class="form-control" id="destination" placeholder="LAX" required>
                             </div>
                         </div>
-                        <div class="row mb-3">
-                            <div class="col-md-6">
-                                <label for="dateStart" class="form-label">Date Start</label>
-                                <input type="date" class="form-control" id="dateStart" required>
+                        <div class="mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="dynamicDates" onchange="toggleDateMode()">
+                                <label class="form-check-label" for="dynamicDates">
+                                    Dynamic Dates (Calculate dates relative to execution time)
+                                </label>
                             </div>
-                            <div class="col-md-6">
-                                <label for="dateEnd" class="form-label">Date End</label>
-                                <input type="date" class="form-control" id="dateEnd" required>
+                            <small class="text-muted">When enabled, searches will always look ahead from when the job runs, not fixed dates.</small>
+                        </div>
+
+                        <!-- Static Date Fields -->
+                        <div id="staticDateFields">
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <label for="dateStart" class="form-label">Date Start</label>
+                                    <input type="date" class="form-control" id="dateStart" required>
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="dateEnd" class="form-label">Date End</label>
+                                    <input type="date" class="form-control" id="dateEnd" required>
+                                </div>
+                            </div>
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <label for="returnDateStart" class="form-label">Return Date Start</label>
+                                    <input type="date" class="form-control" id="returnDateStart">
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="returnDateEnd" class="form-label">Return Date End</label>
+                                    <input type="date" class="form-control" id="returnDateEnd">
+                                </div>
                             </div>
                         </div>
-                        <div class="row mb-3">
-                            <div class="col-md-6">
-                                <label for="returnDateStart" class="form-label">Return Date Start</label>
-                                <input type="date" class="form-control" id="returnDateStart">
+
+                        <!-- Dynamic Date Fields -->
+                        <div id="dynamicDateFields" style="display: none;">
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <label for="daysFromExecution" class="form-label">Days from Execution</label>
+                                    <input type="number" class="form-control" id="daysFromExecution" min="0" value="14" placeholder="14">
+                                    <small class="text-muted">Start searching X days from when job runs (e.g., 14 = 2 weeks ahead)</small>
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="searchWindowDays" class="form-label">Search Window (Days)</label>
+                                    <input type="number" class="form-control" id="searchWindowDays" min="1" value="7" placeholder="7">
+                                    <small class="text-muted">Search within X consecutive days (e.g., 7 = 1 week window)</small>
+                                </div>
                             </div>
-                            <div class="col-md-6">
-                                <label for="returnDateEnd" class="form-label">Return Date End</label>
-                                <input type="date" class="form-control" id="returnDateEnd">
+                            <div class="mb-3">
+                                <label for="tripLength" class="form-label">Trip Length (Days)</label>
+                                <input type="number" class="form-control" id="tripLength" min="1" value="7" placeholder="7">
+                                <small class="text-muted">For round trips: return flight X days after departure</small>
+                            </div>
+                            <div class="alert alert-info">
+                                <i class="bi bi-info-circle me-2"></i>
+                                <strong>Example:</strong> With "Days from Execution: 14" and "Search Window: 7", 
+                                a job running today will search for flights departing 14-21 days from today.
                             </div>
                         </div>
                         <div class="row mb-3">

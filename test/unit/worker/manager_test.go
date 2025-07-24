@@ -54,7 +54,14 @@ func setupManagerTest(cfg config.WorkerConfig) (*worker.Manager, *mocks.MockQueu
 
 func TestManager_Start(t *testing.T) {
 	cfg := config.WorkerConfig{Concurrency: 2, JobTimeout: 5 * time.Second, ShutdownTimeout: 1 * time.Second}
-	manager, mockQueue, _, _, _ := setupManagerTest(cfg)
+	manager, mockQueue, mockPgDb, _, _ := setupManagerTest(cfg)
+
+	// Mock the ListJobs call that the scheduler makes on startup
+	mockRows := new(mocks.MockRows)
+	mockPgDb.On("ListJobs", mock.Anything).Return(mockRows, nil)
+	mockRows.On("Next").Return(false) // No scheduled jobs
+	mockRows.On("Close").Return(nil)
+	mockRows.On("Err").Return(nil)
 
 	// Mock Dequeue to simulate workers starting and looking for jobs
 	// Expect Dequeue to be called multiple times by the workers for both queues
@@ -95,7 +102,14 @@ func TestManager_Start(t *testing.T) {
 
 func TestManager_Stop(t *testing.T) {
 	cfg := config.WorkerConfig{Concurrency: 1, JobTimeout: 5 * time.Second, ShutdownTimeout: 1 * time.Second}
-	manager, mockQueue, _, _, _ := setupManagerTest(cfg)
+	manager, mockQueue, mockPgDb, _, _ := setupManagerTest(cfg)
+
+	// Mock the ListJobs call that the scheduler makes on startup
+	mockRows := new(mocks.MockRows)
+	mockPgDb.On("ListJobs", mock.Anything).Return(mockRows, nil)
+	mockRows.On("Next").Return(false) // No scheduled jobs
+	mockRows.On("Close").Return(nil)
+	mockRows.On("Err").Return(nil)
 
 	// Mock Dequeue to simulate a worker running
 	dequeued := make(chan bool, 1)
@@ -142,6 +156,13 @@ func TestManager_JobProcessingFlow(t *testing.T) {
 
 	// --- Test Successful Job ---
 	t.Run("Successful Job", func(t *testing.T) {
+		// Mock the ListJobs call that the scheduler makes on startup
+		mockRows := new(mocks.MockRows)
+		mockPgDb.On("ListJobs", mock.Anything).Return(mockRows, nil)
+		mockRows.On("Next").Return(false) // No scheduled jobs
+		mockRows.On("Close").Return(nil)
+		mockRows.On("Err").Return(nil)
+
 		// Define payload struct and marshal it
 		payloadStruct := worker.FlightSearchPayload{
 			Origin:        "JFK",
@@ -246,6 +267,13 @@ func TestManager_JobProcessingFlow(t *testing.T) {
 		mockPgDb := new(mocks.MockPostgresDB)
 		mockNeo4jDb := new(mocks.MockNeo4jDatabase)
 		manager := worker.NewManager(mockQueue, mockPgDb, mockNeo4jDb, cfg) // Recreate manager with fresh mocks
+
+		// Mock the ListJobs call that the scheduler makes on startup
+		mockRowsFail := new(mocks.MockRows)
+		mockPgDb.On("ListJobs", mock.Anything).Return(mockRowsFail, nil)
+		mockRowsFail.On("Next").Return(false) // No scheduled jobs
+		mockRowsFail.On("Close").Return(nil)
+		mockRowsFail.On("Err").Return(nil)
 
 		// Define payload struct and marshal it
 		payloadStruct := worker.FlightSearchPayload{
@@ -389,6 +417,13 @@ func TestManager_JobPrioritization(t *testing.T) {
 	// FIX: Allow Nack for bulk search queue in case of unexpected errors during processing
 	mockQueue.On("Nack", mock.Anything, "bulk_search", bulkJob.ID).Return(nil).Maybe()
 
+	// Mock the ListJobs call that the scheduler makes on startup
+	mockRowsPriority := new(mocks.MockRows)
+	mockPgDb.On("ListJobs", mock.Anything).Return(mockRowsPriority, nil)
+	mockRowsPriority.On("Next").Return(false) // No scheduled jobs
+	mockRowsPriority.On("Close").Return(nil)
+	mockRowsPriority.On("Err").Return(nil)
+
 	// --- Corrected DB & Neo4j Mocks for Prioritization Test ---
 	// Mock calls for flightJob (flight_search)
 	mockTxFlight := new(mocks.MockTx)
@@ -467,7 +502,14 @@ func TestManager_JobPrioritization(t *testing.T) {
 func TestManager_ConcurrencyConfig(t *testing.T) {
 	concurrency := 3
 	cfg := config.WorkerConfig{Concurrency: concurrency, JobTimeout: 1 * time.Second, ShutdownTimeout: 1 * time.Second}
-	manager, mockQueue, _, _, _ := setupManagerTest(cfg)
+	manager, mockQueue, mockPgDb, _, _ := setupManagerTest(cfg)
+
+	// Mock the ListJobs call that the scheduler makes on startup
+	mockRowsConcurrency := new(mocks.MockRows)
+	mockPgDb.On("ListJobs", mock.Anything).Return(mockRowsConcurrency, nil)
+	mockRowsConcurrency.On("Next").Return(false) // No scheduled jobs
+	mockRowsConcurrency.On("Close").Return(nil)
+	mockRowsConcurrency.On("Err").Return(nil)
 
 	// Mock Dequeue to check how many workers are potentially calling it
 	var callCount int32

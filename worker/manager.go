@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"sync"
 	"time"
 
@@ -163,6 +164,11 @@ func (m *Manager) processQueue(worker *Worker, queueName string) error {
 	// Create a context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), m.config.JobTimeout)
 	defer cancel()
+	
+	// Log context deadline for debugging
+	if deadline, ok := ctx.Deadline(); ok {
+		log.Printf("Created context with deadline: %v (timeout: %v)", deadline.Format("15:04:05"), m.config.JobTimeout)
+	}
 
 	// Dequeue a job
 	job, err := m.queue.Dequeue(ctx, queueName)
@@ -179,12 +185,21 @@ func (m *Manager) processQueue(worker *Worker, queueName string) error {
 		return nil
 	}
 
-	log.Printf("Processing %s job %s", queueName, job.ID)
+	jobStartTime := time.Now()
+	log.Printf("Processing %s job %s (started at %v)", queueName, job.ID, jobStartTime.Format("15:04:05"))
 
 	// Process the job
 	err = m.processJob(ctx, worker, queueName, job)
+	jobDuration := time.Since(jobStartTime)
+	
 	if err != nil {
-		log.Printf("Error processing job %s: %v", job.ID, err)
+		log.Printf("Error processing job %s after %v: %v", job.ID, jobDuration, err)
+		
+		// Check if context deadline was exceeded
+		if ctx.Err() == context.DeadlineExceeded {
+			log.Printf("Job %s timed out after %v (deadline exceeded)", job.ID, jobDuration)
+		}
+		
 		// Nack the job
 		if nackErr := m.queue.Nack(ctx, queueName, job.ID); nackErr != nil {
 			log.Printf("Error nacking job %s: %v", job.ID, nackErr)
@@ -198,28 +213,34 @@ func (m *Manager) processQueue(worker *Worker, queueName string) error {
 		return fmt.Errorf("failed to ack job: %w", ackErr)
 	}
 
-	log.Printf("Completed %s job %s", queueName, job.ID)
+	log.Printf("Completed %s job %s in %v", queueName, job.ID, jobDuration)
 	return nil
 }
 
 // processJob processes a job based on its type
 func (m *Manager) processJob(ctx context.Context, worker *Worker, queueName string, job *queue.Job) error {
-	// Get or create a flight session
-	session, err := m.getFlightSession()
-	if err != nil {
-		return fmt.Errorf("failed to get flight session: %w", err)
-	}
-
 	switch queueName {
 	case "flight_search":
+		// Get cached session for direct search (works fine)
+		session, err := m.getFlightSession("direct_search")
+		if err != nil {
+			return fmt.Errorf("failed to get flight session: %w", err)
+		}
+
 		var payload FlightSearchPayload
 		if err := json.Unmarshal(job.Payload, &payload); err != nil {
 			return fmt.Errorf("failed to unmarshal flight search payload: %w", err)
 		}
 
 		// Process the flight search
-		return m.processFlightSearch(ctx, worker, session, payload) // processFlightSearch calls worker.StoreFlightOffers internally
+		return m.processFlightSearch(ctx, worker, session, payload)
 	case "bulk_search":
+		// Get fresh session for bulk search (avoids stale session issues)
+		session, err := m.getFlightSession("bulk_search")
+		if err != nil {
+			return fmt.Errorf("failed to get flight session: %w", err)
+		}
+
 		var payload BulkSearchPayload
 		if err := json.Unmarshal(job.Payload, &payload); err != nil {
 			return fmt.Errorf("failed to unmarshal bulk search payload: %w", err)
@@ -233,10 +254,22 @@ func (m *Manager) processJob(ctx context.Context, worker *Worker, queueName stri
 	}
 }
 
-// getFlightSession gets or creates a flight session
-func (m *Manager) getFlightSession() (*flights.Session, error) {
-	// Use a simple round-robin approach for now
-	sessionKey := "default"
+// getFlightSession gets or creates a flight session based on session type
+func (m *Manager) getFlightSession(sessionType string) (*flights.Session, error) {
+	var sessionKey string
+	
+	// Use consistent caching strategy for both search types since regular search works fine
+	switch sessionType {
+	case "bulk_search":
+		// Use cached session like direct search for better reliability
+		sessionKey = "bulk_search"
+	case "direct_search":
+		// Use cached session for direct search (works fine)
+		sessionKey = "direct_search"
+	default:
+		// Fallback to default behavior
+		sessionKey = "default"
+	}
 
 	// Check if we have a cached session
 	m.cacheMutex.RLock()
@@ -327,6 +360,14 @@ func (m *Manager) processFlightSearch(ctx context.Context, worker *Worker, sessi
 
 // processBulkSearch processes a bulk search job
 func (m *Manager) processBulkSearch(ctx context.Context, worker *Worker, session *flights.Session, payload BulkSearchPayload) error {
+	// Validate origins and destinations
+	if len(payload.Origins) == 0 {
+		return fmt.Errorf("bulk search payload requires at least one origin")
+	}
+	if len(payload.Destinations) == 0 {
+		return fmt.Errorf("bulk search payload requires at least one destination")
+	}
+
 	// Map the payload to flights API arguments
 	var tripType flights.TripType
 	switch payload.TripType {
@@ -350,93 +391,213 @@ func (m *Manager) processBulkSearch(ctx context.Context, worker *Worker, session
 	flightClass := parseClass(payload.Class)
 	flightStops := parseStops(payload.Stops)
 
-	// FIX: Use the first origin/destination from the slices
-	var origin string
-	if len(payload.Origins) > 0 {
-		origin = payload.Origins[0]
-	} else {
-		log.Printf("Warning: Bulk search payload has empty Origins slice.")
-		// Optionally return an error or handle as appropriate
-		// return fmt.Errorf("bulk search payload requires at least one origin")
-	}
-	var destination string
-	if len(payload.Destinations) > 0 {
-		destination = payload.Destinations[0]
-	} else {
-		log.Printf("Warning: Bulk search payload has empty Destinations slice.")
-		// Optionally return an error or handle as appropriate
-		// return fmt.Errorf("bulk search payload requires at least one destination")
-	}
+	// Process all origin/destination combinations to find lowest fares
+	totalRoutes := len(payload.Origins) * len(payload.Destinations)
+	log.Printf("Starting bulk search: %d origins × %d destinations = %d route combinations", 
+		len(payload.Origins), len(payload.Destinations), totalRoutes)
 
-	// Get price graph data
-	offers, err := session.GetPriceGraph(
-		ctx,
-		flights.PriceGraphArgs{
-			RangeStartDate: payload.DepartureDateFrom,
-			RangeEndDate:   payload.DepartureDateTo,
-			TripLength:     payload.TripLength,
-			SrcAirports:    []string{origin},      // Use extracted origin
-			DstAirports:    []string{destination}, // Use extracted destination
-			Options: flights.Options{
-				Travelers: flights.Travelers{
-					Adults:       payload.Adults,
-					Children:     payload.Children,
-					InfantOnLap:  payload.InfantsLap,
-					InfantInSeat: payload.InfantsSeat,
-				},
-				Currency: cur,
-				Stops:    flightStops, // Use parsed value
-				Class:    flightClass, // Use parsed value
-				TripType: tripType,
-				Lang:     language.English,
-			},
-		},
-	)
-	if err != nil {
-		return fmt.Errorf("failed to get price graph data: %w", err)
-	}
+	// Calculate date range for searches
+	dateRange := m.generateDateRange(payload.DepartureDateFrom, payload.DepartureDateTo, payload.TripLength)
+	log.Printf("Searching across %d dates: %s to %s", len(dateRange), 
+		payload.DepartureDateFrom.Format("2006-01-02"), payload.DepartureDateTo.Format("2006-01-02"))
 
-	// Convert Offer to FullOffer
-	fullOffers := make([]flights.FullOffer, 0, len(offers))
-	for _, offer := range offers {
-		fullOffer := flights.FullOffer{
-			Offer:          offer,
-			SrcAirportCode: origin,      // Use extracted origin
-			DstAirportCode: destination, // Use extracted destination
-			// We don't have flight details from price graph, so we'll leave other fields empty
-			Flight:         []flights.Flight{},
-			FlightDuration: 0,
+	// Track lowest fares for each route
+	type RouteLowestFare struct {
+		Route        string
+		Origin       string
+		Destination  string
+		BestOffer    flights.FullOffer
+		BestDate     time.Time
+		BestReturn   time.Time
+		SearchedDates int
+		TotalOffers  int
+	}
+	
+	routeResults := make(map[string]*RouteLowestFare)
+	var searchErrors []error
+	
+	for _, origin := range payload.Origins {
+		for _, destination := range payload.Destinations {
+			routeKey := fmt.Sprintf("%s-%s", origin, destination)
+			log.Printf("Processing route: %s", routeKey)
+			
+			routeResult := &RouteLowestFare{
+				Route:       routeKey,
+				Origin:      origin,
+				Destination: destination,
+				BestOffer:   flights.FullOffer{Offer: flights.Offer{Price: math.MaxFloat64}}, // Initialize with max price
+			}
+			
+			// Search across all dates in range to find lowest fare
+			for _, searchDate := range dateRange {
+				var returnDate time.Time
+				if tripType == flights.RoundTrip {
+					if payload.TripLength > 0 {
+						returnDate = searchDate.AddDate(0, 0, payload.TripLength)
+					} else {
+						// Use return date range midpoint if no trip length specified
+						returnDateRange := payload.ReturnDateTo.Sub(payload.ReturnDateFrom)
+						returnDate = payload.ReturnDateFrom.Add(returnDateRange / 2)
+					}
+				}
+
+				// Search for flights on this specific date
+				offers, priceRange, err := session.GetOffers(
+					ctx,
+					flights.Args{
+						Date:        searchDate,
+						ReturnDate:  returnDate,
+						SrcAirports: []string{origin},
+						DstAirports: []string{destination},
+						Options: flights.Options{
+							Travelers: flights.Travelers{
+								Adults:       payload.Adults,
+								Children:     payload.Children,
+								InfantOnLap:  payload.InfantsLap,
+								InfantInSeat: payload.InfantsSeat,
+							},
+							Currency: cur,
+							Stops:    flightStops,
+							Class:    flightClass,
+							TripType: tripType,
+							Lang:     language.English,
+						},
+					},
+				)
+
+				if err != nil {
+					log.Printf("Error searching %s -> %s on %s: %v", origin, destination, searchDate.Format("2006-01-02"), err)
+					searchErrors = append(searchErrors, fmt.Errorf("search %s->%s on %s failed: %w", origin, destination, searchDate.Format("2006-01-02"), err))
+					continue
+				}
+
+				routeResult.SearchedDates++
+				routeResult.TotalOffers += len(offers)
+				
+				// Find the lowest price offer from this date
+				for _, offer := range offers {
+					if offer.Price < routeResult.BestOffer.Price {
+						routeResult.BestOffer = offer
+						routeResult.BestDate = searchDate
+						routeResult.BestReturn = returnDate
+						log.Printf("New lowest fare for %s: $%.2f on %s", routeKey, offer.Price, searchDate.Format("2006-01-02"))
+					}
+				}
+
+				// Store all results for this specific search (for historical tracking)
+				if len(offers) > 0 {
+					searchPayload := FlightSearchPayload{
+						Origin:        origin,
+						Destination:   destination,
+						DepartureDate: searchDate,
+						ReturnDate:    returnDate,
+						Adults:        payload.Adults,
+						Children:      payload.Children,
+						InfantsLap:    payload.InfantsLap,
+						InfantsSeat:   payload.InfantsSeat,
+						TripType:      payload.TripType,
+						Class:         payload.Class,
+						Stops:         payload.Stops,
+						Currency:      payload.Currency,
+					}
+
+					if err := worker.StoreFlightOffers(ctx, searchPayload, offers, priceRange); err != nil {
+						log.Printf("Error storing offers for %s -> %s on %s: %v", origin, destination, searchDate.Format("2006-01-02"), err)
+						searchErrors = append(searchErrors, fmt.Errorf("failed to store offers for %s->%s on %s: %w", origin, destination, searchDate.Format("2006-01-02"), err))
+					}
+				}
+			}
+			
+			// Only keep routes that found valid offers
+			if routeResult.BestOffer.Price < math.MaxFloat64 {
+				routeResults[routeKey] = routeResult
+				log.Printf("Route %s completed: lowest fare $%.2f on %s (searched %d dates, found %d total offers)", 
+					routeKey, routeResult.BestOffer.Price, routeResult.BestDate.Format("2006-01-02"), 
+					routeResult.SearchedDates, routeResult.TotalOffers)
+			} else {
+				log.Printf("Route %s: no valid offers found across %d dates", routeKey, routeResult.SearchedDates)
+			}
 		}
-		fullOffers = append(fullOffers, fullOffer)
 	}
 
-	// Create a FlightSearchPayload from the BulkSearchPayload
-	// FIX: Use extracted origin/destination
-	flightSearchPayload := FlightSearchPayload{
-		Origin:        origin,
-		Destination:   destination,
-		DepartureDate: payload.DepartureDateFrom, // Use RangeStartDate as the representative departure date
-		// ReturnDate needs careful consideration for bulk searches.
-		// If TripLength is defined, we might calculate it, otherwise leave it zero.
-		// For simplicity here, we'll leave it zero. A more robust solution might be needed.
-		ReturnDate:  time.Time{},
-		Adults:      payload.Adults,
-		Children:    payload.Children,
-		InfantsLap:  payload.InfantsLap,
-		InfantsSeat: payload.InfantsSeat,
-		TripType:    payload.TripType,
-		Class:       payload.Class, // Keep as string for StoreFlightOffers
-		Stops:       payload.Stops, // Keep as string for StoreFlightOffers
-		Currency:    payload.Currency,
+	// Store the lowest fare results summary
+	log.Printf("Bulk search summary: found lowest fares for %d out of %d routes", len(routeResults), totalRoutes)
+	for routeKey, result := range routeResults {
+		// Store the best offer for each route
+		bestSearchPayload := FlightSearchPayload{
+			Origin:        result.Origin,
+			Destination:   result.Destination,
+			DepartureDate: result.BestDate,
+			ReturnDate:    result.BestReturn,
+			Adults:        payload.Adults,
+			Children:      payload.Children,
+			InfantsLap:    payload.InfantsLap,
+			InfantsSeat:   payload.InfantsSeat,
+			TripType:      payload.TripType,
+			Class:         payload.Class,
+			Stops:         payload.Stops,
+			Currency:      payload.Currency,
+		}
+
+		// Store just the best offer with a special marker
+		if err := worker.StoreFlightOffers(ctx, bestSearchPayload, []flights.FullOffer{result.BestOffer}, nil); err != nil {
+			log.Printf("Error storing best offer for route %s: %v", routeKey, err)
+			searchErrors = append(searchErrors, fmt.Errorf("failed to store best offer for route %s: %w", routeKey, err))
+		}
 	}
 
-	// Process the results
-	if err := worker.StoreFlightOffers(ctx, flightSearchPayload, fullOffers, nil); err != nil { // Use exported method
-		return fmt.Errorf("failed to store flight offers: %w", err)
+	// Calculate total offers found across all routes
+	totalOffers := 0
+	for _, result := range routeResults {
+		totalOffers += result.TotalOffers
+	}
+	
+	log.Printf("Bulk search completed: found lowest fares for %d routes, processed %d total offers", len(routeResults), totalOffers)
+
+	// If we had some errors but also some successes, log the errors but don't fail the job
+	if len(searchErrors) > 0 {
+		if len(routeResults) > 0 {
+			log.Printf("Bulk search completed with %d errors, but found lowest fares for %d routes", len(searchErrors), len(routeResults))
+			for _, err := range searchErrors {
+				log.Printf("Search error: %v", err)
+			}
+		} else {
+			// All searches failed
+			return fmt.Errorf("all bulk searches failed: %d errors occurred", len(searchErrors))
+		}
 	}
 
 	return nil
 }
+
+// generateDateRange generates a slice of dates within the given range for searching
+func (m *Manager) generateDateRange(startDate, endDate time.Time, tripLength int) []time.Time {
+	var dates []time.Time
+	
+	// If start and end are the same, just return that date
+	if startDate.Equal(endDate) {
+		return []time.Time{startDate}
+	}
+	
+	// Generate dates within the range (limit to reasonable number to avoid too many API calls)
+	current := startDate
+	maxDates := 14 // Limit to 2 weeks max to avoid overwhelming the API
+	count := 0
+	
+	for !current.After(endDate) && count < maxDates {
+		dates = append(dates, current)
+		current = current.AddDate(0, 0, 1) // Add one day
+		count++
+	}
+	
+	// If no dates were generated, at least return the start date
+	if len(dates) == 0 {
+		dates = append(dates, startDate)
+	}
+	
+	return dates
+}
+
 
 // GetScheduler returns the scheduler instance
 func (m *Manager) GetScheduler() *Scheduler {
