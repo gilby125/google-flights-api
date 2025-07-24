@@ -28,6 +28,7 @@ COPY --from=builder --chown=nonroot:nonroot /flight-api /app/
 # Copy empty tls directory from builder (created during build)
 COPY --from=builder --chown=nonroot:nonroot /app/tls/ /app/tls/
 COPY --from=builder --chown=nonroot:nonroot /app/web/ /app/web/
+COPY --from=builder --chown=nonroot:nonroot /app/templates/ /app/templates/
 
 # Security hardening
 USER nonroot
