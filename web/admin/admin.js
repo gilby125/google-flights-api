@@ -1,6 +1,6 @@
 // Admin Panel JavaScript
 
-// API endpoints
+// API endpoints - use relative paths to work with any host
 const API_BASE = '/api/v1';
 const ENDPOINTS = {
     JOBS: `${API_BASE}/admin/jobs`,
