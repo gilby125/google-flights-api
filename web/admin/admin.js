@@ -59,14 +59,33 @@ async function initAdminPanel() {
 // Refresh all data
 async function refreshData() {
     try {
-        // Load data sequentially to avoid overwhelming the API
-        await loadJobs().catch(err => console.error('Error loading jobs:', err));
-        await loadWorkers().catch(err => console.error('Error loading workers:', err));
-        await loadQueueStatus().catch(err => console.error('Error loading queue:', err));
-        await loadSearchCounts().catch(err => console.error('Error loading search counts:', err));
+        console.log('Refreshing admin panel data...');
+        // Load data with error handling, don't fail entire refresh if one fails
+        const loadPromises = [
+            loadJobs().catch(err => {
+                console.error('Error loading jobs:', err);
+                elements.jobsCount.textContent = '?';
+            }),
+            loadWorkers().catch(err => {
+                console.error('Error loading workers:', err);
+                elements.workersCount.textContent = '?';
+            }),
+            loadQueueStatus().catch(err => {
+                console.error('Error loading queue:', err);
+                elements.queueSize.textContent = '?';
+            }),
+            loadSearchCounts().catch(err => {
+                console.error('Error loading search counts:', err);
+                elements.searchesCount.textContent = '?';
+            })
+        ];
+        
+        // Wait for all to complete (success or failure)
+        await Promise.allSettled(loadPromises);
+        console.log('Data refresh completed');
     } catch (error) {
         console.error('Error refreshing data:', error);
-        showAlert('Error refreshing data. Check console for details.', 'warning');
+        showAlert('Some data could not be loaded. Check console for details.', 'warning');
     }
 }
 
@@ -227,17 +246,33 @@ async function loadQueueStatus() {
     });
 }
 
-// Load search counts
+// Load search counts with retry logic
 async function loadSearchCounts() {
-    try {
-        const response = await fetch(`${API_BASE}/search?limit=0`);
-        if (!response.ok) throw new Error('Failed to load search counts');
-        
-        const data = await response.json();
-        elements.searchesCount.textContent = data.total || 0;
-    } catch (error) {
-        console.error('Error loading search counts:', error);
-        // Don't show an alert for this non-critical error
+    let retries = 3;
+    while (retries > 0) {
+        try {
+            const response = await fetch(`${API_BASE}/search?limit=0`, {
+                timeout: 10000,
+                headers: {
+                    'Accept': 'application/json'
+                }
+            });
+            if (!response.ok) throw new Error(`HTTP ${response.status}: Failed to load search counts`);
+            
+            const data = await response.json();
+            elements.searchesCount.textContent = data.total || 0;
+            return; // Success, exit retry loop
+        } catch (error) {
+            console.error(`Error loading search counts (${4-retries}/3):`, error);
+            retries--;
+            if (retries > 0) {
+                // Wait before retry
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            } else {
+                // Set fallback value on final failure
+                elements.searchesCount.textContent = '?';
+            }
+        }
     }
 }
 
