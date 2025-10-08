@@ -31,6 +31,14 @@ func setupRouter() *gin.Engine {
 	return router
 }
 
+type workerStatusProviderMock struct {
+	statuses []worker.WorkerStatus
+}
+
+func (m *workerStatusProviderMock) WorkerStatuses() []worker.WorkerStatus {
+	return m.statuses
+}
+
 // --- Helper Function Tests ---
 
 func TestParseClass(t *testing.T) {
@@ -385,7 +393,35 @@ func TestGetQueueStatus_Error(t *testing.T) {
 func TestGetWorkerStatus(t *testing.T) {
 	// Arrange
 	router := setupRouter()
-	// Pass nil as workerManager is not used by this specific handler's logic
+	mockProvider := &workerStatusProviderMock{
+		statuses: []worker.WorkerStatus{
+			{
+				ID:            1,
+				Status:        "active",
+				CurrentJob:    "",
+				ProcessedJobs: 3,
+				Uptime:        42,
+			},
+		},
+	}
+	router.GET("/worker/status", api.GetWorkerStatus(mockProvider))
+
+	// Act
+	req, _ := http.NewRequest(http.MethodGet, "/worker/status", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	// Assert
+	assert.Equal(t, http.StatusOK, w.Code)
+	var response []worker.WorkerStatus
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NoError(t, err)
+	assert.Equal(t, mockProvider.statuses, response)
+}
+
+func TestGetWorkerStatus_NilManager(t *testing.T) {
+	// Arrange
+	router := setupRouter()
 	router.GET("/worker/status", api.GetWorkerStatus(nil))
 
 	// Act
@@ -395,10 +431,10 @@ func TestGetWorkerStatus(t *testing.T) {
 
 	// Assert
 	assert.Equal(t, http.StatusOK, w.Code)
-	var response map[string]string
+	var response []worker.WorkerStatus
 	err := json.Unmarshal(w.Body.Bytes(), &response)
 	assert.NoError(t, err)
-	assert.Equal(t, "running", response["status"])
+	assert.Empty(t, response)
 }
 
 // --- DB Dependent Handler Tests ---

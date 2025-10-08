@@ -49,18 +49,39 @@ func parseStops(stops string) flights.Stops {
 	}
 }
 
+// workerState tracks runtime statistics for a worker goroutine.
+type workerState struct {
+	ID            int
+	Status        string
+	CurrentJob    string
+	ProcessedJobs int
+	StartedAt     time.Time
+	LastHeartbeat time.Time
+}
+
+// WorkerStatus is a snapshot of worker metrics exposed via the API.
+type WorkerStatus struct {
+	ID            int    `json:"id"`
+	Status        string `json:"status"`
+	CurrentJob    string `json:"current_job,omitempty"`
+	ProcessedJobs int    `json:"processed_jobs"`
+	Uptime        int64  `json:"uptime"` // seconds
+}
+
 // Manager manages a pool of workers
 type Manager struct {
-	queue       queue.Queue
-	postgresDB  db.PostgresDB    // Changed type from pointer to interface
-	neo4jDB     db.Neo4jDatabase // Use the interface type
-	config      config.WorkerConfig
-	workers     []*Worker
-	stopChan    chan struct{}
-	workerWg    sync.WaitGroup
-	flightCache map[string]*flights.Session
-	cacheMutex  sync.RWMutex
-	scheduler   *Scheduler
+	queue        queue.Queue
+	postgresDB   db.PostgresDB    // Changed type from pointer to interface
+	neo4jDB      db.Neo4jDatabase // Use the interface type
+	config       config.WorkerConfig
+	workers      []*Worker
+	stopChan     chan struct{}
+	workerWg     sync.WaitGroup
+	flightCache  map[string]*flights.Session
+	cacheMutex   sync.RWMutex
+	scheduler    *Scheduler
+	statsMutex   sync.RWMutex
+	workerStates []*workerState
 }
 
 // NewManager creates a new worker manager
@@ -68,19 +89,81 @@ func NewManager(queue queue.Queue, postgresDB db.PostgresDB, neo4jDB db.Neo4jDat
 	// Pass nil for Cronner to use the default cron instance
 	scheduler := NewScheduler(queue, postgresDB, nil)
 	return &Manager{
-		queue:       queue,
-		postgresDB:  postgresDB, // Use unexported field name
-		neo4jDB:     neo4jDB,    // Use unexported field name
-		config:      config,
-		stopChan:    make(chan struct{}),
-		flightCache: make(map[string]*flights.Session),
-		scheduler:   scheduler,
+		queue:        queue,
+		postgresDB:   postgresDB, // Use unexported field name
+		neo4jDB:      neo4jDB,    // Use unexported field name
+		config:       config,
+		stopChan:     make(chan struct{}),
+		flightCache:  make(map[string]*flights.Session),
+		scheduler:    scheduler,
+		workerStates: make([]*workerState, config.Concurrency),
 	}
+}
+
+// updateWorkerState applies the provided update function while holding the mutex.
+func (m *Manager) updateWorkerState(workerIndex int, updateFn func(*workerState)) {
+	if updateFn == nil || workerIndex < 0 || workerIndex >= len(m.workerStates) {
+		return
+	}
+
+	m.statsMutex.Lock()
+	defer m.statsMutex.Unlock()
+
+	state := m.workerStates[workerIndex]
+	if state == nil {
+		state = &workerState{ID: workerIndex + 1}
+		m.workerStates[workerIndex] = state
+	}
+	updateFn(state)
+}
+
+// WorkerStatuses returns a snapshot of current worker metrics.
+func (m *Manager) WorkerStatuses() []WorkerStatus {
+	m.statsMutex.RLock()
+	defer m.statsMutex.RUnlock()
+
+	statuses := make([]WorkerStatus, 0, len(m.workerStates))
+	now := time.Now()
+	for _, state := range m.workerStates {
+		if state == nil {
+			continue
+		}
+
+		uptime := int64(0)
+		if !state.StartedAt.IsZero() {
+			uptime = int64(now.Sub(state.StartedAt).Seconds())
+			if uptime < 0 {
+				uptime = 0
+			}
+		}
+
+		statuses = append(statuses, WorkerStatus{
+			ID:            state.ID,
+			Status:        state.Status,
+			CurrentJob:    state.CurrentJob,
+			ProcessedJobs: state.ProcessedJobs,
+			Uptime:        uptime,
+		})
+	}
+
+	return statuses
 }
 
 // Start starts the worker pool and scheduler
 func (m *Manager) Start() {
 	log.Printf("Starting worker pool with %d workers", m.config.Concurrency)
+
+	now := time.Now()
+	m.statsMutex.Lock()
+	for i := 0; i < m.config.Concurrency; i++ {
+		m.workerStates[i] = &workerState{
+			ID:            i + 1,
+			Status:        "starting",
+			StartedAt:     now,
+			LastHeartbeat: now,
+		}
+	}
+	m.statsMutex.Unlock()
 
 	// Create and start workers
 	for i := 0; i < m.config.Concurrency; i++ {
@@ -106,6 +189,17 @@ func (m *Manager) Start() {
 func (m *Manager) Stop() {
 	log.Println("Stopping worker pool and scheduler")
 
+	now := time.Now()
+	m.statsMutex.Lock()
+	for _, state := range m.workerStates {
+		if state != nil {
+			state.Status = "stopping"
+			state.CurrentJob = ""
+			state.LastHeartbeat = now
+		}
+	}
+	m.statsMutex.Unlock()
+
 	// Stop the scheduler
 	m.scheduler.Stop()
 
@@ -127,6 +221,16 @@ func (m *Manager) Stop() {
 		log.Println("Worker shutdown timed out")
 	}
 
+	m.statsMutex.Lock()
+	for _, state := range m.workerStates {
+		if state != nil {
+			state.Status = "stopped"
+			state.LastHeartbeat = time.Now()
+			state.CurrentJob = ""
+		}
+	}
+	m.statsMutex.Unlock()
+
 	// Clear flight sessions cache
 	m.cacheMutex.Lock()
 	m.flightCache = make(map[string]*flights.Session)
@@ -136,21 +240,37 @@ func (m *Manager) Stop() {
 // runWorker runs a worker in a goroutine
 func (m *Manager) runWorker(id int, worker *Worker) {
 	defer m.workerWg.Done()
-	log.Printf("Worker %d started", id)
+	displayID := id + 1
+	now := time.Now()
+	m.updateWorkerState(id, func(state *workerState) {
+		if state.StartedAt.IsZero() {
+			state.StartedAt = now
+		}
+		state.Status = "active"
+		state.CurrentJob = ""
+		state.LastHeartbeat = now
+	})
+
+	log.Printf("Worker %d started", displayID)
 
 	for {
 		select {
 		case <-m.stopChan:
-			log.Printf("Worker %d stopping", id)
+			log.Printf("Worker %d stopping", displayID)
+			m.updateWorkerState(id, func(state *workerState) {
+				state.Status = "stopped"
+				state.CurrentJob = ""
+				state.LastHeartbeat = time.Now()
+			})
 			return
 		default:
 			// Process jobs from different queues
-			if err := m.processQueue(worker, "flight_search"); err != nil {
-				log.Printf("Worker %d error processing flight_search queue: %v", id, err)
+			if err := m.processQueue(id, worker, "flight_search"); err != nil {
+				log.Printf("Worker %d error processing flight_search queue: %v", displayID, err)
 			}
 
-			if err := m.processQueue(worker, "bulk_search"); err != nil {
-				log.Printf("Worker %d error processing bulk_search queue: %v", id, err)
+			if err := m.processQueue(id, worker, "bulk_search"); err != nil {
+				log.Printf("Worker %d error processing bulk_search queue: %v", displayID, err)
 			}
 
 			// Sleep briefly to avoid hammering the queue
@@ -160,11 +280,11 @@ func (m *Manager) runWorker(id int, worker *Worker) {
 }
 
 // processQueue processes a job from the specified queue
-func (m *Manager) processQueue(worker *Worker, queueName string) error {
+func (m *Manager) processQueue(workerIndex int, worker *Worker, queueName string) error {
 	// Create a context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), m.config.JobTimeout)
 	defer cancel()
-	
+
 	// Log context deadline for debugging
 	if deadline, ok := ctx.Deadline(); ok {
 		log.Printf("Created context with deadline: %v (timeout: %v)", deadline.Format("15:04:05"), m.config.JobTimeout)
@@ -175,15 +295,36 @@ func (m *Manager) processQueue(worker *Worker, queueName string) error {
 	if err != nil {
 		// Don't return error if context times out waiting for job
 		if ctx.Err() == context.DeadlineExceeded {
+			m.updateWorkerState(workerIndex, func(state *workerState) {
+				state.LastHeartbeat = time.Now()
+			})
 			return nil
 		}
+		m.updateWorkerState(workerIndex, func(state *workerState) {
+			state.Status = "error"
+			state.CurrentJob = ""
+			state.LastHeartbeat = time.Now()
+		})
 		return fmt.Errorf("failed to dequeue job: %w", err)
 	}
 
 	// No jobs available
 	if job == nil {
+		m.updateWorkerState(workerIndex, func(state *workerState) {
+			if state.Status != "processing" {
+				state.Status = "active"
+			}
+			state.CurrentJob = ""
+			state.LastHeartbeat = time.Now()
+		})
 		return nil
 	}
+
+	m.updateWorkerState(workerIndex, func(state *workerState) {
+		state.Status = "processing"
+		state.CurrentJob = fmt.Sprintf("%s:%s", queueName, job.ID)
+		state.LastHeartbeat = time.Now()
+	})
 
 	jobStartTime := time.Now()
 	log.Printf("Processing %s job %s (started at %v)", queueName, job.ID, jobStartTime.Format("15:04:05"))
@@ -191,27 +332,44 @@ func (m *Manager) processQueue(worker *Worker, queueName string) error {
 	// Process the job
 	err = m.processJob(ctx, worker, queueName, job)
 	jobDuration := time.Since(jobStartTime)
-	
+
 	if err != nil {
 		log.Printf("Error processing job %s after %v: %v", job.ID, jobDuration, err)
-		
+
 		// Check if context deadline was exceeded
 		if ctx.Err() == context.DeadlineExceeded {
 			log.Printf("Job %s timed out after %v (deadline exceeded)", job.ID, jobDuration)
 		}
-		
+
 		// Nack the job
 		if nackErr := m.queue.Nack(ctx, queueName, job.ID); nackErr != nil {
 			log.Printf("Error nacking job %s: %v", job.ID, nackErr)
 		}
+		m.updateWorkerState(workerIndex, func(state *workerState) {
+			state.Status = "active"
+			state.CurrentJob = ""
+			state.LastHeartbeat = time.Now()
+		})
 		return fmt.Errorf("failed to process job: %w", err)
 	}
 
 	// Ack the job
 	if ackErr := m.queue.Ack(ctx, queueName, job.ID); ackErr != nil {
 		log.Printf("Error acking job %s: %v", job.ID, ackErr)
+		m.updateWorkerState(workerIndex, func(state *workerState) {
+			state.Status = "active"
+			state.CurrentJob = ""
+			state.LastHeartbeat = time.Now()
+		})
 		return fmt.Errorf("failed to ack job: %w", ackErr)
 	}
+
+	m.updateWorkerState(workerIndex, func(state *workerState) {
+		state.Status = "active"
+		state.CurrentJob = ""
+		state.ProcessedJobs++
+		state.LastHeartbeat = time.Now()
+	})
 
 	log.Printf("Completed %s job %s in %v", queueName, job.ID, jobDuration)
 	return nil
@@ -257,7 +415,7 @@ func (m *Manager) processJob(ctx context.Context, worker *Worker, queueName stri
 // getFlightSession gets or creates a flight session based on session type
 func (m *Manager) getFlightSession(sessionType string) (*flights.Session, error) {
 	var sessionKey string
-	
+
 	// Use consistent caching strategy for both search types since regular search works fine
 	switch sessionType {
 	case "bulk_search":
@@ -393,41 +551,41 @@ func (m *Manager) processBulkSearch(ctx context.Context, worker *Worker, session
 
 	// Process all origin/destination combinations to find lowest fares
 	totalRoutes := len(payload.Origins) * len(payload.Destinations)
-	log.Printf("Starting bulk search: %d origins × %d destinations = %d route combinations", 
+	log.Printf("Starting bulk search: %d origins × %d destinations = %d route combinations",
 		len(payload.Origins), len(payload.Destinations), totalRoutes)
 
 	// Calculate date range for searches
 	dateRange := m.generateDateRange(payload.DepartureDateFrom, payload.DepartureDateTo, payload.TripLength)
-	log.Printf("Searching across %d dates: %s to %s", len(dateRange), 
+	log.Printf("Searching across %d dates: %s to %s", len(dateRange),
 		payload.DepartureDateFrom.Format("2006-01-02"), payload.DepartureDateTo.Format("2006-01-02"))
 
 	// Track lowest fares for each route
 	type RouteLowestFare struct {
-		Route        string
-		Origin       string
-		Destination  string
-		BestOffer    flights.FullOffer
-		BestDate     time.Time
-		BestReturn   time.Time
+		Route         string
+		Origin        string
+		Destination   string
+		BestOffer     flights.FullOffer
+		BestDate      time.Time
+		BestReturn    time.Time
 		SearchedDates int
-		TotalOffers  int
+		TotalOffers   int
 	}
-	
+
 	routeResults := make(map[string]*RouteLowestFare)
 	var searchErrors []error
-	
+
 	for _, origin := range payload.Origins {
 		for _, destination := range payload.Destinations {
 			routeKey := fmt.Sprintf("%s-%s", origin, destination)
 			log.Printf("Processing route: %s", routeKey)
-			
+
 			routeResult := &RouteLowestFare{
 				Route:       routeKey,
 				Origin:      origin,
 				Destination: destination,
 				BestOffer:   flights.FullOffer{Offer: flights.Offer{Price: math.MaxFloat64}}, // Initialize with max price
 			}
-			
+
 			// Search across all dates in range to find lowest fare
 			for _, searchDate := range dateRange {
 				var returnDate time.Time
@@ -473,7 +631,7 @@ func (m *Manager) processBulkSearch(ctx context.Context, worker *Worker, session
 
 				routeResult.SearchedDates++
 				routeResult.TotalOffers += len(offers)
-				
+
 				// Find the lowest price offer from this date
 				for _, offer := range offers {
 					if offer.Price < routeResult.BestOffer.Price {
@@ -507,12 +665,12 @@ func (m *Manager) processBulkSearch(ctx context.Context, worker *Worker, session
 					}
 				}
 			}
-			
+
 			// Only keep routes that found valid offers
 			if routeResult.BestOffer.Price < math.MaxFloat64 {
 				routeResults[routeKey] = routeResult
-				log.Printf("Route %s completed: lowest fare $%.2f on %s (searched %d dates, found %d total offers)", 
-					routeKey, routeResult.BestOffer.Price, routeResult.BestDate.Format("2006-01-02"), 
+				log.Printf("Route %s completed: lowest fare $%.2f on %s (searched %d dates, found %d total offers)",
+					routeKey, routeResult.BestOffer.Price, routeResult.BestDate.Format("2006-01-02"),
 					routeResult.SearchedDates, routeResult.TotalOffers)
 			} else {
 				log.Printf("Route %s: no valid offers found across %d dates", routeKey, routeResult.SearchedDates)
@@ -551,7 +709,7 @@ func (m *Manager) processBulkSearch(ctx context.Context, worker *Worker, session
 	for _, result := range routeResults {
 		totalOffers += result.TotalOffers
 	}
-	
+
 	log.Printf("Bulk search completed: found lowest fares for %d routes, processed %d total offers", len(routeResults), totalOffers)
 
 	// If we had some errors but also some successes, log the errors but don't fail the job
@@ -573,31 +731,30 @@ func (m *Manager) processBulkSearch(ctx context.Context, worker *Worker, session
 // generateDateRange generates a slice of dates within the given range for searching
 func (m *Manager) generateDateRange(startDate, endDate time.Time, tripLength int) []time.Time {
 	var dates []time.Time
-	
+
 	// If start and end are the same, just return that date
 	if startDate.Equal(endDate) {
 		return []time.Time{startDate}
 	}
-	
+
 	// Generate dates within the range (limit to reasonable number to avoid too many API calls)
 	current := startDate
 	maxDates := 14 // Limit to 2 weeks max to avoid overwhelming the API
 	count := 0
-	
+
 	for !current.After(endDate) && count < maxDates {
 		dates = append(dates, current)
 		current = current.AddDate(0, 0, 1) // Add one day
 		count++
 	}
-	
+
 	// If no dates were generated, at least return the start date
 	if len(dates) == 0 {
 		dates = append(dates, startDate)
 	}
-	
+
 	return dates
 }
-
 
 // GetScheduler returns the scheduler instance
 func (m *Manager) GetScheduler() *Scheduler {
