@@ -32,6 +32,7 @@ bin/
 
 # Logs
 *.log
+log.txt
 
 # Local development files
 docker-compose.override.yml
