@@ -19,6 +19,8 @@ func min(x, y int) int {
 }
 
 func TestGetOffersUSDPLN(t *testing.T) {
+	skipUnlessIntegration(t)
+
 	session, err := New()
 	if err != nil {
 		t.Fatal(err)
@@ -101,6 +103,8 @@ func testGetOffersTravelers(t *testing.T, session *Session, rootPrice float64, a
 }
 
 func TestGetOffersTravelers(t *testing.T) {
+	skipUnlessIntegration(t)
+
 	session, err := New()
 	if err != nil {
 		t.Fatal(err)
@@ -275,6 +279,8 @@ func TestGetOffersMock(t *testing.T) {
 }
 
 func TestFlightReqData(t *testing.T) {
+	skipUnlessIntegration(t)
+
 	session, err := New()
 	if err != nil {
 		t.Fatal(err)

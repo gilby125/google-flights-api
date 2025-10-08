@@ -13,6 +13,8 @@ import (
 )
 
 func TestGetPriceGraph(t *testing.T) {
+	skipUnlessIntegration(t)
+
 	session, err := New()
 	if err != nil {
 		t.Fatal(err)
@@ -59,6 +61,8 @@ func testGetPriceGraphTravelers(t *testing.T, session *Session, rootPrice float6
 }
 
 func TestGetPriceGraphTravelers(t *testing.T) {
+	skipUnlessIntegration(t)
+
 	session, err := New()
 	if err != nil {
 		t.Fatal(err)
@@ -148,6 +152,8 @@ func TestGetPriceGraphMock(t *testing.T) {
 }
 
 func TestPriceGraphReqData(t *testing.T) {
+	skipUnlessIntegration(t)
+
 	session, err := New()
 	if err != nil {
 		t.Fatal(err)
