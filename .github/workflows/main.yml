@@ -93,9 +93,13 @@ jobs:
         go-version: ${{ env.GO_VERSION }}
 
     - name: Setup protocol buffer compiler
+      env:
+        PROTOC_VERSION: 3.12.4
       run: |
-        sudo apt-get update
-        sudo apt-get install protobuf-compiler
+        curl -sSL -o protoc.zip https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-x86_64.zip
+        unzip -o protoc.zip -d "${HOME}/.local"
+        rm protoc.zip
+        echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
         go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.31.0
 
     - name: Generate proto
