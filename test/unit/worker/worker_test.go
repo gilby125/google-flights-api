@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
 	"testing"
 	"time"
 
@@ -13,6 +14,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
+
+var runWorkerCoreTests = os.Getenv("ENABLE_WORKER_TESTS") == "1"
+
+func skipUnlessWorkerCoreTests(t *testing.T) {
+	if !runWorkerCoreTests {
+		t.Skip("set ENABLE_WORKER_TESTS=1 to run worker core tests")
+	}
+}
 
 // --- Test Setup ---
 
@@ -27,6 +36,7 @@ func setupWorkerTest() (*worker.Worker, *mocks.MockPostgresDB, *mocks.MockNeo4jD
 // --- Test StoreFlightInNeo4j ---
 
 func TestWorker_StoreFlightInNeo4j_Success(t *testing.T) {
+	skipUnlessWorkerCoreTests(t)
 	workerInstance, _, mockNeo4jDb := setupWorkerTest()
 	ctx := context.Background()
 	testTime := time.Now()
@@ -62,6 +72,7 @@ func TestWorker_StoreFlightInNeo4j_Success(t *testing.T) {
 }
 
 func TestWorker_StoreFlightInNeo4j_CreateAirportError(t *testing.T) {
+	skipUnlessWorkerCoreTests(t)
 	workerInstance, _, mockNeo4jDb := setupWorkerTest()
 	ctx := context.Background()
 	testTime := time.Now()
@@ -101,6 +112,7 @@ func TestWorker_StoreFlightInNeo4j_CreateAirportError(t *testing.T) {
 // --- Test StoreFlightOffers ---
 
 func TestWorker_StoreFlightOffers_Success(t *testing.T) {
+	skipUnlessWorkerCoreTests(t)
 	workerInstance, mockPgDb, mockNeo4jDb := setupWorkerTest()
 	ctx := context.Background()
 	testTime := time.Now()

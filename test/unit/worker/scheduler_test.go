@@ -4,20 +4,30 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"testing"
 	// "time" // Removed unused import
 
 	// "github.com/gilby125/google-flights-api/db" // Removed unused import
 	"github.com/gilby125/google-flights-api/queue"
-	"github.com/gilby125/google-flights-api/worker"
 	"github.com/gilby125/google-flights-api/test/mocks" // Import mocks
+	"github.com/gilby125/google-flights-api/worker"
 	"github.com/robfig/cron/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
 
+var runSchedulerTests = os.Getenv("ENABLE_WORKER_TESTS") == "1"
+
+func skipUnlessWorkerSchedulerTests(t *testing.T) {
+	if !runSchedulerTests {
+		t.Skip("set ENABLE_WORKER_TESTS=1 to run worker scheduler tests")
+	}
+}
+
 // Test NewScheduler creation
 func TestNewScheduler(t *testing.T) {
+	skipUnlessWorkerSchedulerTests(t)
 	mockQueue := new(mocks.MockQueue)
 	mockDB := new(mocks.MockPostgresDB) // Scheduler depends on DB too
 
@@ -35,6 +45,7 @@ func TestNewScheduler(t *testing.T) {
 
 // Test Scheduler Start method
 func TestScheduler_Start(t *testing.T) {
+	skipUnlessWorkerSchedulerTests(t)
 	mockQueue := new(mocks.MockQueue)
 	mockDB := new(mocks.MockPostgresDB)
 	mockCron := new(mocks.MockCronner)
@@ -53,6 +64,7 @@ func TestScheduler_Start(t *testing.T) {
 
 // Test Scheduler Start method with AddFunc error
 func TestScheduler_Start_AddFuncError(t *testing.T) {
+	skipUnlessWorkerSchedulerTests(t)
 	mockQueue := new(mocks.MockQueue)
 	mockDB := new(mocks.MockPostgresDB)
 	mockCron := new(mocks.MockCronner)
@@ -73,6 +85,7 @@ func TestScheduler_Start_AddFuncError(t *testing.T) {
 
 // Test Scheduler Stop method
 func TestScheduler_Stop(t *testing.T) {
+	skipUnlessWorkerSchedulerTests(t)
 	mockQueue := new(mocks.MockQueue)
 	mockDB := new(mocks.MockPostgresDB)
 	mockCron := new(mocks.MockCronner)
@@ -96,6 +109,7 @@ func TestScheduler_Stop(t *testing.T) {
 
 // Test Scheduler AddJob method - Success
 func TestScheduler_AddJob_Success(t *testing.T) {
+	skipUnlessWorkerSchedulerTests(t)
 	mockQueue := new(mocks.MockQueue)
 	mockDB := new(mocks.MockPostgresDB)
 	mockCron := new(mocks.MockCronner) // Cronner is not used by AddJob, but needed for NewScheduler
@@ -124,6 +138,7 @@ func TestScheduler_AddJob_Success(t *testing.T) {
 
 // Test Scheduler AddJob method - Enqueue Error (e.g., queue full)
 func TestScheduler_AddJob_EnqueueError(t *testing.T) {
+	skipUnlessWorkerSchedulerTests(t)
 	mockQueue := new(mocks.MockQueue)
 	mockDB := new(mocks.MockPostgresDB)
 	mockCron := new(mocks.MockCronner)

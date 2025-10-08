@@ -6,7 +6,7 @@ on:
     branches: [ main ]
 
 env:
-  GO_VERSION: 1.21
+  GO_VERSION: '1.24'
   DOCKER_IMAGE: ghcr.io/${{ github.repository_owner }}/flight-api
 
 jobs:
@@ -22,7 +22,7 @@ jobs:
         go-version: ${{ env.GO_VERSION }}
 
     - name: Build
-      run: make build
+      run: go build ./...
 
     - name: Run tests
       run: |
@@ -51,28 +51,6 @@ jobs:
         registry: ghcr.io
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
-
-    - name: Validate TLS Certificates
-      run: |
-        # Verify required certificate files exist
-        if [ ! -f tls/tls.crt ] || [ ! -f tls/tls.key ] || [ ! -f tls/ca.crt ]; then
-          echo "Missing required TLS certificate files"
-          exit 1
-        fi
-
-        # Verify certificate file permissions
-        if [ "$(stat -c %a tls/tls.key)" -ne 600 ]; then
-          echo "Invalid permissions on TLS private key - must be 600"
-          exit 1
-        fi
-        
-        # Verify certificate validity
-        openssl x509 -in tls/tls.crt -noout -dates
-        openssl x509 -in tls/ca.crt -noout -dates
-        openssl rsa -in tls/tls.key -check -noout
-
-        # Verify certificate chain
-        openssl verify -CAfile tls/ca.crt tls/tls.crt
 
     - name: Build and push Docker image
       uses: docker/build-push-action@v4

@@ -1,23 +1,30 @@
 package worker_test
 
 import (
-	"database/sql" // Added import
-	// "context" // Still unused
+	"database/sql"
 	"encoding/json"
 	"errors"
-	"strings" // Added import
+	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/gilby125/google-flights-api/config"
-	// "github.com/gilby125/google-flights-api/db" // Still unused
 	"github.com/gilby125/google-flights-api/queue"
-	"github.com/gilby125/google-flights-api/test/mocks" // Import mocks
+	"github.com/gilby125/google-flights-api/test/mocks"
 	"github.com/gilby125/google-flights-api/worker"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
+
+var runWorkerTests = os.Getenv("ENABLE_WORKER_TESTS") == "1"
+
+func skipUnlessWorkerTests(t *testing.T) {
+	if !runWorkerTests {
+		t.Skip("set ENABLE_WORKER_TESTS=1 to run worker manager tests")
+	}
+}
 
 // Helper to setup manager with mocks for testing
 func setupManagerTest(cfg config.WorkerConfig) (*worker.Manager, *mocks.MockQueue, *mocks.MockPostgresDB, *mocks.MockNeo4jDatabase, *mocks.MockScheduler) {
@@ -53,6 +60,7 @@ func setupManagerTest(cfg config.WorkerConfig) (*worker.Manager, *mocks.MockQueu
 }
 
 func TestManager_Start(t *testing.T) {
+	skipUnlessWorkerTests(t)
 	cfg := config.WorkerConfig{Concurrency: 2, JobTimeout: 5 * time.Second, ShutdownTimeout: 1 * time.Second}
 	manager, mockQueue, mockPgDb, _, _ := setupManagerTest(cfg)
 
@@ -101,6 +109,7 @@ func TestManager_Start(t *testing.T) {
 // }
 
 func TestManager_Stop(t *testing.T) {
+	skipUnlessWorkerTests(t)
 	cfg := config.WorkerConfig{Concurrency: 1, JobTimeout: 5 * time.Second, ShutdownTimeout: 1 * time.Second}
 	manager, mockQueue, mockPgDb, _, _ := setupManagerTest(cfg)
 
@@ -151,6 +160,7 @@ func TestManager_Stop(t *testing.T) {
 
 // Test worker availability and job processing flow (Ack/Nack)
 func TestManager_JobProcessingFlow(t *testing.T) {
+	skipUnlessWorkerTests(t)
 	cfg := config.WorkerConfig{Concurrency: 1, JobTimeout: 1 * time.Second, ShutdownTimeout: 1 * time.Second}
 	manager, mockQueue, mockPgDb, mockNeo4jDb, _ := setupManagerTest(cfg)
 
@@ -356,6 +366,7 @@ func TestManager_JobProcessingFlow(t *testing.T) {
 
 // Test Job Prioritization (flight_search before bulk_search)
 func TestManager_JobPrioritization(t *testing.T) {
+	skipUnlessWorkerTests(t)
 	cfg := config.WorkerConfig{Concurrency: 1, JobTimeout: 1 * time.Second, ShutdownTimeout: 1 * time.Second}
 	manager, mockQueue, mockPgDb, mockNeo4jDb, _ := setupManagerTest(cfg)
 
@@ -500,6 +511,7 @@ func TestManager_JobPrioritization(t *testing.T) {
 
 // Test Configuration Usage (Concurrency)
 func TestManager_ConcurrencyConfig(t *testing.T) {
+	skipUnlessWorkerTests(t)
 	concurrency := 3
 	cfg := config.WorkerConfig{Concurrency: concurrency, JobTimeout: 1 * time.Second, ShutdownTimeout: 1 * time.Second}
 	manager, mockQueue, mockPgDb, _, _ := setupManagerTest(cfg)

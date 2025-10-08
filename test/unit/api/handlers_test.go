@@ -573,18 +573,30 @@ func TestGetSearchByID_Success(t *testing.T) {
 
 	mockOfferRows := new(mocks.MockRows)
 	mockOffers := []db.FlightOffer{
-		{ID: offerID, Price: 123.45, Currency: "USD", DepartureDate: testTime.AddDate(0, 0, 7), ReturnDate: sql.NullTime{Time: testTime.AddDate(0, 0, 14), Valid: true}, TotalDuration: 36000, CreatedAt: testTime},
+		{
+			ID:               offerID,
+			Price:            123.45,
+			Currency:         "USD",
+			AirlineCodes:     sql.NullString{String: "BA,AA", Valid: true},
+			OutboundDuration: sql.NullInt64{Int64: 36000, Valid: true},
+			OutboundStops:    sql.NullInt64{Int64: 1, Valid: true},
+			ReturnDuration:   sql.NullInt64{Int64: 34000, Valid: true},
+			ReturnStops:      sql.NullInt64{Int64: 1, Valid: true},
+			CreatedAt:        testTime,
+		},
 	}
 	mockOfferRows.On("Next").Return(true).Once()
 	mockOfferRows.On("Next").Return(false)
-	mockOfferRows.On("Scan", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Run(func(args mock.Arguments) {
+	mockOfferRows.On("Scan", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Run(func(args mock.Arguments) {
 		*(args.Get(0).(*int)) = mockOffers[0].ID
 		*(args.Get(1).(*float64)) = mockOffers[0].Price
 		*(args.Get(2).(*string)) = mockOffers[0].Currency
-		*(args.Get(3).(*time.Time)) = mockOffers[0].DepartureDate
-		*(args.Get(4).(*sql.NullTime)) = mockOffers[0].ReturnDate
-		*(args.Get(5).(*int)) = mockOffers[0].TotalDuration
-		*(args.Get(6).(*time.Time)) = mockOffers[0].CreatedAt
+		*(args.Get(3).(*sql.NullString)) = mockOffers[0].AirlineCodes
+		*(args.Get(4).(*sql.NullInt64)) = mockOffers[0].OutboundDuration
+		*(args.Get(5).(*sql.NullInt64)) = mockOffers[0].OutboundStops
+		*(args.Get(6).(*sql.NullInt64)) = mockOffers[0].ReturnDuration
+		*(args.Get(7).(*sql.NullInt64)) = mockOffers[0].ReturnStops
+		*(args.Get(8).(*time.Time)) = mockOffers[0].CreatedAt
 	})
 	mockOfferRows.On("Close").Return(nil)
 	mockOfferRows.On("Err").Return(nil)

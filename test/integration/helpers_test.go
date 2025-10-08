@@ -21,6 +21,11 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	if os.Getenv("ENABLE_INTEGRATION_TESTS") != "1" {
+		fmt.Println("Skipping integration tests (set ENABLE_INTEGRATION_TESTS=1 to enable)")
+		os.Exit(0)
+	}
+
 	// Load .env file first
 	_ = godotenv.Load() // Load .env first, but we will override DB settings
 

@@ -1,9 +1,9 @@
 package flights
 
 import (
+	"strings"
 	"testing"
 	"time"
-	"strings"
 )
 
 func TestFlightString(t *testing.T) {
@@ -34,7 +34,7 @@ func TestFlightString(t *testing.T) {
 		"ArrCity: Los Angeles",
 		"DepTime: 2025-03-30 15:30:00", // Check actual format
 		"ArrTime: 2025-03-30 18:45:00", // Check actual format
-		"Duration: 3h15m0s",           // Check actual format
+		"Duration: 3h15m0s",            // Check actual format
 		"Airplane: Boeing 737",
 		"FlightNumber: AA123",
 		"AirlineName: American Airlines",
@@ -87,7 +87,7 @@ func TestFullOfferString(t *testing.T) {
 	output := fo.String()
 	// Check for substrings based on the actual String() method
 	expectedSubstrings := []string{
-		"StartDate: 2025-05-01", // Check format
+		"StartDate: 2025-05-01",  // Check format
 		"ReturnDate: 2025-05-08", // Check format
 		"Price: 799",             // Price formatted as int
 		"Flight: [",              // Start of flight details
@@ -128,6 +128,14 @@ func testValidatePriceGraphArgs(t *testing.T, args PriceGraphArgs, wantErr strin
 	} else if gotErr.Error() != wantErr {
 		t.Fatalf(`Wrong error want: "%s", got: "%s"`, wantErr, gotErr.Error())
 	}
+}
+
+func testValidatePriceGraphArgsOK(t *testing.T, args PriceGraphArgs) PriceGraphArgs {
+	got := args
+	if err := got.Validate(); err != nil {
+		t.Fatalf("Validate call should not fail, args: %v, err: %v", args, err)
+	}
+	return got
 }
 
 func testValidateURLArg(t *testing.T, args Args, wantErr string) {
@@ -193,7 +201,10 @@ func TestValidatePriceGraphArgs(t *testing.T) {
 		RangeStartDate: time.Now().AddDate(0, 0, 2),
 		RangeEndDate:   time.Now().AddDate(0, 0, 2),
 	}
-	testValidatePriceGraphArgs(t, args, "rangeEndDate is the same as rangeStartDate")
+	validated := testValidatePriceGraphArgsOK(t, args)
+	if !validated.RangeEndDate.After(validated.RangeStartDate) {
+		t.Fatalf("expected RangeEndDate to be auto-adjusted, got start=%v end=%v", validated.RangeStartDate, validated.RangeEndDate)
+	}
 
 	args = PriceGraphArgs{
 		SrcCities: []string{"abc"}, SrcAirports: []string{}, DstCities: []string{"abc"}, DstAirports: []string{},
