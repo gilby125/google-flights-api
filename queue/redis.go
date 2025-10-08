@@ -341,10 +341,12 @@ func (q *RedisQueue) ensureStream(ctx context.Context, queueName string) error {
 func (q *RedisQueue) claimStale(ctx context.Context, queueName string) (*Job, error) {
 	stream := q.streamName(queueName)
 
+	q.mu.Lock()
 	startID := q.lastAutoClaimID[stream]
 	if startID == "" {
 		startID = "0-0"
 	}
+	q.mu.Unlock()
 
 	messages, nextID, err := q.client.XAutoClaim(ctx, &redis.XAutoClaimArgs{
 		Stream:   stream,
@@ -358,7 +360,9 @@ func (q *RedisQueue) claimStale(ctx context.Context, queueName string) (*Job, er
 		return nil, fmt.Errorf("failed to auto-claim messages: %w", err)
 	}
 
+	q.mu.Lock()
 	q.lastAutoClaimID[stream] = nextID
+	q.mu.Unlock()
 
 	if len(messages) == 0 {
 		return nil, nil
