@@ -8,6 +8,8 @@ on:
 env:
   GO_VERSION: '1.24'
   DOCKER_IMAGE: ghcr.io/${{ github.repository_owner }}/flight-api
+  ENABLE_INTEGRATION_TESTS: ${{ vars.ENABLE_INTEGRATION_TESTS || '0' }}
+  ENABLE_WORKER_TESTS: ${{ vars.ENABLE_WORKER_TESTS || '0' }}
 
 jobs:
   build-test:
