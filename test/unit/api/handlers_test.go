@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 
 	// "strconv" // Removed unused import
 	"testing"
@@ -37,6 +38,75 @@ type workerStatusProviderMock struct {
 
 func (m *workerStatusProviderMock) WorkerStatuses() []worker.WorkerStatus {
 	return m.statuses
+}
+
+func matchFlightSearchPayload(expected worker.FlightSearchPayload) func(worker.FlightSearchPayload) bool {
+	return func(actual worker.FlightSearchPayload) bool {
+		if actual.Origin != expected.Origin ||
+			actual.Destination != expected.Destination ||
+			actual.Adults != expected.Adults ||
+			actual.Children != expected.Children ||
+			actual.InfantsLap != expected.InfantsLap ||
+			actual.InfantsSeat != expected.InfantsSeat ||
+			actual.TripType != expected.TripType ||
+			actual.Class != expected.Class ||
+			actual.Stops != expected.Stops ||
+			actual.Currency != expected.Currency {
+			return false
+		}
+
+		if !actual.DepartureDate.Equal(expected.DepartureDate) {
+			return false
+		}
+
+		switch {
+		case expected.ReturnDate.IsZero() && actual.ReturnDate.IsZero():
+			return true
+		case expected.ReturnDate.IsZero() != actual.ReturnDate.IsZero():
+			return false
+		default:
+			return actual.ReturnDate.Equal(expected.ReturnDate)
+		}
+	}
+}
+
+func matchBulkSearchPayload(expected worker.BulkSearchPayload) func(worker.BulkSearchPayload) bool {
+	return func(actual worker.BulkSearchPayload) bool {
+		if !reflect.DeepEqual(actual.Origins, expected.Origins) ||
+			!reflect.DeepEqual(actual.Destinations, expected.Destinations) ||
+			actual.TripLength != expected.TripLength ||
+			actual.Adults != expected.Adults ||
+			actual.Children != expected.Children ||
+			actual.InfantsLap != expected.InfantsLap ||
+			actual.InfantsSeat != expected.InfantsSeat ||
+			actual.TripType != expected.TripType ||
+			actual.Class != expected.Class ||
+			actual.Stops != expected.Stops ||
+			actual.Currency != expected.Currency {
+			return false
+		}
+
+		if !actual.DepartureDateFrom.Equal(expected.DepartureDateFrom) ||
+			!actual.DepartureDateTo.Equal(expected.DepartureDateTo) {
+			return false
+		}
+
+		switch {
+		case expected.ReturnDateFrom.IsZero() && !actual.ReturnDateFrom.IsZero():
+			return false
+		case !expected.ReturnDateFrom.IsZero() && !actual.ReturnDateFrom.Equal(expected.ReturnDateFrom):
+			return false
+		}
+
+		switch {
+		case expected.ReturnDateTo.IsZero() && !actual.ReturnDateTo.IsZero():
+			return false
+		case !expected.ReturnDateTo.IsZero() && !actual.ReturnDateTo.Equal(expected.ReturnDateTo):
+			return false
+		}
+
+		return true
+	}
 }
 
 // --- Helper Function Tests ---
@@ -94,7 +164,9 @@ func TestCreateSearch_Success(t *testing.T) {
 	}
 
 	// Configure mock
-	mockQueue.On("Enqueue", mock.Anything, "flight_search", expectedPayload).Return(expectedJobID, nil) // Corrected expected job type
+	mockQueue.On("Enqueue", mock.Anything, "flight_search",
+		mock.MatchedBy(matchFlightSearchPayload(expectedPayload)),
+	).Return(expectedJobID, nil) // Corrected expected job type
 
 	// Act
 	body, _ := json.Marshal(searchReq)
@@ -185,7 +257,9 @@ func TestCreateSearch_EnqueueError(t *testing.T) {
 	}
 
 	// Configure mock to return an error
-	mockQueue.On("Enqueue", mock.Anything, "flight_search", expectedPayload).Return("", assert.AnError) // Corrected expected job type
+	mockQueue.On("Enqueue", mock.Anything, "flight_search",
+		mock.MatchedBy(matchFlightSearchPayload(expectedPayload)),
+	).Return("", assert.AnError) // Corrected expected job type
 
 	// Act
 	body, _ := json.Marshal(searchReq)
@@ -236,7 +310,9 @@ func TestCreateBulkSearch_Success(t *testing.T) {
 	}
 
 	// Configure mock
-	mockQueue.On("Enqueue", mock.Anything, "bulk_search", expectedPayload).Return(expectedJobID, nil)
+	mockQueue.On("Enqueue", mock.Anything, "bulk_search",
+		mock.MatchedBy(matchBulkSearchPayload(expectedPayload)),
+	).Return(expectedJobID, nil)
 
 	// Act
 	body, _ := json.Marshal(bulkReq)
@@ -328,7 +404,9 @@ func TestCreateBulkSearch_EnqueueError(t *testing.T) {
 	}
 
 	// Configure mock to return an error
-	mockQueue.On("Enqueue", mock.Anything, "bulk_search", expectedPayload).Return("", assert.AnError)
+	mockQueue.On("Enqueue", mock.Anything, "bulk_search",
+		mock.MatchedBy(matchBulkSearchPayload(expectedPayload)),
+	).Return("", assert.AnError)
 
 	// Act
 	body, _ := json.Marshal(bulkReq)
