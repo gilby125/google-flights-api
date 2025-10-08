@@ -37,9 +37,13 @@ func TestLoad(t *testing.T) {
 		assert.Equal(t, 5, cfg.WorkerConfig.Concurrency)
 		assert.Equal(t, 3, cfg.WorkerConfig.MaxRetries)
 		assert.Equal(t, 30*time.Second, cfg.WorkerConfig.RetryDelay)
-		assert.Equal(t, 5*time.Minute, cfg.WorkerConfig.JobTimeout)
+		assert.Equal(t, 10*time.Minute, cfg.WorkerConfig.JobTimeout)
 		assert.Equal(t, 30*time.Second, cfg.WorkerConfig.ShutdownTimeout)
 		assert.True(t, cfg.WorkerEnabled)
+		assert.Equal(t, "flights_workers", cfg.RedisConfig.QueueGroup)
+		assert.Equal(t, "flights", cfg.RedisConfig.QueueStreamPrefix)
+		assert.Equal(t, 5*time.Second, cfg.RedisConfig.QueueBlockTimeout)
+		assert.Equal(t, 2*time.Minute, cfg.RedisConfig.QueueVisibilityTimeout)
 	})
 
 	t.Run("environment variable override", func(t *testing.T) {
@@ -82,6 +86,10 @@ func TestLoadTestConfig(t *testing.T) {
 	assert.Equal(t, "disable", cfg.PostgresConfig.SSLMode)
 	assert.Equal(t, "localhost", cfg.RedisConfig.Host)
 	assert.Equal(t, "6379", cfg.RedisConfig.Port) // Expect new default
+	assert.Equal(t, "flights_workers", cfg.RedisConfig.QueueGroup)
+	assert.Equal(t, "flights", cfg.RedisConfig.QueueStreamPrefix)
+	assert.Equal(t, 5*time.Second, cfg.RedisConfig.QueueBlockTimeout)
+	assert.Equal(t, 2*time.Minute, cfg.RedisConfig.QueueVisibilityTimeout)
 	// WorkerEnabled is not explicitly set by LoadTestConfig, so it retains default bool value (false)
 	assert.False(t, cfg.WorkerEnabled)
 }
@@ -97,6 +105,10 @@ func TestTestConfig(t *testing.T) {
 	assert.Equal(t, "disable", cfg.PostgresConfig.SSLMode)
 	assert.Equal(t, "localhost", cfg.RedisConfig.Host)
 	assert.Equal(t, "6379", cfg.RedisConfig.Port) // Expect new default
+	assert.Equal(t, "flights_workers", cfg.RedisConfig.QueueGroup)
+	assert.Equal(t, "flights", cfg.RedisConfig.QueueStreamPrefix)
+	assert.Equal(t, 5*time.Second, cfg.RedisConfig.QueueBlockTimeout)
+	assert.Equal(t, 2*time.Minute, cfg.RedisConfig.QueueVisibilityTimeout)
 
 	// Specifically set by TestConfig
 	assert.False(t, cfg.WorkerEnabled)

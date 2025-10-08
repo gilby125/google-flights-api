@@ -1,40 +1,44 @@
+# syntax=docker/dockerfile:1.7
+
+###############################################
 # Build stage
-FROM golang:1.23-alpine AS builder
-WORKDIR /app
-COPY . .
-# Install openssl for certificate validation
-RUN apk add --no-cache openssl
-# Create empty tls directory if it doesn't exist
-RUN mkdir -p tls
-# Note: TLS certificates should be mounted at runtime or generated in deployment
-# They are not included in the image for security reasons
+###############################################
+FROM golang:1.24-alpine AS builder
+WORKDIR /src
+ENV CGO_ENABLED=0 \
+    GOOS=linux \
+    GOTOOLCHAIN=auto
+
+RUN apk add --no-cache ca-certificates git
+
+# Leverage build cache for dependencies
+COPY go.mod go.sum ./
 RUN go mod download
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /flight-api
 
-# Test stage (commented out due to test failures)
-# FROM golang:1.23-alpine AS tester
-# WORKDIR /app
-# COPY --from=builder /app /app
-# COPY --from=builder /flight-api /flight-api
-# RUN apk add --no-cache postgresql-client
-# RUN go test -v -coverprofile=coverage.out ./...
+# Copy full source
+COPY . .
 
-# Final stage using distroless base
-FROM gcr.io/distroless/static-debian12:nonroot
+# Ensure directories exist for static assets consumed at runtime
+RUN mkdir -p web templates static tls
+
+# Build the API binary
+RUN go build -trimpath -ldflags="-s -w" -o /out/flight-api ./
+
+###############################################
+# Runtime stage
+###############################################
+FROM gcr.io/distroless/base-debian12:nonroot
 WORKDIR /app
 
-# Copy artifacts
-COPY --from=builder --chown=nonroot:nonroot /flight-api /app/
-# Copy empty tls directory from builder (created during build)
-COPY --from=builder --chown=nonroot:nonroot /app/tls/ /app/tls/
-COPY --from=builder --chown=nonroot:nonroot /app/web/ /app/web/
-COPY --from=builder --chown=nonroot:nonroot /app/templates/ /app/templates/
+# Copy CA bundle for outbound HTTPS
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
-# Security hardening
-USER nonroot
+# Copy application artifacts
+COPY --from=builder /out/flight-api /app/flight-api
+COPY --from=builder /src/web /app/web
+COPY --from=builder /src/templates /app/templates
+COPY --from=builder /src/static /app/static
+COPY --from=builder /src/tls /app/tls
+
 EXPOSE 8080
-HEALTHCHECK --interval=30s --timeout=10s \
-  CMD ["/app/flight-api", "healthcheck"]
-
-# Runtime configuration
 ENTRYPOINT ["/app/flight-api"]

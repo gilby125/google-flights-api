@@ -1,4 +1,3 @@
-
 package config
 
 import (
@@ -62,10 +61,14 @@ type Neo4jConfig struct {
 
 // RedisConfig holds Redis connection configuration
 type RedisConfig struct {
-	Host     string
-	Port     string
-	Password string
-	DB       int
+	Host                   string
+	Port                   string
+	Password               string
+	DB                     int
+	QueueGroup             string
+	QueueStreamPrefix      string
+	QueueBlockTimeout      time.Duration
+	QueueVisibilityTimeout time.Duration
 }
 
 // WorkerConfig holds worker configuration
@@ -110,11 +113,24 @@ func Load() (*Config, error) {
 		Password: getEnv("NEO4J_PASSWORD", ""),
 	}
 
+	queueBlockTimeout, err := time.ParseDuration(getEnv("REDIS_QUEUE_BLOCK_TIMEOUT", "5s"))
+	if err != nil {
+		queueBlockTimeout = 5 * time.Second
+	}
+	queueVisibilityTimeout, err := time.ParseDuration(getEnv("REDIS_QUEUE_VISIBILITY_TIMEOUT", "2m"))
+	if err != nil {
+		queueVisibilityTimeout = 2 * time.Minute
+	}
+
 	redisConfig := RedisConfig{
-		Host:     getEnv("REDIS_HOST", "redis"),
-		Port:     getEnv("REDIS_PORT", "6379"),
-		Password: getEnv("REDIS_PASSWORD", ""),
-		DB:       0,
+		Host:                   getEnv("REDIS_HOST", "redis"),
+		Port:                   getEnv("REDIS_PORT", "6379"),
+		Password:               getEnv("REDIS_PASSWORD", ""),
+		DB:                     0,
+		QueueGroup:             getEnv("REDIS_QUEUE_GROUP", "flights_workers"),
+		QueueStreamPrefix:      getEnv("REDIS_QUEUE_STREAM_PREFIX", "flights"),
+		QueueBlockTimeout:      queueBlockTimeout,
+		QueueVisibilityTimeout: queueVisibilityTimeout,
 	}
 
 	concurrency, _ := strconv.Atoi(getEnv("WORKER_CONCURRENCY", "5"))
@@ -155,8 +171,12 @@ func LoadTestConfig() *Config {
 			SSLMode:  getEnv("DB_SSLMODE", "disable"),        // Allow override, default disable for tests
 		},
 		RedisConfig: RedisConfig{
-			Host: getEnv("REDIS_HOST", "localhost"), // Use env var if set, default to localhost
-			Port: getEnv("REDIS_PORT", "6379"),      // Use env var if set, default to 6379 (standard Redis)
+			Host:                   getEnv("REDIS_HOST", "localhost"), // Use env var if set, default to localhost
+			Port:                   getEnv("REDIS_PORT", "6379"),      // Use env var if set, default to 6379 (standard Redis)
+			QueueGroup:             getEnv("REDIS_QUEUE_GROUP", "flights_workers"),
+			QueueStreamPrefix:      getEnv("REDIS_QUEUE_STREAM_PREFIX", "flights"),
+			QueueBlockTimeout:      5 * time.Second,
+			QueueVisibilityTimeout: 2 * time.Minute,
 		},
 		Neo4jConfig: Neo4jConfig{
 			URI:      getEnv("NEO4J_URI", "bolt://localhost:7687"), // Use env var or default
