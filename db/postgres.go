@@ -641,28 +641,6 @@ func (p *PostgresDBImpl) InitSchema() error {
 		return fmt.Errorf("failed to create flight_prices table: %w", err)
 	}
 
-	// Create flight_segments table
-	_, err = p.db.Exec(`
-        CREATE TABLE IF NOT EXISTS flight_segments (
-            id SERIAL PRIMARY KEY,
-            flight_id INTEGER REFERENCES flights(id),
-            segment_number INTEGER NOT NULL,
-            origin_id INTEGER REFERENCES airports(id),
-            destination_id INTEGER REFERENCES airports(id),
-            departure_time TIMESTAMP WITH TIME ZONE NOT NULL,
-            arrival_time TIMESTAMP WITH TIME ZONE NOT NULL,
-            duration INTEGER NOT NULL,
-            airline_id INTEGER REFERENCES airlines(id),
-            flight_number VARCHAR(10) NOT NULL,
-            aircraft_type VARCHAR(50),
-            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-            updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-        )
-    `)
-	if err != nil {
-		return fmt.Errorf("failed to create flight_segments table: %w", err)
-	}
-
 	// Create scheduled_jobs table
 	_, err = p.db.Exec(`
         CREATE TABLE IF NOT EXISTS scheduled_jobs (
@@ -675,6 +653,9 @@ func (p *PostgresDBImpl) InitSchema() error {
             updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
         )
     `)
+	if err != nil {
+		return fmt.Errorf("failed to create scheduled_jobs table: %w", err)
+	}
 
 	// Create search_queries table
 	_, err = p.db.Exec(`
@@ -778,6 +759,29 @@ func (p *PostgresDBImpl) InitSchema() error {
 		return fmt.Errorf("failed to create flight_offers table: %w", err)
 	}
 
+	// Create flight_segments table
+	_, err = p.db.Exec(`
+        CREATE TABLE IF NOT EXISTS flight_segments (
+            id SERIAL PRIMARY KEY,
+            flight_offer_id INTEGER NOT NULL REFERENCES flight_offers(id) ON DELETE CASCADE,
+            airline_code VARCHAR(3) NOT NULL,
+            flight_number VARCHAR(10) NOT NULL,
+            departure_airport VARCHAR(3) NOT NULL,
+            arrival_airport VARCHAR(3) NOT NULL,
+            departure_time TIMESTAMP WITH TIME ZONE NOT NULL,
+            arrival_time TIMESTAMP WITH TIME ZONE NOT NULL,
+            duration INTEGER NOT NULL,
+            airplane VARCHAR(100),
+            legroom VARCHAR(50),
+            is_return BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        )
+    `)
+	if err != nil {
+		return fmt.Errorf("failed to create flight_segments table: %w", err)
+	}
+
 	// Create certificate tracking table
 	_, err = p.db.Exec(`
         CREATE TABLE IF NOT EXISTS certificate_issuance (
@@ -824,6 +828,7 @@ func (p *PostgresDBImpl) InitSchema() error {
         CREATE INDEX IF NOT EXISTS idx_flight_prices_search_date ON flight_prices(search_date);
         CREATE INDEX IF NOT EXISTS idx_search_results_search_id ON search_results(search_id);
         CREATE INDEX IF NOT EXISTS idx_flight_offers_search_id ON flight_offers(search_id);
+        CREATE INDEX IF NOT EXISTS idx_flight_segments_offer_id ON flight_segments(flight_offer_id);
     `)
 	if err != nil {
 		return fmt.Errorf("failed to create indexes: %w", err)
