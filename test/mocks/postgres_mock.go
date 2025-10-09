@@ -284,5 +284,34 @@ func (m *MockPostgresDB) QueryBulkSearchResultsPaginated(ctx context.Context, se
 	return rows, args.Error(1)
 }
 
+func (m *MockPostgresDB) CreateBulkSearchRecord(ctx context.Context, jobID sql.NullInt32, totalSearches int, currency, status string) (int, error) {
+	args := m.Called(ctx, jobID, totalSearches, currency, status)
+	return args.Int(0), args.Error(1)
+}
+
+func (m *MockPostgresDB) UpdateBulkSearchStatus(ctx context.Context, bulkSearchID int, status string) error {
+	args := m.Called(ctx, bulkSearchID, status)
+	return args.Error(0)
+}
+
+func (m *MockPostgresDB) CompleteBulkSearch(ctx context.Context, summary db.BulkSearchSummary) error {
+	args := m.Called(ctx, summary)
+	return args.Error(0)
+}
+
+func (m *MockPostgresDB) InsertBulkSearchResult(ctx context.Context, result db.BulkSearchResultRecord) error {
+	args := m.Called(ctx, result)
+	return args.Error(0)
+}
+
+func (m *MockPostgresDB) ListBulkSearches(ctx context.Context, limit, offset int) (db.Rows, error) {
+	args := m.Called(ctx, limit, offset)
+	var rows db.Rows
+	if r := args.Get(0); r != nil {
+		rows = r.(db.Rows)
+	}
+	return rows, args.Error(1)
+}
+
 // Ensure MockPostgresDB implements db.PostgresDB
 var _ db.PostgresDB = (*MockPostgresDB)(nil)

@@ -934,6 +934,165 @@ func listJobs(pgDB db.PostgresDB) gin.HandlerFunc {
 	}
 }
 
+// listBulkSearches returns a handler for listing bulk search runs
+func listBulkSearches(pgDB db.PostgresDB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+		offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+
+		rows, err := pgDB.ListBulkSearches(c.Request.Context(), limit, offset)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list bulk searches: " + err.Error()})
+			return
+		}
+		defer rows.Close()
+
+		searches := []map[string]interface{}{}
+		for rows.Next() {
+			var search db.BulkSearch
+			if err := rows.Scan(&search.ID, &search.JobID, &search.Status, &search.TotalSearches, &search.Completed,
+				&search.TotalOffers, &search.ErrorCount, &search.Currency, &search.CreatedAt, &search.UpdatedAt,
+				&search.CompletedAt, &search.MinPrice, &search.MaxPrice, &search.AveragePrice); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scan bulk search: " + err.Error()})
+				return
+			}
+
+			record := map[string]interface{}{
+				"id":           search.ID,
+				"status":       search.Status,
+				"total_routes": search.TotalSearches,
+				"completed":    search.Completed,
+				"total_offers": search.TotalOffers,
+				"error_count":  search.ErrorCount,
+				"currency":     search.Currency,
+				"created_at":   search.CreatedAt,
+				"updated_at":   search.UpdatedAt,
+			}
+			if search.JobID.Valid {
+				record["job_id"] = search.JobID.Int32
+			}
+			if search.CompletedAt.Valid {
+				record["completed_at"] = search.CompletedAt.Time
+			}
+			if search.MinPrice.Valid {
+				record["min_price"] = search.MinPrice.Float64
+			}
+			if search.MaxPrice.Valid {
+				record["max_price"] = search.MaxPrice.Float64
+			}
+			if search.AveragePrice.Valid {
+				record["average_price"] = search.AveragePrice.Float64
+			}
+
+			searches = append(searches, record)
+		}
+		if err := rows.Err(); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error iterating bulk searches: " + err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"items": searches,
+			"count": len(searches),
+		})
+	}
+}
+
+// getBulkSearchResults returns a handler that fetches summary and results for a bulk search
+func getBulkSearchResults(pgDB db.PostgresDB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		idParam := c.Param("id")
+		bulkID, err := strconv.Atoi(idParam)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid bulk search ID"})
+			return
+		}
+
+		summary, err := pgDB.GetBulkSearchByID(c.Request.Context(), bulkID)
+		if err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				c.JSON(http.StatusNotFound, gin.H{"error": "Bulk search not found"})
+			} else {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load bulk search: " + err.Error()})
+			}
+			return
+		}
+
+		limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+		offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+
+		rows, err := pgDB.QueryBulkSearchResultsPaginated(c.Request.Context(), bulkID, limit, offset)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query bulk search results: " + err.Error()})
+			return
+		}
+		defer rows.Close()
+
+		results := []map[string]interface{}{}
+		for rows.Next() {
+			var result db.BulkSearchResult
+			if err := rows.Scan(&result.Origin, &result.Destination, &result.DepartureDate, &result.ReturnDate,
+				&result.Price, &result.Currency, &result.AirlineCode, &result.Duration); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scan bulk search result: " + err.Error()})
+				return
+			}
+
+			entry := map[string]interface{}{
+				"origin":         result.Origin,
+				"destination":    result.Destination,
+				"departure_date": result.DepartureDate,
+				"price":          result.Price,
+				"currency":       result.Currency,
+				"airline_code":   result.AirlineCode,
+				"duration":       result.Duration,
+			}
+			if result.ReturnDate.Valid {
+				recordReturn := result.ReturnDate.Time
+				entry["return_date"] = recordReturn
+			}
+
+			results = append(results, entry)
+		}
+		if err := rows.Err(); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error iterating bulk search results: " + err.Error()})
+			return
+		}
+
+		summaryMap := map[string]interface{}{
+			"id":           summary.ID,
+			"status":       summary.Status,
+			"total_routes": summary.TotalSearches,
+			"completed":    summary.Completed,
+			"total_offers": summary.TotalOffers,
+			"error_count":  summary.ErrorCount,
+			"currency":     summary.Currency,
+			"created_at":   summary.CreatedAt,
+			"updated_at":   summary.UpdatedAt,
+		}
+		if summary.JobID.Valid {
+			summaryMap["job_id"] = summary.JobID.Int32
+		}
+		if summary.CompletedAt.Valid {
+			summaryMap["completed_at"] = summary.CompletedAt.Time
+		}
+		if summary.MinPrice.Valid {
+			summaryMap["min_price"] = summary.MinPrice.Float64
+		}
+		if summary.MaxPrice.Valid {
+			summaryMap["max_price"] = summary.MaxPrice.Float64
+		}
+		if summary.AveragePrice.Valid {
+			summaryMap["average_price"] = summary.AveragePrice.Float64
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"summary": summaryMap,
+			"results": results,
+			"count":   len(results),
+		})
+	}
+}
+
 // createJob returns a handler for creating a new scheduled job
 func createJob(pgDB db.PostgresDB, workerManager *worker.Manager) gin.HandlerFunc { // Changed parameter type
 	return func(c *gin.Context) {
@@ -1064,11 +1223,32 @@ func createJob(pgDB db.PostgresDB, workerManager *worker.Manager) gin.HandlerFun
 }
 
 // createBulkSearch returns a handler for creating a bulk flight search
-func CreateBulkSearch(q queue.Queue) gin.HandlerFunc {
+func CreateBulkSearch(q queue.Queue, pgDB db.PostgresDB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req BulkSearchRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		totalRoutes := len(req.Origins) * len(req.Destinations)
+		if totalRoutes == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "At least one origin and one destination are required"})
+			return
+		}
+
+		currencyCode := strings.ToUpper(req.Currency)
+
+		// Create bulk search record so the run can be tracked
+		bulkSearchID, err := pgDB.CreateBulkSearchRecord(
+			c.Request.Context(),
+			sql.NullInt32{}, // No associated scheduled job for on-demand requests
+			totalRoutes,
+			currencyCode,
+			"queued",
+		)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create bulk search record: " + err.Error()})
 			return
 		}
 
@@ -1088,19 +1268,22 @@ func CreateBulkSearch(q queue.Queue) gin.HandlerFunc {
 			TripType:          req.TripType,
 			Class:             req.Class,
 			Stops:             req.Stops,
-			Currency:          req.Currency,
+			Currency:          currencyCode,
+			BulkSearchID:      bulkSearchID,
 		}
 
 		// Enqueue the job
 		jobID, err := q.Enqueue(c.Request.Context(), "bulk_search", payload)
 		if err != nil {
+			_ = pgDB.UpdateBulkSearchStatus(c.Request.Context(), bulkSearchID, "failed")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
 
 		c.JSON(http.StatusAccepted, gin.H{
-			"job_id":  jobID,
-			"message": "Bulk flight search job created successfully",
+			"job_id":         jobID,
+			"bulk_search_id": bulkSearchID,
+			"message":        "Bulk flight search job created successfully",
 		})
 	}
 }

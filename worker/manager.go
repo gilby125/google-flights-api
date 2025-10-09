@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -517,7 +518,7 @@ func (m *Manager) processFlightSearch(ctx context.Context, worker *Worker, sessi
 }
 
 // processBulkSearch processes a bulk search job
-func (m *Manager) processBulkSearch(ctx context.Context, worker *Worker, session *flights.Session, payload BulkSearchPayload) error {
+func (m *Manager) processBulkSearch(ctx context.Context, worker *Worker, session *flights.Session, payload BulkSearchPayload) (err error) {
 	// Validate origins and destinations
 	if len(payload.Origins) == 0 {
 		return fmt.Errorf("bulk search payload requires at least one origin")
@@ -549,8 +550,38 @@ func (m *Manager) processBulkSearch(ctx context.Context, worker *Worker, session
 	flightClass := parseClass(payload.Class)
 	flightStops := parseStops(payload.Stops)
 
-	// Process all origin/destination combinations to find lowest fares
 	totalRoutes := len(payload.Origins) * len(payload.Destinations)
+	if totalRoutes == 0 {
+		return fmt.Errorf("bulk search payload requires at least one origin and destination combination")
+	}
+
+	var bulkSearchID int
+	if payload.BulkSearchID > 0 {
+		bulkSearchID = payload.BulkSearchID
+		if updateErr := m.postgresDB.UpdateBulkSearchStatus(ctx, bulkSearchID, "running"); updateErr != nil {
+			log.Printf("Failed to update bulk search %d status to running: %v", bulkSearchID, updateErr)
+		}
+	} else {
+		var jobRef sql.NullInt32
+		if payload.JobID > 0 {
+			jobRef = sql.NullInt32{Int32: int32(payload.JobID), Valid: true}
+		}
+		newID, createErr := m.postgresDB.CreateBulkSearchRecord(ctx, jobRef, totalRoutes, payload.Currency, "running")
+		if createErr != nil {
+			return fmt.Errorf("failed to create bulk search record: %w", createErr)
+		}
+		bulkSearchID = newID
+	}
+
+	defer func() {
+		if bulkSearchID > 0 && err != nil {
+			if updateErr := m.postgresDB.UpdateBulkSearchStatus(ctx, bulkSearchID, "failed"); updateErr != nil {
+				log.Printf("Failed to mark bulk search %d as failed: %v", bulkSearchID, updateErr)
+			}
+		}
+	}()
+
+	// Process all origin/destination combinations to find lowest fares
 	log.Printf("Starting bulk search: %d origins × %d destinations = %d route combinations",
 		len(payload.Origins), len(payload.Destinations), totalRoutes)
 
@@ -704,14 +735,6 @@ func (m *Manager) processBulkSearch(ctx context.Context, worker *Worker, session
 		}
 	}
 
-	// Calculate total offers found across all routes
-	totalOffers := 0
-	for _, result := range routeResults {
-		totalOffers += result.TotalOffers
-	}
-
-	log.Printf("Bulk search completed: found lowest fares for %d routes, processed %d total offers", len(routeResults), totalOffers)
-
 	// If we had some errors but also some successes, log the errors but don't fail the job
 	if len(searchErrors) > 0 {
 		if len(routeResults) > 0 {
@@ -721,8 +744,110 @@ func (m *Manager) processBulkSearch(ctx context.Context, worker *Worker, session
 			}
 		} else {
 			// All searches failed
+			status := "failed"
+			summary := db.BulkSearchSummary{
+				ID:          bulkSearchID,
+				Status:      status,
+				Completed:   0,
+				TotalOffers: 0,
+				ErrorCount:  len(searchErrors),
+			}
+			if completeErr := m.postgresDB.CompleteBulkSearch(ctx, summary); completeErr != nil {
+				log.Printf("Failed to finalize failed bulk search %d: %v", bulkSearchID, completeErr)
+			}
 			return fmt.Errorf("all bulk searches failed: %d errors occurred", len(searchErrors))
 		}
+	}
+
+	// Persist best offers per route
+	completedRoutes := 0
+	totalOffers := 0
+	var minPrice float64 = math.MaxFloat64
+	var maxPrice float64
+	var sumPrice float64
+
+	for _, result := range routeResults {
+		if result.BestOffer.Price == math.MaxFloat64 {
+			continue
+		}
+
+		departureDate := result.BestDate
+		returnDate := sql.NullTime{}
+		if !result.BestReturn.IsZero() {
+			returnDate = sql.NullTime{Time: result.BestReturn, Valid: true}
+		}
+
+		airlineCode := ""
+		if len(result.BestOffer.Flight) > 0 {
+			flightNumber := result.BestOffer.Flight[0].FlightNumber
+			if len(flightNumber) >= 2 {
+				airlineCode = flightNumber[:2]
+			}
+		}
+
+		duration := int(result.BestOffer.FlightDuration.Minutes())
+
+		record := db.BulkSearchResultRecord{
+			BulkSearchID:  bulkSearchID,
+			Origin:        result.Origin,
+			Destination:   result.Destination,
+			DepartureDate: departureDate,
+			ReturnDate:    returnDate,
+			Price:         result.BestOffer.Price,
+			Currency:      payload.Currency,
+			AirlineCode:   airlineCode,
+			Duration:      duration,
+		}
+
+		if insertErr := m.postgresDB.InsertBulkSearchResult(ctx, record); insertErr != nil {
+			log.Printf("Failed to insert bulk search result for %s -> %s: %v", result.Origin, result.Destination, insertErr)
+		}
+
+		completedRoutes++
+		totalOffers += result.TotalOffers
+		sumPrice += result.BestOffer.Price
+		if result.BestOffer.Price < minPrice {
+			minPrice = result.BestOffer.Price
+		}
+		if result.BestOffer.Price > maxPrice {
+			maxPrice = result.BestOffer.Price
+		}
+	}
+
+	var minPriceNull, maxPriceNull, avgPriceNull sql.NullFloat64
+	if completedRoutes > 0 {
+		minPriceNull = sql.NullFloat64{Float64: minPrice, Valid: true}
+		maxPriceNull = sql.NullFloat64{Float64: maxPrice, Valid: true}
+		avgPriceNull = sql.NullFloat64{Float64: sumPrice / float64(completedRoutes), Valid: true}
+	} else {
+		minPriceNull = sql.NullFloat64{Valid: false}
+		maxPriceNull = sql.NullFloat64{Valid: false}
+		avgPriceNull = sql.NullFloat64{Valid: false}
+	}
+
+	status := "completed"
+	if len(searchErrors) > 0 && completedRoutes > 0 {
+		status = "completed_with_errors"
+	}
+	if completedRoutes == 0 {
+		status = "failed"
+	}
+
+	log.Printf("Bulk search completed: found lowest fares for %d routes, processed %d total offers", completedRoutes, totalOffers)
+
+	summary := db.BulkSearchSummary{
+		ID:           bulkSearchID,
+		Status:       status,
+		Completed:    completedRoutes,
+		TotalOffers:  totalOffers,
+		ErrorCount:   len(searchErrors),
+		MinPrice:     minPriceNull,
+		MaxPrice:     maxPriceNull,
+		AveragePrice: avgPriceNull,
+	}
+
+	if completeErr := m.postgresDB.CompleteBulkSearch(ctx, summary); completeErr != nil {
+		log.Printf("Failed to update bulk search summary for %d: %v", bulkSearchID, completeErr)
 	}
 
 	return nil

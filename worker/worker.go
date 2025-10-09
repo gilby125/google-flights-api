@@ -130,6 +130,8 @@ type BulkSearchPayload struct {
 	Class             string // Changed to string for JSON unmarshal
 	Stops             string // Changed to string for JSON unmarshal
 	Currency          string
+	BulkSearchID      int `json:"bulk_search_id,omitempty"`
+	JobID             int `json:"job_id,omitempty"`
 }
 
 // StoreFlightOffers stores flight offers in the database (Exported for testing)
@@ -226,10 +228,10 @@ func (w *Worker) StoreFlightOffers(ctx context.Context, payload FlightSearchPayl
 			offer.Price,
 			payload.Currency,
 			airlineCodesStr,
-			totalDuration,   // outbound_duration (in minutes)
-			0,               // outbound_stops (placeholder - needs proper calculation)
-			totalDuration,   // return_duration (placeholder - same as outbound for now)
-			0,               // return_stops (placeholder)
+			totalDuration, // outbound_duration (in minutes)
+			0,             // outbound_stops (placeholder - needs proper calculation)
+			totalDuration, // return_duration (placeholder - same as outbound for now)
+			0,             // return_stops (placeholder)
 		).Scan(&offerID)
 
 		if err != nil {

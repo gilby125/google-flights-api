@@ -2,13 +2,15 @@ package worker
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
-	"github.com/gilby125/google-flights-api/queue"
 	"github.com/gilby125/google-flights-api/db"
+	"github.com/gilby125/google-flights-api/queue"
 	"github.com/robfig/cron/v3"
 )
 
@@ -104,7 +106,7 @@ func (s *Scheduler) AddJob(payload []byte) error {
 // loadScheduledBulkSearches loads and schedules bulk search jobs from the database
 func (s *Scheduler) loadScheduledBulkSearches() error {
 	ctx := context.Background()
-	
+
 	// Get all enabled scheduled jobs
 	rows, err := s.postgresDB.ListJobs(ctx)
 	if err != nil {
@@ -123,7 +125,7 @@ func (s *Scheduler) loadScheduledBulkSearches() error {
 			CreatedAt      time.Time
 			UpdatedAt      time.Time
 		}
-		
+
 		err := rows.Scan(&job.ID, &job.Name, &job.CronExpression, &job.Enabled, &job.LastRun, &job.CreatedAt, &job.UpdatedAt)
 		if err != nil {
 			log.Printf("Error scanning scheduled job: %v", err)
@@ -140,16 +142,16 @@ func (s *Scheduler) loadScheduledBulkSearches() error {
 		_, err = s.cron.AddFunc(job.CronExpression, func() {
 			s.executeScheduledBulkSearch(job.ID, job.Name)
 		})
-		
+
 		if err != nil {
 			log.Printf("Failed to schedule job %s (ID: %d): %v", job.Name, job.ID, err)
 			continue
 		}
-		
+
 		jobCount++
 		log.Printf("Scheduled bulk search job: %s (ID: %d) with cron: %s", job.Name, job.ID, job.CronExpression)
 	}
-	
+
 	log.Printf("Successfully scheduled %d bulk search jobs", jobCount)
 	return nil
 }
@@ -158,7 +160,7 @@ func (s *Scheduler) loadScheduledBulkSearches() error {
 func (s *Scheduler) executeScheduledBulkSearch(jobID int, jobName string) {
 	ctx := context.Background()
 	log.Printf("Executing scheduled bulk search: %s (ID: %d)", jobName, jobID)
-	
+
 	// Get job details from database
 	details, err := s.postgresDB.GetJobDetailsByID(ctx, jobID)
 	if err != nil {
@@ -168,54 +170,54 @@ func (s *Scheduler) executeScheduledBulkSearch(jobID int, jobName string) {
 
 	// Calculate dates based on execution time if dynamic dates are enabled
 	var departureDateFrom, departureDateTo, returnDateFrom, returnDateTo time.Time
-	
+
 	if details.DynamicDates {
 		// Use dates relative to current execution time
 		now := time.Now()
-		
+
 		// Get days from execution (default to 0 if not set)
 		daysFromExecution := 0
 		if details.DaysFromExecution.Valid {
 			daysFromExecution = int(details.DaysFromExecution.Int32)
 		}
-		
+
 		// Get search window days (default to 1 if not set)
 		searchWindowDays := 1
 		if details.SearchWindowDays.Valid {
 			searchWindowDays = int(details.SearchWindowDays.Int32)
 		}
-		
+
 		// Calculate departure date range relative to execution time
 		departureDateFrom = now.AddDate(0, 0, daysFromExecution)
 		departureDateTo = departureDateFrom.AddDate(0, 0, searchWindowDays-1)
-		
-		log.Printf("Dynamic dates for job %s: searching %d days from now (%s to %s)", 
+
+		log.Printf("Dynamic dates for job %s: searching %d days from now (%s to %s)",
 			jobName, daysFromExecution, departureDateFrom.Format("2006-01-02"), departureDateTo.Format("2006-01-02"))
-		
+
 		// For round trips, calculate return dates if trip length is specified
 		if details.TripType == "round_trip" && details.TripLength.Valid {
 			tripLength := int(details.TripLength.Int32)
 			returnDateFrom = departureDateFrom.AddDate(0, 0, tripLength)
 			returnDateTo = departureDateTo.AddDate(0, 0, tripLength)
-			log.Printf("Round trip return dates: %s to %s (trip length: %d days)", 
+			log.Printf("Round trip return dates: %s to %s (trip length: %d days)",
 				returnDateFrom.Format("2006-01-02"), returnDateTo.Format("2006-01-02"), tripLength)
 		}
 	} else {
 		// Use static dates from job details
 		departureDateFrom = details.DepartureDateStart
 		departureDateTo = details.DepartureDateEnd
-		
+
 		if details.ReturnDateStart.Valid {
 			returnDateFrom = details.ReturnDateStart.Time
 		}
 		if details.ReturnDateEnd.Valid {
 			returnDateTo = details.ReturnDateEnd.Time
 		}
-		
-		log.Printf("Static dates for job %s: departure %s to %s", 
+
+		log.Printf("Static dates for job %s: departure %s to %s",
 			jobName, departureDateFrom.Format("2006-01-02"), departureDateTo.Format("2006-01-02"))
 	}
-	
+
 	// Get trip length
 	tripLength := 0
 	if details.TripLength.Valid {
@@ -223,6 +225,7 @@ func (s *Scheduler) executeScheduledBulkSearch(jobID int, jobName string) {
 	}
 
 	// Create bulk search payload with calculated dates
+	currency := strings.ToUpper(details.Currency)
 	bulkSearchPayload := BulkSearchPayload{
 		Origins:           []string{details.Origin},
 		Destinations:      []string{details.Destination},
@@ -238,8 +241,28 @@ func (s *Scheduler) executeScheduledBulkSearch(jobID int, jobName string) {
 		TripType:          details.TripType,
 		Class:             details.Class,
 		Stops:             details.Stops,
-		Currency:          details.Currency,
+		Currency:          currency,
 	}
+
+	totalRoutes := len(bulkSearchPayload.Origins) * len(bulkSearchPayload.Destinations)
+	if totalRoutes == 0 {
+		log.Printf("Scheduled bulk search %s has no routes to process", jobName)
+		return
+	}
+
+	bulkSearchID, err := s.postgresDB.CreateBulkSearchRecord(
+		ctx,
+		sql.NullInt32{Int32: int32(jobID), Valid: true},
+		totalRoutes,
+		currency,
+		"queued",
+	)
+	if err != nil {
+		log.Printf("Error creating bulk search record for job %s: %v", jobName, err)
+		return
+	}
+	bulkSearchPayload.BulkSearchID = bulkSearchID
+	bulkSearchPayload.JobID = jobID
 
 	// Serialize the payload
 	payloadBytes, err := json.Marshal(bulkSearchPayload)
@@ -253,6 +276,9 @@ func (s *Scheduler) executeScheduledBulkSearch(jobID int, jobName string) {
 	_, err = s.queue.Enqueue(ctx, "bulk_search", payloadBytes)
 	if err != nil {
 		log.Printf("Error enqueuing bulk search for job %s: %v", jobName, err)
+		if updateErr := s.postgresDB.UpdateBulkSearchStatus(ctx, bulkSearchID, "failed"); updateErr != nil {
+			log.Printf("Failed to update bulk search status after enqueue failure: %v", updateErr)
+		}
 		return
 	}
 

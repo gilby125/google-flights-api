@@ -15,26 +15,26 @@ type RowScanner interface {
 
 // Search represents a flight search query and results (kept for potential future use, though might be redundant)
 type Search struct {
-	ID           string
-	SearchID     string
-	Origin       string
-	Destination  string
-	Departure    time.Time
-	Return       *time.Time
-	Passengers   int
-	CabinClass   string
-	Status       string
-	Results      []flights.FullOffer
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID          string
+	SearchID    string
+	Origin      string
+	Destination string
+	Departure   time.Time
+	Return      *time.Time
+	Passengers  int
+	CabinClass  string
+	Status      string
+	Results     []flights.FullOffer
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // Certificate represents a TLS certificate stored in the database
 type Certificate struct {
-	Domain      string
-	CertChain   []byte
-	PrivateKey  []byte
-	Expires     time.Time
+	Domain     string
+	CertChain  []byte
+	PrivateKey []byte
+	Expires    time.Time
 }
 
 // --- Struct Definitions for Query Results ---
@@ -52,15 +52,15 @@ type SearchQuery struct {
 
 // FlightOffer represents the data structure for a single flight offer row
 type FlightOffer struct {
-	ID                int
-	Price             float64
-	Currency          string
-	AirlineCodes      sql.NullString
-	OutboundDuration  sql.NullInt64
-	OutboundStops     sql.NullInt64
-	ReturnDuration    sql.NullInt64
-	ReturnStops       sql.NullInt64
-	CreatedAt         time.Time
+	ID               int
+	Price            float64
+	Currency         string
+	AirlineCodes     sql.NullString
+	OutboundDuration sql.NullInt64
+	OutboundStops    sql.NullInt64
+	ReturnDuration   sql.NullInt64
+	ReturnStops      sql.NullInt64
+	CreatedAt        time.Time
 }
 
 // FlightSegment represents the data structure for a single flight segment row
@@ -100,9 +100,9 @@ type JobDetails struct {
 	ReturnDateStart    sql.NullTime
 	ReturnDateEnd      sql.NullTime
 	TripLength         sql.NullInt32
-	DynamicDates       bool             // Use dates relative to execution time
-	DaysFromExecution  sql.NullInt32    // Start searching X days from now
-	SearchWindowDays   sql.NullInt32    // Search within X days window
+	DynamicDates       bool          // Use dates relative to execution time
+	DaysFromExecution  sql.NullInt32 // Start searching X days from now
+	SearchWindowDays   sql.NullInt32 // Search within X days window
 	Adults             int
 	Children           int
 	InfantsLap         int
@@ -116,11 +116,16 @@ type JobDetails struct {
 // BulkSearch represents the metadata for a bulk search
 type BulkSearch struct {
 	ID            int
+	JobID         sql.NullInt32
 	Status        string
 	TotalSearches int
 	Completed     int
+	TotalOffers   int
+	ErrorCount    int
+	Currency      string
 	CreatedAt     time.Time
 	CompletedAt   sql.NullTime
+	UpdatedAt     time.Time
 	MinPrice      sql.NullFloat64
 	MaxPrice      sql.NullFloat64
 	AveragePrice  sql.NullFloat64
@@ -128,6 +133,31 @@ type BulkSearch struct {
 
 // BulkSearchResult represents a single result row from a bulk search
 type BulkSearchResult struct {
+	Origin        string
+	Destination   string
+	DepartureDate time.Time
+	ReturnDate    sql.NullTime
+	Price         float64
+	Currency      string
+	AirlineCode   string
+	Duration      int
+}
+
+// BulkSearchSummary represents aggregated results for a bulk search run
+type BulkSearchSummary struct {
+	ID           int
+	Status       string
+	Completed    int
+	TotalOffers  int
+	ErrorCount   int
+	MinPrice     sql.NullFloat64
+	MaxPrice     sql.NullFloat64
+	AveragePrice sql.NullFloat64
+}
+
+// BulkSearchResultRecord represents the data needed to insert a bulk search result
+type BulkSearchResultRecord struct {
+	BulkSearchID  int
 	Origin        string
 	Destination   string
 	DepartureDate time.Time

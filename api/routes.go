@@ -115,7 +115,7 @@ func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Ne
 		v1.GET("/search", ListSearches(postgresDB))
 
 		// Bulk search routes
-		v1.POST("/bulk-search", CreateBulkSearch(queue))
+		v1.POST("/bulk-search", CreateBulkSearch(queue, postgresDB))
 		v1.GET("/bulk-search/:id", getBulkSearchById(postgresDB))
 
 		// Price history routes
@@ -131,6 +131,8 @@ func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Ne
 			admin.GET("/jobs/:id", getJobById(postgresDB))
 			admin.PUT("/jobs/:id", updateJob(postgresDB, workerManager))
 			admin.DELETE("/jobs/:id", DeleteJob(postgresDB, workerManager))
+			admin.GET("/bulk-jobs", listBulkSearches(postgresDB))
+			admin.GET("/bulk-jobs/:id", getBulkSearchResults(postgresDB))
 
 			// Job actions
 			admin.POST("/jobs/:id/run", runJob(queue, postgresDB))

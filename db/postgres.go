@@ -46,6 +46,11 @@ type PostgresDB interface {
 	GetJobByID(ctx context.Context, jobID int) (*ScheduledJob, error)         // Define ScheduledJob struct later
 	GetBulkSearchByID(ctx context.Context, searchID int) (*BulkSearch, error) // Define BulkSearch struct later
 	QueryBulkSearchResultsPaginated(ctx context.Context, searchID, limit, offset int) (Rows, error)
+	CreateBulkSearchRecord(ctx context.Context, jobID sql.NullInt32, totalSearches int, currency, status string) (int, error)
+	UpdateBulkSearchStatus(ctx context.Context, bulkSearchID int, status string) error
+	CompleteBulkSearch(ctx context.Context, summary BulkSearchSummary) error
+	InsertBulkSearchResult(ctx context.Context, result BulkSearchResultRecord) error
+	ListBulkSearches(ctx context.Context, limit, offset int) (Rows, error)
 }
 
 // Tx defines the interface for database transactions
@@ -507,13 +512,14 @@ func (p *PostgresDBImpl) GetJobByID(ctx context.Context, jobID int) (*ScheduledJ
 func (p *PostgresDBImpl) GetBulkSearchByID(ctx context.Context, searchID int) (*BulkSearch, error) {
 	var search BulkSearch
 	err := p.db.QueryRowContext(ctx,
-		`SELECT id, status, total_searches, completed, created_at,
-			completed_at, min_price, max_price, average_price
-		FROM bulk_searches WHERE id = $1`, // Assuming table name is bulk_searches
+		`SELECT id, job_id, status, total_searches, completed, total_offers,
+            error_count, currency, created_at, updated_at, completed_at,
+			min_price, max_price, average_price
+		FROM bulk_searches WHERE id = $1`,
 		searchID,
-	).Scan(&search.ID, &search.Status, &search.TotalSearches, &search.Completed,
-		&search.CreatedAt, &search.CompletedAt, &search.MinPrice,
-		&search.MaxPrice, &search.AveragePrice)
+	).Scan(&search.ID, &search.JobID, &search.Status, &search.TotalSearches, &search.Completed,
+		&search.TotalOffers, &search.ErrorCount, &search.Currency, &search.CreatedAt, &search.UpdatedAt,
+		&search.CompletedAt, &search.MinPrice, &search.MaxPrice, &search.AveragePrice)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -536,6 +542,104 @@ func (p *PostgresDBImpl) QueryBulkSearchResultsPaginated(ctx context.Context, se
 	)
 }
 
+func (p *PostgresDBImpl) CreateBulkSearchRecord(ctx context.Context, jobID sql.NullInt32, totalSearches int, currency, status string) (int, error) {
+	if status == "" {
+		status = "queued"
+	}
+	var bulkSearchID int
+	err := p.db.QueryRowContext(ctx,
+		`INSERT INTO bulk_searches (job_id, status, total_searches, currency)
+		 VALUES ($1, $2, $3, $4)
+		 RETURNING id`,
+		jobID, status, totalSearches, currency,
+	).Scan(&bulkSearchID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to create bulk search record: %w", err)
+	}
+	return bulkSearchID, nil
+}
+
+func (p *PostgresDBImpl) UpdateBulkSearchStatus(ctx context.Context, bulkSearchID int, status string) error {
+	_, err := p.db.ExecContext(ctx,
+		`UPDATE bulk_searches
+         SET status = $1, updated_at = NOW()
+         WHERE id = $2`,
+		status, bulkSearchID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update bulk search %d status to %s: %w", bulkSearchID, status, err)
+	}
+	return nil
+}
+
+func (p *PostgresDBImpl) CompleteBulkSearch(ctx context.Context, summary BulkSearchSummary) error {
+	_, err := p.db.ExecContext(ctx,
+		`UPDATE bulk_searches
+         SET status = $1,
+             completed = $2,
+             total_offers = $3,
+             error_count = $4,
+             min_price = $5,
+             max_price = $6,
+             average_price = $7,
+             completed_at = NOW(),
+             updated_at = NOW()
+         WHERE id = $8`,
+		summary.Status,
+		summary.Completed,
+		summary.TotalOffers,
+		summary.ErrorCount,
+		summary.MinPrice,
+		summary.MaxPrice,
+		summary.AveragePrice,
+		summary.ID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to complete bulk search %d: %w", summary.ID, err)
+	}
+	return nil
+}
+
+func (p *PostgresDBImpl) InsertBulkSearchResult(ctx context.Context, result BulkSearchResultRecord) error {
+	_, err := p.db.ExecContext(ctx,
+		`INSERT INTO bulk_search_results
+			(bulk_search_id, origin, destination, departure_date, return_date,
+             price, currency, airline_code, duration)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		result.BulkSearchID,
+		result.Origin,
+		result.Destination,
+		result.DepartureDate,
+		result.ReturnDate,
+		result.Price,
+		result.Currency,
+		result.AirlineCode,
+		result.Duration,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to insert bulk search result: %w", err)
+	}
+	return nil
+}
+
+func (p *PostgresDBImpl) ListBulkSearches(ctx context.Context, limit, offset int) (Rows, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	return p.db.QueryContext(ctx,
+		`SELECT id, job_id, status, total_searches, completed, total_offers,
+            error_count, currency, created_at, updated_at, completed_at,
+            min_price, max_price, average_price
+         FROM bulk_searches
+         ORDER BY created_at DESC
+         LIMIT $1 OFFSET $2`,
+		limit, offset,
+	)
+}
+
 // --- End Implementation ---
 
 // GetDB returns the underlying database connection
@@ -549,6 +653,8 @@ func (p *PostgresDBImpl) InitSchema() error {
 	// Note: This makes InitSchema destructive on existing data if tables exist.
 	// In a real application, migrations are preferred.
 	_, err := p.db.Exec(`
+		DROP TABLE IF EXISTS bulk_search_results CASCADE;
+		DROP TABLE IF EXISTS bulk_searches CASCADE;
 		DROP TABLE IF EXISTS flight_segments CASCADE;
 		DROP TABLE IF EXISTS flight_prices CASCADE;
 		DROP TABLE IF EXISTS flights CASCADE;
@@ -782,6 +888,49 @@ func (p *PostgresDBImpl) InitSchema() error {
 		return fmt.Errorf("failed to create flight_segments table: %w", err)
 	}
 
+	// Create bulk_searches table
+	_, err = p.db.Exec(`
+        CREATE TABLE IF NOT EXISTS bulk_searches (
+            id SERIAL PRIMARY KEY,
+            job_id INTEGER REFERENCES scheduled_jobs(id),
+            status VARCHAR(30) NOT NULL,
+            total_searches INTEGER NOT NULL,
+            completed INTEGER NOT NULL DEFAULT 0,
+            total_offers INTEGER NOT NULL DEFAULT 0,
+            error_count INTEGER NOT NULL DEFAULT 0,
+            currency VARCHAR(3) NOT NULL,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            completed_at TIMESTAMP WITH TIME ZONE,
+            min_price DECIMAL(10, 2),
+			max_price DECIMAL(10, 2),
+			average_price DECIMAL(10, 2)
+        )
+    `)
+	if err != nil {
+		return fmt.Errorf("failed to create bulk_searches table: %w", err)
+	}
+
+	// Create bulk_search_results table
+	_, err = p.db.Exec(`
+        CREATE TABLE IF NOT EXISTS bulk_search_results (
+            id SERIAL PRIMARY KEY,
+            bulk_search_id INTEGER REFERENCES bulk_searches(id) ON DELETE CASCADE,
+            origin VARCHAR(3) NOT NULL,
+            destination VARCHAR(3) NOT NULL,
+            departure_date DATE NOT NULL,
+            return_date DATE,
+            price DECIMAL(10, 2) NOT NULL,
+            currency VARCHAR(3) NOT NULL,
+            airline_code VARCHAR(3),
+            duration INTEGER,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        )
+    `)
+	if err != nil {
+		return fmt.Errorf("failed to create bulk_search_results table: %w", err)
+	}
+
 	// Create certificate tracking table
 	_, err = p.db.Exec(`
         CREATE TABLE IF NOT EXISTS certificate_issuance (
@@ -829,6 +978,8 @@ func (p *PostgresDBImpl) InitSchema() error {
         CREATE INDEX IF NOT EXISTS idx_search_results_search_id ON search_results(search_id);
         CREATE INDEX IF NOT EXISTS idx_flight_offers_search_id ON flight_offers(search_id);
         CREATE INDEX IF NOT EXISTS idx_flight_segments_offer_id ON flight_segments(flight_offer_id);
+        CREATE INDEX IF NOT EXISTS idx_bulk_searches_status ON bulk_searches(status);
+        CREATE INDEX IF NOT EXISTS idx_bulk_search_results_search_id ON bulk_search_results(bulk_search_id);
     `)
 	if err != nil {
 		return fmt.Errorf("failed to create indexes: %w", err)

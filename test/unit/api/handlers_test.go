@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 
 	// "strconv" // Removed unused import
 	"testing"
@@ -83,6 +84,19 @@ func matchBulkSearchPayload(expected worker.BulkSearchPayload) func(worker.BulkS
 			actual.Class != expected.Class ||
 			actual.Stops != expected.Stops ||
 			actual.Currency != expected.Currency {
+			return false
+		}
+
+		if expected.BulkSearchID > 0 {
+			if actual.BulkSearchID != expected.BulkSearchID {
+				return false
+			}
+		} else if actual.BulkSearchID == 0 {
+			// Ensure we always set a bulk search record
+			return false
+		}
+
+		if actual.JobID != expected.JobID {
 			return false
 		}
 
@@ -276,8 +290,9 @@ func TestCreateSearch_EnqueueError(t *testing.T) {
 func TestCreateBulkSearch_Success(t *testing.T) {
 	// Arrange
 	mockQueue := new(mocks.Queue)
+	mockPostgres := new(mocks.MockPostgresDB)
 	router := setupRouter()
-	router.POST("/bulk-search", api.CreateBulkSearch(mockQueue)) // Use the actual handler constructor
+	router.POST("/bulk-search", api.CreateBulkSearch(mockQueue, mockPostgres))
 
 	bulkReq := api.BulkSearchRequest{
 		Origins:           []string{"LHR", "LGW"},
@@ -291,6 +306,8 @@ func TestCreateBulkSearch_Success(t *testing.T) {
 		Currency:          "GBP",
 	}
 	expectedJobID := "bulk-job-456"
+	createdBulkSearchID := 123
+	totalRoutes := len(bulkReq.Origins) * len(bulkReq.Destinations)
 	expectedPayload := worker.BulkSearchPayload{
 		Origins:           bulkReq.Origins,
 		Destinations:      bulkReq.Destinations,
@@ -306,9 +323,11 @@ func TestCreateBulkSearch_Success(t *testing.T) {
 		TripType:          bulkReq.TripType,
 		Class:             bulkReq.Class, // Note: Bulk search payload uses string class/stops directly
 		Stops:             bulkReq.Stops,
-		Currency:          bulkReq.Currency,
+		Currency:          strings.ToUpper(bulkReq.Currency),
+		BulkSearchID:      createdBulkSearchID,
 	}
 
+	mockPostgres.On("CreateBulkSearchRecord", mock.Anything, mock.Anything, totalRoutes, strings.ToUpper(bulkReq.Currency), "queued").Return(createdBulkSearchID, nil)
 	// Configure mock
 	mockQueue.On("Enqueue", mock.Anything, "bulk_search",
 		mock.MatchedBy(matchBulkSearchPayload(expectedPayload)),
@@ -323,19 +342,22 @@ func TestCreateBulkSearch_Success(t *testing.T) {
 
 	// Assert
 	assert.Equal(t, http.StatusAccepted, w.Code)
-	var response map[string]string
+	var response map[string]interface{}
 	err := json.Unmarshal(w.Body.Bytes(), &response)
 	assert.NoError(t, err)
 	assert.Equal(t, expectedJobID, response["job_id"])
+	assert.Equal(t, float64(createdBulkSearchID), response["bulk_search_id"])
 	assert.Equal(t, "Bulk flight search job created successfully", response["message"])
 	mockQueue.AssertExpectations(t)
+	mockPostgres.AssertExpectations(t)
 }
 
 func TestCreateBulkSearch_BindError(t *testing.T) {
 	// Arrange
 	mockQueue := new(mocks.Queue)
+	mockPostgres := new(mocks.MockPostgresDB)
 	router := setupRouter()
-	router.POST("/bulk-search", api.CreateBulkSearch(mockQueue))
+	router.POST("/bulk-search", api.CreateBulkSearch(mockQueue, mockPostgres))
 
 	// Act: Send invalid JSON
 	req, _ := http.NewRequest(http.MethodPost, "/bulk-search", bytes.NewBufferString(`{"origins": ["LHR"]`)) // Malformed
@@ -350,8 +372,9 @@ func TestCreateBulkSearch_BindError(t *testing.T) {
 func TestCreateBulkSearch_ValidationError(t *testing.T) {
 	// Arrange
 	mockQueue := new(mocks.Queue)
+	mockPostgres := new(mocks.MockPostgresDB)
 	router := setupRouter()
-	router.POST("/bulk-search", api.CreateBulkSearch(mockQueue))
+	router.POST("/bulk-search", api.CreateBulkSearch(mockQueue, mockPostgres))
 
 	bulkReq := api.BulkSearchRequest{
 		// Missing required fields
@@ -371,8 +394,9 @@ func TestCreateBulkSearch_ValidationError(t *testing.T) {
 func TestCreateBulkSearch_EnqueueError(t *testing.T) {
 	// Arrange
 	mockQueue := new(mocks.Queue)
+	mockPostgres := new(mocks.MockPostgresDB)
 	router := setupRouter()
-	router.POST("/bulk-search", api.CreateBulkSearch(mockQueue))
+	router.POST("/bulk-search", api.CreateBulkSearch(mockQueue, mockPostgres))
 
 	bulkReq := api.BulkSearchRequest{
 		Origins:           []string{"LHR"},
@@ -385,13 +409,13 @@ func TestCreateBulkSearch_EnqueueError(t *testing.T) {
 		Stops:             "any",
 		Currency:          "USD",
 	}
+	createdBulkSearchID := 789
+	totalRoutes := len(bulkReq.Origins) * len(bulkReq.Destinations)
 	expectedPayload := worker.BulkSearchPayload{
 		Origins:           bulkReq.Origins,
 		Destinations:      bulkReq.Destinations,
 		DepartureDateFrom: bulkReq.DepartureDateFrom,
 		DepartureDateTo:   bulkReq.DepartureDateTo,
-		ReturnDateFrom:    bulkReq.ReturnDateFrom,
-		ReturnDateTo:      bulkReq.ReturnDateTo,
 		TripLength:        bulkReq.TripLength,
 		Adults:            bulkReq.Adults,
 		Children:          bulkReq.Children,
@@ -400,13 +424,15 @@ func TestCreateBulkSearch_EnqueueError(t *testing.T) {
 		TripType:          bulkReq.TripType,
 		Class:             bulkReq.Class,
 		Stops:             bulkReq.Stops,
-		Currency:          bulkReq.Currency,
+		Currency:          strings.ToUpper(bulkReq.Currency),
+		BulkSearchID:      createdBulkSearchID,
 	}
 
-	// Configure mock to return an error
+	mockPostgres.On("CreateBulkSearchRecord", mock.Anything, mock.Anything, totalRoutes, strings.ToUpper(bulkReq.Currency), "queued").Return(createdBulkSearchID, nil)
 	mockQueue.On("Enqueue", mock.Anything, "bulk_search",
 		mock.MatchedBy(matchBulkSearchPayload(expectedPayload)),
 	).Return("", assert.AnError)
+	mockPostgres.On("UpdateBulkSearchStatus", mock.Anything, createdBulkSearchID, "failed").Return(nil)
 
 	// Act
 	body, _ := json.Marshal(bulkReq)
@@ -418,6 +444,7 @@ func TestCreateBulkSearch_EnqueueError(t *testing.T) {
 	// Assert
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 	mockQueue.AssertExpectations(t)
+	mockPostgres.AssertExpectations(t)
 }
 
 func TestGetQueueStatus_Success(t *testing.T) {
