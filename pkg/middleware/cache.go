@@ -15,9 +15,9 @@ import (
 
 // CacheConfig holds cache middleware configuration
 type CacheConfig struct {
-	TTL        time.Duration
-	KeyPrefix  string
-	SkipPaths  []string
+	TTL         time.Duration
+	KeyPrefix   string
+	SkipPaths   []string
 	OnlyMethods []string
 }
 
@@ -53,6 +53,12 @@ func ResponseCache(cacheManager *cache.CacheManager, config CacheConfig) gin.Han
 			}
 		}
 
+		// Skip caching for HTML responses (mostly browser requests)
+		if strings.Contains(c.GetHeader("Accept"), "text/html") {
+			c.Next()
+			return
+		}
+
 		// Generate cache key
 		cacheKey := generateCacheKey(config.KeyPrefix, c.Request)
 
@@ -62,13 +68,13 @@ func ResponseCache(cacheManager *cache.CacheManager, config CacheConfig) gin.Han
 		if err == nil {
 			// Cache hit - return cached response
 			logger.WithField("cache_key", cacheKey).Debug("Cache hit")
-			
+
 			// Set headers
 			for key, value := range cachedResponse.Headers {
 				c.Header(key, value)
 			}
 			c.Header("X-Cache", "HIT")
-			
+
 			c.Data(cachedResponse.StatusCode, cachedResponse.ContentType, cachedResponse.Body)
 			return
 		}
@@ -84,12 +90,17 @@ func ResponseCache(cacheManager *cache.CacheManager, config CacheConfig) gin.Han
 		body := &bytes.Buffer{}
 		writer := &responseWriter{
 			ResponseWriter: c.Writer,
-			body:          body,
+			body:           body,
 		}
 		c.Writer = writer
 
 		// Process request
 		c.Next()
+
+		// Only cache JSON responses to avoid duplicating HTML/static assets
+		if !strings.Contains(c.Writer.Header().Get("Content-Type"), "application/json") {
+			return
+		}
 
 		// Only cache successful responses (2xx status codes)
 		if c.Writer.Status() >= 200 && c.Writer.Status() < 300 {
@@ -135,7 +146,7 @@ type CachedResponse struct {
 func generateCacheKey(prefix string, req *http.Request) string {
 	// Include method, path, and query parameters
 	keyData := fmt.Sprintf("%s:%s:%s", req.Method, req.URL.Path, req.URL.RawQuery)
-	
+
 	// Include relevant headers (e.g., Accept, Accept-Language)
 	if accept := req.Header.Get("Accept"); accept != "" {
 		keyData += ":" + accept
@@ -164,7 +175,7 @@ func shouldCacheHeader(header string) bool {
 		"etag",
 		"last-modified",
 	}
-	
+
 	for _, h := range cacheable {
 		if header == h {
 			return true
