@@ -127,6 +127,8 @@ func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Ne
 			// Job routes
 			admin.GET("/jobs", listJobs(postgresDB))
 			admin.POST("/jobs", createJob(postgresDB, workerManager))
+			admin.GET("/bulk-jobs", listBulkSearches(postgresDB))
+			admin.GET("/bulk-jobs/:id", getBulkSearchResults(postgresDB))
 			admin.POST("/bulk-jobs", createBulkJob(postgresDB, workerManager))
 			admin.GET("/bulk-jobs/:id/offers", getBulkSearchOffers(postgresDB))
 			admin.GET("/jobs/:id", getJobById(postgresDB))
