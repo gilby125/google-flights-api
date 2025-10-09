@@ -9,7 +9,7 @@ import (
 	"github.com/gilby125/google-flights-api/config"
 	"github.com/gilby125/google-flights-api/flights" // Added import for flights package
 	"github.com/jackc/pgx/v5/pgxpool"
-	_ "github.com/lib/pq" // Blank import for driver registration
+	"github.com/lib/pq" // Blank import for driver registration
 )
 
 // PostgresDB interface defines the database operations
@@ -46,6 +46,9 @@ type PostgresDB interface {
 	GetJobByID(ctx context.Context, jobID int) (*ScheduledJob, error)         // Define ScheduledJob struct later
 	GetBulkSearchByID(ctx context.Context, searchID int) (*BulkSearch, error) // Define BulkSearch struct later
 	QueryBulkSearchResultsPaginated(ctx context.Context, searchID, limit, offset int) (Rows, error)
+	InsertBulkSearchOffer(ctx context.Context, record BulkSearchOfferRecord) error
+	QueryBulkSearchOffersPaginated(ctx context.Context, searchID, limit, offset int) (Rows, error)
+	ListBulkSearchOffers(ctx context.Context, searchID int) ([]BulkSearchOffer, error)
 	CreateBulkSearchRecord(ctx context.Context, jobID sql.NullInt32, totalSearches int, currency, status string) (int, error)
 	UpdateBulkSearchStatus(ctx context.Context, bulkSearchID int, status string) error
 	CompleteBulkSearch(ctx context.Context, summary BulkSearchSummary) error
@@ -603,6 +606,109 @@ func (p *PostgresDBImpl) CompleteBulkSearch(ctx context.Context, summary BulkSea
 	return nil
 }
 
+func (p *PostgresDBImpl) InsertBulkSearchOffer(ctx context.Context, record BulkSearchOfferRecord) error {
+	airlineCodes := pq.Array(record.AirlineCodes)
+	_, err := p.db.ExecContext(ctx,
+		`INSERT INTO bulk_search_offers
+			(bulk_search_id, origin, destination, departure_date, return_date,
+			 price, currency, airline_codes, src_airport_code, dst_airport_code,
+			 src_city, dst_city, flight_duration, return_flight_duration,
+			 outbound_flights, return_flights, offer_json)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+		record.BulkSearchID,
+		record.Origin,
+		record.Destination,
+		record.DepartureDate,
+		record.ReturnDate,
+		record.Price,
+		record.Currency,
+		airlineCodes,
+		record.SrcAirportCode,
+		record.DstAirportCode,
+		record.SrcCity,
+		record.DstCity,
+		record.FlightDuration,
+		record.ReturnFlightDuration,
+		record.OutboundFlightsJSON,
+		record.ReturnFlightsJSON,
+		record.OfferJSON,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to insert bulk search offer: %w", err)
+	}
+	return nil
+}
+
+func (p *PostgresDBImpl) QueryBulkSearchOffersPaginated(ctx context.Context, searchID, limit, offset int) (Rows, error) {
+	return p.db.QueryContext(ctx,
+		`SELECT origin, destination, departure_date, return_date, price, currency,
+			airline_codes, src_airport_code, dst_airport_code, src_city, dst_city,
+			flight_duration, return_flight_duration, outbound_flights, return_flights, offer_json, created_at
+		 FROM bulk_search_offers
+		 WHERE bulk_search_id = $1
+		 ORDER BY price ASC
+		 LIMIT $2 OFFSET $3`,
+		searchID, limit, offset,
+	)
+}
+
+func (p *PostgresDBImpl) ListBulkSearchOffers(ctx context.Context, searchID int) ([]BulkSearchOffer, error) {
+	rows, err := p.db.QueryContext(ctx,
+		`SELECT id, bulk_search_id, origin, destination, departure_date, return_date, price, currency,
+			airline_codes, src_airport_code, dst_airport_code, src_city, dst_city,
+			flight_duration, return_flight_duration, outbound_flights, return_flights, offer_json, created_at
+		 FROM bulk_search_offers
+		 WHERE bulk_search_id = $1
+		 ORDER BY origin, destination, departure_date, return_date NULLS FIRST, price ASC, created_at ASC`,
+		searchID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query bulk search offers: %w", err)
+	}
+	defer rows.Close()
+
+	var offers []BulkSearchOffer
+	for rows.Next() {
+		var (
+			offer        BulkSearchOffer
+			airlineCodes pq.StringArray
+		)
+
+		if scanErr := rows.Scan(
+			&offer.ID,
+			&offer.BulkSearchID,
+			&offer.Origin,
+			&offer.Destination,
+			&offer.DepartureDate,
+			&offer.ReturnDate,
+			&offer.Price,
+			&offer.Currency,
+			&airlineCodes,
+			&offer.SrcAirportCode,
+			&offer.DstAirportCode,
+			&offer.SrcCity,
+			&offer.DstCity,
+			&offer.FlightDuration,
+			&offer.ReturnFlightDuration,
+			&offer.OutboundFlights,
+			&offer.ReturnFlights,
+			&offer.OfferJSON,
+			&offer.CreatedAt,
+		); scanErr != nil {
+			return nil, fmt.Errorf("failed to scan bulk search offer: %w", scanErr)
+		}
+
+		offer.AirlineCodes = append([]string(nil), airlineCodes...)
+		offers = append(offers, offer)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating bulk search offers: %w", err)
+	}
+
+	return offers, nil
+}
+
 func (p *PostgresDBImpl) InsertBulkSearchResult(ctx context.Context, result BulkSearchResultRecord) error {
 	outboundJSON := result.OutboundFlightsJSON
 	if len(outboundJSON) == 0 {
@@ -969,6 +1075,34 @@ func (p *PostgresDBImpl) InitSchema() error {
 		return fmt.Errorf("failed to create bulk_search_results table: %w", err)
 	}
 
+	// Create bulk_search_offers table
+	_, err = p.db.Exec(`
+        CREATE TABLE IF NOT EXISTS bulk_search_offers (
+            id SERIAL PRIMARY KEY,
+            bulk_search_id INTEGER REFERENCES bulk_searches(id) ON DELETE CASCADE,
+            origin VARCHAR(3) NOT NULL,
+            destination VARCHAR(3) NOT NULL,
+            departure_date DATE NOT NULL,
+            return_date DATE,
+            price DECIMAL(10, 2) NOT NULL,
+            currency VARCHAR(3) NOT NULL,
+            airline_codes TEXT[],
+            src_airport_code VARCHAR(3),
+            dst_airport_code VARCHAR(3),
+            src_city TEXT,
+            dst_city TEXT,
+            flight_duration INTEGER,
+            return_flight_duration INTEGER,
+            outbound_flights JSONB,
+            return_flights JSONB,
+            offer_json JSONB,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        )
+    `)
+	if err != nil {
+		return fmt.Errorf("failed to create bulk_search_offers table: %w", err)
+	}
+
 	// Create certificate tracking table
 	_, err = p.db.Exec(`
         CREATE TABLE IF NOT EXISTS certificate_issuance (
@@ -1018,6 +1152,7 @@ func (p *PostgresDBImpl) InitSchema() error {
         CREATE INDEX IF NOT EXISTS idx_flight_segments_offer_id ON flight_segments(flight_offer_id);
         CREATE INDEX IF NOT EXISTS idx_bulk_searches_status ON bulk_searches(status);
         CREATE INDEX IF NOT EXISTS idx_bulk_search_results_search_id ON bulk_search_results(bulk_search_id);
+        CREATE INDEX IF NOT EXISTS idx_bulk_search_offers_search_id ON bulk_search_offers(bulk_search_id);
     `)
 	if err != nil {
 		return fmt.Errorf("failed to create indexes: %w", err)

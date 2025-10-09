@@ -187,6 +187,50 @@ type BulkSearchResultRecord struct {
 	OfferJSON            []byte
 }
 
+// BulkSearchOffer represents all offers captured during a bulk run
+type BulkSearchOffer struct {
+	ID                   int
+	BulkSearchID         int
+	Origin               string
+	Destination          string
+	DepartureDate        time.Time
+	ReturnDate           sql.NullTime
+	Price                float64
+	Currency             string
+	AirlineCodes         []string
+	SrcAirportCode       sql.NullString
+	DstAirportCode       sql.NullString
+	SrcCity              sql.NullString
+	DstCity              sql.NullString
+	FlightDuration       sql.NullInt32
+	ReturnFlightDuration sql.NullInt32
+	OutboundFlights      json.RawMessage
+	ReturnFlights        json.RawMessage
+	OfferJSON            json.RawMessage
+	CreatedAt            time.Time
+}
+
+// BulkSearchOfferRecord represents the data needed to insert an offer for a bulk run
+type BulkSearchOfferRecord struct {
+	BulkSearchID         int
+	Origin               string
+	Destination          string
+	DepartureDate        time.Time
+	ReturnDate           sql.NullTime
+	Price                float64
+	Currency             string
+	AirlineCodes         []string
+	SrcAirportCode       sql.NullString
+	DstAirportCode       sql.NullString
+	SrcCity              sql.NullString
+	DstCity              sql.NullString
+	FlightDuration       sql.NullInt32
+	ReturnFlightDuration sql.NullInt32
+	OutboundFlightsJSON  []byte
+	ReturnFlightsJSON    []byte
+	OfferJSON            []byte
+}
+
 // Airport represents an airport row
 type Airport struct {
 	Code      string

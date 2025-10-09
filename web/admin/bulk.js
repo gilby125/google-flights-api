@@ -8,6 +8,8 @@ const bulkElements = {
     resultsTable: document.getElementById('bulkResultsTable'),
     resultsCount: document.getElementById('bulkResultsCount'),
     resultsInfo: document.getElementById('bulkResultsInfo'),
+    offersTable: document.getElementById('bulkOffersTable'),
+    offersCount: document.getElementById('bulkOffersCount'),
     resultFilterInput: document.getElementById('resultFilterInput'),
     resultCurrencyFilter: document.getElementById('resultCurrencyFilter'),
     summary: document.getElementById('bulkSummary'),
@@ -21,6 +23,7 @@ let runsFilterText = '';
 let runsStatusFilter = 'all';
 
 let currentResults = [];
+let currentOffers = [];
 let currentRunId = null;
 let resultsSortField = 'price';
 let resultsSortDir = 'asc';
@@ -225,6 +228,7 @@ async function loadBulkResults(runId) {
         currentResults = Array.isArray(data.results) ? data.results : [];
         renderBulkSummary(data.summary || {}, currentResults.length);
         renderBulkResults();
+        loadBulkOffers(runId);
     } catch (error) {
         console.error('Error loading bulk results:', error);
         bulkElements.summary.innerHTML = `<span class="text-danger">${error.message}</span>`;
@@ -237,6 +241,134 @@ async function loadBulkResults(runId) {
         `;
         currentResults = [];
         currentRunId = null;
+    }
+}
+
+async function loadBulkOffers(runId) {
+    if (!bulkElements.offersTable) {
+        return;
+    }
+
+    bulkElements.offersTable.innerHTML = `
+        <tr>
+            <td colspan="8" class="text-center text-muted py-3">Loading offers...</td>
+        </tr>
+    `;
+    if (bulkElements.offersCount) {
+        bulkElements.offersCount.textContent = '0';
+    }
+
+    try {
+        const response = await fetch(`${API_BASE}/bulk-jobs/${runId}/offers?limit=500`);
+        if (!response.ok) {
+            throw new Error(`Failed to load offers (${response.status})`);
+        }
+        const data = await response.json();
+        currentOffers = Array.isArray(data.grid) ? data.grid : [];
+        renderBulkOffers();
+    } catch (error) {
+        console.error('Error loading bulk offers:', error);
+        bulkElements.offersTable.innerHTML = `
+            <tr>
+                <td colspan="8" class="text-center text-danger py-3">${error.message}</td>
+            </tr>
+        `;
+    }
+}
+
+function renderBulkOffers() {
+    if (!bulkElements.offersTable) {
+        return;
+    }
+
+    const totalCells = currentOffers.reduce((total, route) => {
+        if (!route || !Array.isArray(route.cells)) {
+            return total;
+        }
+        return total + route.cells.length;
+    }, 0);
+
+    if (!totalCells) {
+        bulkElements.offersTable.innerHTML = `
+            <tr>
+                <td colspan="8" class="text-center text-muted py-3">
+                    No offers recorded for this run.
+                </td>
+            </tr>
+        `;
+        if (bulkElements.offersCount) {
+            bulkElements.offersCount.textContent = '0';
+        }
+        return;
+    }
+
+    const fragment = document.createDocumentFragment();
+    currentOffers.forEach(route => {
+        const routeName = `${route.origin ?? '???'} → ${route.destination ?? '???'}`;
+        const cells = Array.isArray(route.cells) ? [...route.cells] : [];
+
+        const headerRow = document.createElement('tr');
+        headerRow.classList.add('table-active');
+        headerRow.innerHTML = `
+            <td colspan="8">
+                <strong>${routeName}</strong>
+                <span class="text-muted ms-2">${cells.length} fare${cells.length === 1 ? '' : 's'}</span>
+            </td>
+        `;
+        fragment.appendChild(headerRow);
+
+        cells.sort((a, b) => {
+            const depA = a && a.departure_date ? new Date(a.departure_date).getTime() : 0;
+            const depB = b && b.departure_date ? new Date(b.departure_date).getTime() : 0;
+            if (depA !== depB) {
+                return depA - depB;
+            }
+            const retA = a && a.return_date ? new Date(a.return_date).getTime() : 0;
+            const retB = b && b.return_date ? new Date(b.return_date).getTime() : 0;
+            return retA - retB;
+        });
+
+        if (!cells.length) {
+            const emptyRow = document.createElement('tr');
+            emptyRow.innerHTML = `
+                <td colspan="8" class="text-center text-muted py-3">
+                    No fares captured for ${routeName}.
+                </td>
+            `;
+            fragment.appendChild(emptyRow);
+            return;
+        }
+
+        cells.forEach(cell => {
+            const departureDisplay = formatDate(cell ? cell.departure_date : null);
+            const returnDisplay = cell && cell.return_date ? formatDate(cell.return_date) : '—';
+            const priceDisplay = formatNumber(cell ? cell.price : null);
+            const currencyDisplay = cell && cell.currency ? cell.currency : '—';
+            const airlinesDisplay =
+                cell && Array.isArray(cell.airline_codes) && cell.airline_codes.length
+                    ? cell.airline_codes.join(', ')
+                    : '—';
+            const createdDisplay = cell && cell.created_at ? formatDate(cell.created_at) : '—';
+
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td>${route.origin ?? '—'}</td>
+                <td>${route.destination ?? '—'}</td>
+                <td>${departureDisplay}</td>
+                <td>${returnDisplay}</td>
+                <td>${priceDisplay}</td>
+                <td>${currencyDisplay}</td>
+                <td>${airlinesDisplay}</td>
+                <td>${createdDisplay}</td>
+            `;
+            fragment.appendChild(row);
+        });
+    });
+
+    bulkElements.offersTable.innerHTML = '';
+    bulkElements.offersTable.appendChild(fragment);
+    if (bulkElements.offersCount) {
+        bulkElements.offersCount.textContent = totalCells.toString();
     }
 }
 

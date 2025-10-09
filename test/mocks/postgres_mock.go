@@ -284,6 +284,20 @@ func (m *MockPostgresDB) QueryBulkSearchResultsPaginated(ctx context.Context, se
 	return rows, args.Error(1)
 }
 
+func (m *MockPostgresDB) InsertBulkSearchOffer(ctx context.Context, record db.BulkSearchOfferRecord) error {
+	args := m.Called(ctx, record)
+	return args.Error(0)
+}
+
+func (m *MockPostgresDB) QueryBulkSearchOffersPaginated(ctx context.Context, searchID, limit, offset int) (db.Rows, error) {
+	args := m.Called(ctx, searchID, limit, offset)
+	var rows db.Rows
+	if r := args.Get(0); r != nil {
+		rows = r.(db.Rows)
+	}
+	return rows, args.Error(1)
+}
+
 func (m *MockPostgresDB) CreateBulkSearchRecord(ctx context.Context, jobID sql.NullInt32, totalSearches int, currency, status string) (int, error) {
 	args := m.Called(ctx, jobID, totalSearches, currency, status)
 	return args.Int(0), args.Error(1)
@@ -311,6 +325,15 @@ func (m *MockPostgresDB) ListBulkSearches(ctx context.Context, limit, offset int
 		rows = r.(db.Rows)
 	}
 	return rows, args.Error(1)
+}
+
+func (m *MockPostgresDB) ListBulkSearchOffers(ctx context.Context, searchID int) ([]db.BulkSearchOffer, error) {
+	args := m.Called(ctx, searchID)
+	var offers []db.BulkSearchOffer
+	if o := args.Get(0); o != nil {
+		offers = o.([]db.BulkSearchOffer)
+	}
+	return offers, args.Error(1)
 }
 
 // Ensure MockPostgresDB implements db.PostgresDB

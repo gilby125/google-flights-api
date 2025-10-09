@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -83,10 +84,17 @@ func durationToNullMinutes(d time.Duration) sql.NullInt32 {
 	return sql.NullInt32{Int32: int32(minutes), Valid: true}
 }
 
+func timeToNullTime(t time.Time) sql.NullTime {
+	if t.IsZero() {
+		return sql.NullTime{}
+	}
+	return sql.NullTime{Time: t, Valid: true}
+}
+
 func flightsToJSON(flights []flights.Flight) []byte {
-	legs := make([]map[string]interface{}, 0, len(flights))
+	legs := make([]map[string]any, 0, len(flights))
 	for _, f := range flights {
-		leg := map[string]interface{}{
+		leg := map[string]any{
 			"dep_airport_code": f.DepAirportCode,
 			"dep_airport_name": f.DepAirportName,
 			"dep_city":         f.DepCity,
@@ -119,6 +127,26 @@ func offerToJSON(offer flights.FullOffer) []byte {
 		return []byte("{}")
 	}
 	return data
+}
+
+func airlineCodesFromOffer(offer flights.FullOffer) []string {
+	codesSet := make(map[string]struct{})
+	for _, leg := range offer.Flight {
+		if len(leg.FlightNumber) >= 2 {
+			codesSet[leg.FlightNumber[:2]] = struct{}{}
+		}
+	}
+	for _, leg := range offer.ReturnFlight {
+		if len(leg.FlightNumber) >= 2 {
+			codesSet[leg.FlightNumber[:2]] = struct{}{}
+		}
+	}
+	codes := make([]string, 0, len(codesSet))
+	for code := range codesSet {
+		codes = append(codes, code)
+	}
+	sort.Strings(codes)
+	return codes
 }
 
 // WorkerStatus is a snapshot of worker metrics exposed via the API.
@@ -677,6 +705,7 @@ func (m *Manager) processBulkSearch(ctx context.Context, worker *Worker, session
 				Destination: destination,
 				BestOffer:   flights.FullOffer{Offer: flights.Offer{Price: math.MaxFloat64}}, // Initialize with max price
 			}
+			routeResults[routeKey] = routeResult
 
 			// Search across all dates in range to find lowest fare
 			for _, searchDate := range dateRange {
@@ -755,12 +784,37 @@ func (m *Manager) processBulkSearch(ctx context.Context, worker *Worker, session
 						log.Printf("Error storing offers for %s -> %s on %s: %v", origin, destination, searchDate.Format("2006-01-02"), err)
 						searchErrors = append(searchErrors, fmt.Errorf("failed to store offers for %s->%s on %s: %w", origin, destination, searchDate.Format("2006-01-02"), err))
 					}
+
+					if bulkSearchID > 0 {
+						for _, offer := range offers {
+							offerRecord := db.BulkSearchOfferRecord{
+								BulkSearchID:         bulkSearchID,
+								Origin:               origin,
+								Destination:          destination,
+								DepartureDate:        offer.StartDate,
+								ReturnDate:           timeToNullTime(offer.ReturnDate),
+								Price:                offer.Price,
+								Currency:             strings.ToUpper(payload.Currency),
+								AirlineCodes:         airlineCodesFromOffer(offer),
+								SrcAirportCode:       nullString(offer.SrcAirportCode),
+								DstAirportCode:       nullString(offer.DstAirportCode),
+								SrcCity:              nullString(offer.SrcCity),
+								DstCity:              nullString(offer.DstCity),
+								FlightDuration:       durationToNullMinutes(offer.FlightDuration),
+								ReturnFlightDuration: durationToNullMinutes(offer.ReturnFlightDuration),
+								OutboundFlightsJSON:  flightsToJSON(offer.Flight),
+								ReturnFlightsJSON:    flightsToJSON(offer.ReturnFlight),
+								OfferJSON:            offerToJSON(offer),
+							}
+
+							if insertErr := m.postgresDB.InsertBulkSearchOffer(ctx, offerRecord); insertErr != nil {
+								log.Printf("Failed to insert bulk offer for %s -> %s: %v", origin, destination, insertErr)
+							}
+						}
+					}
 				}
 			}
-
-			// Only keep routes that found valid offers
 			if routeResult.BestOffer.Price < math.MaxFloat64 {
-				routeResults[routeKey] = routeResult
 				log.Printf("Route %s completed: lowest fare $%.2f on %s (searched %d dates, found %d total offers)",
 					routeKey, routeResult.BestOffer.Price, routeResult.BestDate.Format("2006-01-02"),
 					routeResult.SearchedDates, routeResult.TotalOffers)

@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -1122,6 +1123,229 @@ func getBulkSearchResults(pgDB db.PostgresDB) gin.HandlerFunc {
 			"summary": summaryMap,
 			"results": results,
 			"count":   len(results),
+		})
+	}
+}
+
+// getBulkSearchOffers returns the full set of offers captured during a bulk search
+func getBulkSearchOffers(pgDB db.PostgresDB) gin.HandlerFunc {
+	type gridCell struct {
+		DepartureDate time.Time  `json:"departure_date"`
+		ReturnDate    *time.Time `json:"return_date,omitempty"`
+		Price         float64    `json:"price"`
+		Currency      string     `json:"currency"`
+		AirlineCodes  []string   `json:"airline_codes,omitempty"`
+		CreatedAt     time.Time  `json:"created_at"`
+	}
+
+	type routeGrid struct {
+		Origin      string     `json:"origin"`
+		Destination string     `json:"destination"`
+		Cells       []gridCell `json:"cells"`
+	}
+
+	type gridAccumulator struct {
+		origin      string
+		destination string
+		cells       map[string]*struct {
+			departureDate time.Time
+			returnDate    sql.NullTime
+			price         float64
+			currency      string
+			airlineCodes  []string
+			createdAt     time.Time
+		}
+	}
+
+	return func(c *gin.Context) {
+		idParam := c.Param("id")
+		bulkID, err := strconv.Atoi(idParam)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid bulk search ID"})
+			return
+		}
+
+		limit, err := strconv.Atoi(c.DefaultQuery("limit", "200"))
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid limit"})
+			return
+		}
+		offset, err := strconv.Atoi(c.DefaultQuery("offset", "0"))
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid offset"})
+			return
+		}
+		if offset < 0 {
+			offset = 0
+		}
+
+		offers, err := pgDB.ListBulkSearchOffers(c.Request.Context(), bulkID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load bulk search offers: " + err.Error()})
+			return
+		}
+
+		total := len(offers)
+		if limit <= 0 || limit > total {
+			limit = total
+		}
+		if offset > total {
+			offset = total
+		}
+
+		end := offset + limit
+		if end > total {
+			end = total
+		}
+
+		offerItems := make([]map[string]interface{}, 0, end-offset)
+		for i := offset; i < end; i++ {
+			offer := offers[i]
+			entry := map[string]interface{}{
+				"origin":         offer.Origin,
+				"destination":    offer.Destination,
+				"departure_date": offer.DepartureDate,
+				"price":          offer.Price,
+				"currency":       offer.Currency,
+				"created_at":     offer.CreatedAt,
+			}
+			if offer.ReturnDate.Valid {
+				entry["return_date"] = offer.ReturnDate.Time
+			}
+			if len(offer.AirlineCodes) > 0 {
+				entry["airline_codes"] = append([]string(nil), offer.AirlineCodes...)
+			}
+			if offer.SrcAirportCode.Valid {
+				entry["src_airport_code"] = offer.SrcAirportCode.String
+			}
+			if offer.DstAirportCode.Valid {
+				entry["dst_airport_code"] = offer.DstAirportCode.String
+			}
+			if offer.SrcCity.Valid {
+				entry["src_city"] = offer.SrcCity.String
+			}
+			if offer.DstCity.Valid {
+				entry["dst_city"] = offer.DstCity.String
+			}
+			if offer.FlightDuration.Valid {
+				entry["flight_duration"] = offer.FlightDuration.Int32
+			}
+			if offer.ReturnFlightDuration.Valid {
+				entry["return_flight_duration"] = offer.ReturnFlightDuration.Int32
+			}
+			if len(offer.OutboundFlights) > 0 {
+				entry["outbound_flights"] = json.RawMessage(offer.OutboundFlights)
+			}
+			if len(offer.ReturnFlights) > 0 {
+				entry["return_flights"] = json.RawMessage(offer.ReturnFlights)
+			}
+			if len(offer.OfferJSON) > 0 {
+				entry["offer_json"] = json.RawMessage(offer.OfferJSON)
+			}
+			offerItems = append(offerItems, entry)
+		}
+
+		routeAccumulators := make(map[string]*gridAccumulator)
+		for _, offer := range offers {
+			routeKey := offer.Origin + "|" + offer.Destination
+			acc, ok := routeAccumulators[routeKey]
+			if !ok {
+				acc = &gridAccumulator{
+					origin:      offer.Origin,
+					destination: offer.Destination,
+					cells: make(map[string]*struct {
+						departureDate time.Time
+						returnDate    sql.NullTime
+						price         float64
+						currency      string
+						airlineCodes  []string
+						createdAt     time.Time
+					}),
+				}
+				routeAccumulators[routeKey] = acc
+			}
+
+			cellKey := offer.DepartureDate.Format("2006-01-02")
+			if offer.ReturnDate.Valid {
+				cellKey += "|" + offer.ReturnDate.Time.Format("2006-01-02")
+			} else {
+				cellKey += "|one_way"
+			}
+
+			current := acc.cells[cellKey]
+			if current == nil || offer.Price < current.price || (offer.Price == current.price && offer.CreatedAt.Before(current.createdAt)) {
+				acc.cells[cellKey] = &struct {
+					departureDate time.Time
+					returnDate    sql.NullTime
+					price         float64
+					currency      string
+					airlineCodes  []string
+					createdAt     time.Time
+				}{
+					departureDate: offer.DepartureDate,
+					returnDate:    offer.ReturnDate,
+					price:         offer.Price,
+					currency:      offer.Currency,
+					airlineCodes:  append([]string(nil), offer.AirlineCodes...),
+					createdAt:     offer.CreatedAt,
+				}
+			}
+		}
+
+		gridRoutes := make([]routeGrid, 0, len(routeAccumulators))
+		routeKeys := make([]string, 0, len(routeAccumulators))
+		for key := range routeAccumulators {
+			routeKeys = append(routeKeys, key)
+		}
+		sort.Strings(routeKeys)
+
+		for _, key := range routeKeys {
+			acc := routeAccumulators[key]
+			cells := make([]gridCell, 0, len(acc.cells))
+			for _, cell := range acc.cells {
+				var returnDatePtr *time.Time
+				if cell.returnDate.Valid {
+					rt := cell.returnDate.Time
+					returnDatePtr = &rt
+				}
+				cells = append(cells, gridCell{
+					DepartureDate: cell.departureDate,
+					ReturnDate:    returnDatePtr,
+					Price:         cell.price,
+					Currency:      cell.currency,
+					AirlineCodes:  append([]string(nil), cell.airlineCodes...),
+					CreatedAt:     cell.createdAt,
+				})
+			}
+
+			sort.Slice(cells, func(i, j int) bool {
+				if !cells[i].DepartureDate.Equal(cells[j].DepartureDate) {
+					return cells[i].DepartureDate.Before(cells[j].DepartureDate)
+				}
+
+				if cells[i].ReturnDate == nil && cells[j].ReturnDate == nil {
+					return false
+				}
+				if cells[i].ReturnDate == nil {
+					return true
+				}
+				if cells[j].ReturnDate == nil {
+					return false
+				}
+				return cells[i].ReturnDate.Before(*cells[j].ReturnDate)
+			})
+
+			gridRoutes = append(gridRoutes, routeGrid{
+				Origin:      acc.origin,
+				Destination: acc.destination,
+				Cells:       cells,
+			})
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"items": offerItems,
+			"count": total,
+			"grid":  gridRoutes,
 		})
 	}
 }
