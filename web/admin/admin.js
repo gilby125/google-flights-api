@@ -306,7 +306,7 @@ async function saveJob() {
     }
 
     const isDynamicDates = document.getElementById('dynamicDates').checked;
-    
+
     const jobData = {
         name: document.getElementById('jobName').value,
         origin: document.getElementById('origin').value,
@@ -328,11 +328,11 @@ async function saveJob() {
     // Add date fields based on mode
     if (isDynamicDates) {
         // Dynamic date mode
-        jobData.days_from_execution = parseInt(document.getElementById('daysFromExecution').value) || 14;
-        jobData.search_window_days = parseInt(document.getElementById('searchWindowDays').value) || 7;
-        jobData.trip_length = parseInt(document.getElementById('tripLength').value) || 7;
-        
-        // Set dummy static dates (required by backend but not used)
+        jobData.days_from_execution = parseInt(document.getElementById('daysFromExecution').value, 10) || 14;
+        jobData.search_window_days = parseInt(document.getElementById('searchWindowDays').value, 10) || 7;
+        jobData.trip_length = parseInt(document.getElementById('tripLength').value, 10) || 7;
+
+        // Set placeholder static dates (required by backend but not used when dynamic)
         const futureDate = new Date();
         futureDate.setDate(futureDate.getDate() + 30);
         const dateString = futureDate.toISOString().split('T')[0];
@@ -342,13 +342,22 @@ async function saveJob() {
         // Static date mode
         jobData.date_start = document.getElementById('dateStart').value;
         jobData.date_end = document.getElementById('dateEnd').value;
-        jobData.return_date_start = document.getElementById('returnDateStart').value || null;
-        jobData.return_date_end = document.getElementById('returnDateEnd').value || null;
-        
-        // Set defaults for dynamic fields
-        jobData.days_from_execution = null;
-        jobData.search_window_days = null;
-        jobData.trip_length = null;
+
+        const returnDateStart = document.getElementById('returnDateStart').value;
+        const returnDateEnd = document.getElementById('returnDateEnd').value;
+        if (returnDateStart) {
+            jobData.return_date_start = returnDateStart;
+        }
+        if (returnDateEnd) {
+            jobData.return_date_end = returnDateEnd;
+        }
+    }
+
+    // Remove dynamic-only fields when not in dynamic mode
+    if (!isDynamicDates) {
+        delete jobData.days_from_execution;
+        delete jobData.search_window_days;
+        delete jobData.trip_length;
     }
 
     try {
