@@ -336,5 +336,47 @@ func (m *MockPostgresDB) ListBulkSearchOffers(ctx context.Context, searchID int)
 	return offers, args.Error(1)
 }
 
+func (m *MockPostgresDB) CreatePriceGraphSweep(ctx context.Context, jobID sql.NullInt32, originCount, destinationCount int, tripLengthMin, tripLengthMax sql.NullInt32, currency string) (int, error) {
+	args := m.Called(ctx, jobID, originCount, destinationCount, tripLengthMin, tripLengthMax, currency)
+	return args.Int(0), args.Error(1)
+}
+
+func (m *MockPostgresDB) UpdatePriceGraphSweepStatus(ctx context.Context, sweepID int, status string, startedAt, completedAt sql.NullTime, errorCount int) error {
+	args := m.Called(ctx, sweepID, status, startedAt, completedAt, errorCount)
+	return args.Error(0)
+}
+
+func (m *MockPostgresDB) GetPriceGraphSweepByID(ctx context.Context, sweepID int) (*db.PriceGraphSweep, error) {
+	args := m.Called(ctx, sweepID)
+	var sweep *db.PriceGraphSweep
+	if s := args.Get(0); s != nil {
+		sweep = s.(*db.PriceGraphSweep)
+	}
+	return sweep, args.Error(1)
+}
+
+func (m *MockPostgresDB) ListPriceGraphSweeps(ctx context.Context, limit, offset int) (db.Rows, error) {
+	args := m.Called(ctx, limit, offset)
+	var rows db.Rows
+	if r := args.Get(0); r != nil {
+		rows = r.(db.Rows)
+	}
+	return rows, args.Error(1)
+}
+
+func (m *MockPostgresDB) InsertPriceGraphResult(ctx context.Context, record db.PriceGraphResultRecord) error {
+	args := m.Called(ctx, record)
+	return args.Error(0)
+}
+
+func (m *MockPostgresDB) ListPriceGraphResults(ctx context.Context, sweepID, limit, offset int) (db.Rows, error) {
+	args := m.Called(ctx, sweepID, limit, offset)
+	var rows db.Rows
+	if r := args.Get(0); r != nil {
+		rows = r.(db.Rows)
+	}
+	return rows, args.Error(1)
+}
+
 // Ensure MockPostgresDB implements db.PostgresDB
 var _ db.PostgresDB = (*MockPostgresDB)(nil)

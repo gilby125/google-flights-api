@@ -363,6 +363,10 @@ func (m *Manager) runWorker(id int, worker *Worker) {
 				log.Printf("Worker %d error processing bulk_search queue: %v", displayID, err)
 			}
 
+			if err := m.processQueue(id, worker, "price_graph_sweep"); err != nil {
+				log.Printf("Worker %d error processing price_graph_sweep queue: %v", displayID, err)
+			}
+
 			// Sleep briefly to avoid hammering the queue
 			time.Sleep(100 * time.Millisecond)
 		}
@@ -496,6 +500,18 @@ func (m *Manager) processJob(ctx context.Context, worker *Worker, queueName stri
 
 		// Process the bulk search
 		return m.processBulkSearch(ctx, worker, session, payload)
+	case "price_graph_sweep":
+		session, err := m.getFlightSession("price_graph")
+		if err != nil {
+			return fmt.Errorf("failed to get flight session: %w", err)
+		}
+
+		var payload PriceGraphSweepPayload
+		if err := json.Unmarshal(job.Payload, &payload); err != nil {
+			return fmt.Errorf("failed to unmarshal price graph sweep payload: %w", err)
+		}
+
+		return m.processPriceGraphSweep(ctx, worker, session, payload)
 
 	default:
 		return fmt.Errorf("unknown job type: %s", queueName)
@@ -511,6 +527,8 @@ func (m *Manager) getFlightSession(sessionType string) (*flights.Session, error)
 	case "bulk_search":
 		// Use cached session like direct search for better reliability
 		sessionKey = "bulk_search"
+	case "price_graph":
+		sessionKey = "price_graph"
 	case "direct_search":
 		// Use cached session for direct search (works fine)
 		sessionKey = "direct_search"
@@ -976,6 +994,174 @@ func (m *Manager) processBulkSearch(ctx context.Context, worker *Worker, session
 		log.Printf("Failed to update bulk search summary for %d: %v", bulkSearchID, completeErr)
 	}
 
+	return nil
+}
+
+// processPriceGraphSweep executes a price graph sweep job and stores the cheapest fares for each date
+func (m *Manager) processPriceGraphSweep(ctx context.Context, worker *Worker, session *flights.Session, payload PriceGraphSweepPayload) (err error) {
+	if len(payload.Origins) == 0 {
+		return fmt.Errorf("price graph sweep requires at least one origin")
+	}
+	if len(payload.Destinations) == 0 {
+		return fmt.Errorf("price graph sweep requires at least one destination")
+	}
+
+	tripLengths := payload.TripLengths
+	if len(tripLengths) == 0 {
+		tripLengths = []int{0}
+	}
+
+	var tripType flights.TripType
+	switch payload.TripType {
+	case "one_way":
+		tripType = flights.OneWay
+	default:
+		tripType = flights.RoundTrip
+	}
+
+	flightClass := parseClass(payload.Class)
+	flightStops := parseStops(payload.Stops)
+
+	cur, err := currency.ParseISO(payload.Currency)
+	if err != nil {
+		log.Printf("Warning: invalid currency '%s' for price graph sweep, defaulting to USD: %v", payload.Currency, err)
+		cur = currency.USD
+		payload.Currency = "USD"
+	}
+
+	var jobRef sql.NullInt32
+	if payload.JobID > 0 {
+		jobRef = sql.NullInt32{Int32: int32(payload.JobID), Valid: true}
+	}
+
+	var minLen, maxLen sql.NullInt32
+	if len(tripLengths) > 0 {
+		minVal := tripLengths[0]
+		maxVal := tripLengths[0]
+		for _, l := range tripLengths {
+			if l < minVal {
+				minVal = l
+			}
+			if l > maxVal {
+				maxVal = l
+			}
+		}
+		minLen = sql.NullInt32{Int32: int32(minVal), Valid: true}
+		maxLen = sql.NullInt32{Int32: int32(maxVal), Valid: true}
+	}
+
+	sweepID := payload.SweepID
+	if sweepID == 0 {
+		newID, createErr := m.postgresDB.CreatePriceGraphSweep(ctx, jobRef, len(payload.Origins), len(payload.Destinations), minLen, maxLen, strings.ToUpper(payload.Currency))
+		if createErr != nil {
+			return createErr
+		}
+		sweepID = newID
+	}
+
+	resultsInserted := 0
+	errorCount := 0
+
+	startedAt := sql.NullTime{Time: time.Now(), Valid: true}
+	if updateErr := m.postgresDB.UpdatePriceGraphSweepStatus(ctx, sweepID, "running", startedAt, sql.NullTime{}, 0); updateErr != nil {
+		log.Printf("Failed to mark price graph sweep %d as running: %v", sweepID, updateErr)
+	}
+
+	defer func() {
+		if err != nil {
+			if updateErr := m.postgresDB.UpdatePriceGraphSweepStatus(ctx, sweepID, "failed", sql.NullTime{}, sql.NullTime{}, errorCount); updateErr != nil {
+				log.Printf("Failed to mark price graph sweep %d as failed: %v", sweepID, updateErr)
+			}
+		}
+	}()
+
+	rateDelay := time.Duration(payload.RateLimitMillis) * time.Millisecond
+	if rateDelay <= 0 {
+		rateDelay = 750 * time.Millisecond
+	}
+
+	options := flights.Options{
+		Travelers: flights.Travelers{
+			Adults:       payload.Adults,
+			Children:     payload.Children,
+			InfantOnLap:  payload.InfantsLap,
+			InfantInSeat: payload.InfantsSeat,
+		},
+		Currency: cur,
+		Stops:    flightStops,
+		Class:    flightClass,
+		TripType: tripType,
+		Lang:     language.English,
+	}
+
+	for _, origin := range payload.Origins {
+		for _, destination := range payload.Destinations {
+			for _, length := range tripLengths {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				default:
+				}
+
+				args := flights.PriceGraphArgs{
+					RangeStartDate: payload.DepartureDateFrom,
+					RangeEndDate:   payload.DepartureDateTo,
+					TripLength:     length,
+					SrcAirports:    []string{origin},
+					DstAirports:    []string{destination},
+					Options:        options,
+				}
+
+				offers, sweepErr := session.GetPriceGraph(ctx, args)
+				if sweepErr != nil {
+					errorCount++
+					log.Printf("Price graph sweep error for %s -> %s (length %d): %v", origin, destination, length, sweepErr)
+					continue
+				}
+
+				for _, offer := range offers {
+					record := db.PriceGraphResultRecord{
+						SweepID:       sweepID,
+						Origin:        origin,
+						Destination:   destination,
+						DepartureDate: offer.StartDate,
+						ReturnDate:    timeToNullTime(offer.ReturnDate),
+						TripLength:    nullInt32(length),
+						Price:         offer.Price,
+						Currency:      strings.ToUpper(payload.Currency),
+						QueriedAt:     time.Now(),
+					}
+
+					if insertErr := m.postgresDB.InsertPriceGraphResult(ctx, record); insertErr != nil {
+						errorCount++
+						log.Printf("Failed to store price graph result for %s -> %s on %s: %v", origin, destination, offer.StartDate.Format("2006-01-02"), insertErr)
+						continue
+					}
+					resultsInserted++
+				}
+
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(rateDelay):
+				}
+			}
+		}
+	}
+
+	status := "completed"
+	if resultsInserted == 0 && errorCount > 0 {
+		status = "failed"
+	} else if errorCount > 0 {
+		status = "completed_with_errors"
+	}
+
+	completedAt := sql.NullTime{Time: time.Now(), Valid: true}
+	if updateErr := m.postgresDB.UpdatePriceGraphSweepStatus(ctx, sweepID, status, sql.NullTime{}, completedAt, errorCount); updateErr != nil {
+		log.Printf("Failed to finalize price graph sweep %d: %v", sweepID, updateErr)
+	}
+
+	log.Printf("Price graph sweep %d finished with %d results (%d errors)", sweepID, resultsInserted, errorCount)
 	return nil
 }
 

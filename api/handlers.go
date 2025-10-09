@@ -109,6 +109,38 @@ type BulkJobRequest struct {
 	CronExpression    string   `json:"cron_expression" binding:"required"`
 }
 
+// PriceGraphSweepRequest represents a request to enqueue a price graph sweep
+type PriceGraphSweepRequest struct {
+	Origins           []string  `json:"origins" binding:"required,min=1"`
+	Destinations      []string  `json:"destinations" binding:"required,min=1"`
+	DepartureDateFrom time.Time `json:"departure_date_from" binding:"required"`
+	DepartureDateTo   time.Time `json:"departure_date_to" binding:"required"`
+	TripLengths       []int     `json:"trip_lengths,omitempty"`
+	TripType          string    `json:"trip_type" binding:"required,oneof=one_way round_trip"`
+	Class             string    `json:"class" binding:"required,oneof=economy premium_economy business first"`
+	Stops             string    `json:"stops" binding:"required,oneof=nonstop one_stop two_stops two_stops_plus any"`
+	Adults            int       `json:"adults" binding:"required,min=1"`
+	Children          int       `json:"children" binding:"min=0"`
+	InfantsLap        int       `json:"infants_lap" binding:"min=0"`
+	InfantsSeat       int       `json:"infants_seat" binding:"min=0"`
+	Currency          string    `json:"currency" binding:"required,len=3"`
+	RateLimitMillis   int       `json:"rate_limit_millis,omitempty" binding:"min=0"`
+}
+
+func maybeNullInt(value sql.NullInt32) interface{} {
+	if !value.Valid {
+		return nil
+	}
+	return value.Int32
+}
+
+func maybeNullTime(value sql.NullTime) interface{} {
+	if !value.Valid {
+		return nil
+	}
+	return value.Time
+}
+
 // getAirports returns a handler for getting all airports
 func GetAirports(pgDB db.PostgresDB) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -996,6 +1028,226 @@ func listBulkSearches(pgDB db.PostgresDB) gin.HandlerFunc {
 		c.JSON(http.StatusOK, gin.H{
 			"items": searches,
 			"count": len(searches),
+		})
+	}
+}
+
+// enqueuePriceGraphSweep enqueues a price graph sweep job for execution
+func enqueuePriceGraphSweep(pgDB db.PostgresDB, scheduler *worker.Scheduler) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if scheduler == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Price graph scheduler unavailable"})
+			return
+		}
+
+		var req PriceGraphSweepRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		if req.DepartureDateFrom.After(req.DepartureDateTo) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "departure_date_from must be before departure_date_to"})
+			return
+		}
+
+		stops := req.Stops
+		if stops == "two_stops_plus" {
+			stops = "any"
+		}
+
+		payload := worker.PriceGraphSweepPayload{
+			Origins:           req.Origins,
+			Destinations:      req.Destinations,
+			DepartureDateFrom: req.DepartureDateFrom,
+			DepartureDateTo:   req.DepartureDateTo,
+			TripLengths:       req.TripLengths,
+			TripType:          req.TripType,
+			Class:             req.Class,
+			Stops:             stops,
+			Adults:            req.Adults,
+			Children:          req.Children,
+			InfantsLap:        req.InfantsLap,
+			InfantsSeat:       req.InfantsSeat,
+			Currency:          strings.ToUpper(req.Currency),
+			RateLimitMillis:   req.RateLimitMillis,
+		}
+
+		ctx := c.Request.Context()
+		sweepID, err := scheduler.EnqueuePriceGraphSweep(ctx, payload)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to enqueue price graph sweep: " + err.Error()})
+			return
+		}
+
+		sweep, err := pgDB.GetPriceGraphSweepByID(ctx, sweepID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch sweep metadata: " + err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusAccepted, gin.H{
+			"message":  "Price graph sweep enqueued",
+			"sweep_id": sweepID,
+			"sweep": map[string]interface{}{
+				"id":                sweep.ID,
+				"status":            sweep.Status,
+				"origin_count":      sweep.OriginCount,
+				"destination_count": sweep.DestinationCount,
+				"trip_length_min":   maybeNullInt(sweep.TripLengthMin),
+				"trip_length_max":   maybeNullInt(sweep.TripLengthMax),
+				"currency":          sweep.Currency,
+				"created_at":        sweep.CreatedAt,
+				"updated_at":        sweep.UpdatedAt,
+				"started_at":        maybeNullTime(sweep.StartedAt),
+				"completed_at":      maybeNullTime(sweep.CompletedAt),
+				"error_count":       sweep.ErrorCount,
+			},
+		})
+	}
+}
+
+// listPriceGraphSweeps lists price graph sweep runs
+func listPriceGraphSweeps(pgDB db.PostgresDB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+		offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+
+		rows, err := pgDB.ListPriceGraphSweeps(c.Request.Context(), limit, offset)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list price graph sweeps: " + err.Error()})
+			return
+		}
+		defer rows.Close()
+
+		results := make([]map[string]interface{}, 0)
+		for rows.Next() {
+			var sweep db.PriceGraphSweep
+			if err := rows.Scan(&sweep.ID, &sweep.JobID, &sweep.Status, &sweep.OriginCount, &sweep.DestinationCount,
+				&sweep.TripLengthMin, &sweep.TripLengthMax, &sweep.Currency, &sweep.ErrorCount,
+				&sweep.CreatedAt, &sweep.UpdatedAt, &sweep.StartedAt, &sweep.CompletedAt); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scan price graph sweep: " + err.Error()})
+				return
+			}
+
+			entry := map[string]interface{}{
+				"id":                sweep.ID,
+				"status":            sweep.Status,
+				"origin_count":      sweep.OriginCount,
+				"destination_count": sweep.DestinationCount,
+				"trip_length_min":   maybeNullInt(sweep.TripLengthMin),
+				"trip_length_max":   maybeNullInt(sweep.TripLengthMax),
+				"currency":          sweep.Currency,
+				"error_count":       sweep.ErrorCount,
+				"created_at":        sweep.CreatedAt,
+				"updated_at":        sweep.UpdatedAt,
+				"started_at":        maybeNullTime(sweep.StartedAt),
+				"completed_at":      maybeNullTime(sweep.CompletedAt),
+			}
+			if sweep.JobID.Valid {
+				entry["job_id"] = sweep.JobID.Int32
+			}
+			results = append(results, entry)
+		}
+		if err := rows.Err(); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error iterating sweeps: " + err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"items": results,
+			"count": len(results),
+		})
+	}
+}
+
+// getPriceGraphSweepResults returns stored price graph results for a sweep
+func getPriceGraphSweepResults(pgDB db.PostgresDB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		sweepID, err := strconv.Atoi(c.Param("id"))
+		if err != nil || sweepID <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid sweep ID"})
+			return
+		}
+
+		ctx := c.Request.Context()
+		summary, err := pgDB.GetPriceGraphSweepByID(ctx, sweepID)
+		if err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				c.JSON(http.StatusNotFound, gin.H{"error": "Price graph sweep not found"})
+			} else {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load sweep metadata: " + err.Error()})
+			}
+			return
+		}
+
+		limit, _ := strconv.Atoi(c.DefaultQuery("limit", "100"))
+		offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+
+		rows, err := pgDB.ListPriceGraphResults(ctx, sweepID, limit, offset)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list sweep results: " + err.Error()})
+			return
+		}
+		defer rows.Close()
+
+		results := make([]map[string]interface{}, 0)
+		for rows.Next() {
+			var (
+				id          int
+				sid         int
+				origin      string
+				destination string
+				departure   time.Time
+				returnDate  sql.NullTime
+				tripLength  sql.NullInt32
+				price       float64
+				currency    string
+				queriedAt   time.Time
+				createdAt   time.Time
+			)
+
+			if err := rows.Scan(&id, &sid, &origin, &destination, &departure, &returnDate, &tripLength, &price, &currency, &queriedAt, &createdAt); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scan result: " + err.Error()})
+				return
+			}
+
+			entry := map[string]interface{}{
+				"id":             id,
+				"sweep_id":       sid,
+				"origin":         origin,
+				"destination":    destination,
+				"departure_date": departure,
+				"return_date":    maybeNullTime(returnDate),
+				"trip_length":    maybeNullInt(tripLength),
+				"price":          price,
+				"currency":       currency,
+				"queried_at":     queriedAt,
+				"created_at":     createdAt,
+			}
+			results = append(results, entry)
+		}
+		if err := rows.Err(); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error iterating results: " + err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"sweep": map[string]interface{}{
+				"id":                summary.ID,
+				"status":            summary.Status,
+				"origin_count":      summary.OriginCount,
+				"destination_count": summary.DestinationCount,
+				"trip_length_min":   maybeNullInt(summary.TripLengthMin),
+				"trip_length_max":   maybeNullInt(summary.TripLengthMax),
+				"currency":          summary.Currency,
+				"error_count":       summary.ErrorCount,
+				"created_at":        summary.CreatedAt,
+				"updated_at":        summary.UpdatedAt,
+				"started_at":        maybeNullTime(summary.StartedAt),
+				"completed_at":      maybeNullTime(summary.CompletedAt),
+			},
+			"results": results,
+			"count":   len(results),
 		})
 	}
 }

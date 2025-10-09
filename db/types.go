@@ -165,6 +165,51 @@ type BulkSearchSummary struct {
 	AveragePrice sql.NullFloat64
 }
 
+// PriceGraphSweep captures metadata about a price graph sweep run
+type PriceGraphSweep struct {
+	ID               int
+	JobID            sql.NullInt32
+	Status           string
+	OriginCount      int
+	DestinationCount int
+	TripLengthMin    sql.NullInt32
+	TripLengthMax    sql.NullInt32
+	Currency         string
+	ErrorCount       int
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	StartedAt        sql.NullTime
+	CompletedAt      sql.NullTime
+}
+
+// PriceGraphResult represents the cheapest fare returned by the price graph API
+type PriceGraphResult struct {
+	ID            int
+	SweepID       int
+	Origin        string
+	Destination   string
+	DepartureDate time.Time
+	ReturnDate    sql.NullTime
+	TripLength    sql.NullInt32
+	Price         float64
+	Currency      string
+	QueriedAt     time.Time
+	CreatedAt     time.Time
+}
+
+// PriceGraphResultRecord is used when inserting price graph results
+type PriceGraphResultRecord struct {
+	SweepID       int
+	Origin        string
+	Destination   string
+	DepartureDate time.Time
+	ReturnDate    sql.NullTime
+	TripLength    sql.NullInt32
+	Price         float64
+	Currency      string
+	QueriedAt     time.Time
+}
+
 // BulkSearchResultRecord represents the data needed to insert a bulk search result
 type BulkSearchResultRecord struct {
 	BulkSearchID         int

@@ -54,6 +54,12 @@ type PostgresDB interface {
 	CompleteBulkSearch(ctx context.Context, summary BulkSearchSummary) error
 	InsertBulkSearchResult(ctx context.Context, result BulkSearchResultRecord) error
 	ListBulkSearches(ctx context.Context, limit, offset int) (Rows, error)
+	CreatePriceGraphSweep(ctx context.Context, jobID sql.NullInt32, originCount, destinationCount int, tripLengthMin, tripLengthMax sql.NullInt32, currency string) (int, error)
+	UpdatePriceGraphSweepStatus(ctx context.Context, sweepID int, status string, startedAt, completedAt sql.NullTime, errorCount int) error
+	GetPriceGraphSweepByID(ctx context.Context, sweepID int) (*PriceGraphSweep, error)
+	ListPriceGraphSweeps(ctx context.Context, limit, offset int) (Rows, error)
+	InsertPriceGraphResult(ctx context.Context, record PriceGraphResultRecord) error
+	ListPriceGraphResults(ctx context.Context, sweepID, limit, offset int) (Rows, error)
 }
 
 // Tx defines the interface for database transactions
@@ -772,6 +778,132 @@ func (p *PostgresDBImpl) ListBulkSearches(ctx context.Context, limit, offset int
          ORDER BY created_at DESC
          LIMIT $1 OFFSET $2`,
 		limit, offset,
+	)
+}
+
+func (p *PostgresDBImpl) CreatePriceGraphSweep(ctx context.Context, jobID sql.NullInt32, originCount, destinationCount int, tripLengthMin, tripLengthMax sql.NullInt32, currency string) (int, error) {
+	if currency == "" {
+		currency = "USD"
+	}
+	var sweepID int
+	err := p.db.QueryRowContext(ctx,
+		`INSERT INTO price_graph_sweeps
+			(job_id, origin_count, destination_count, trip_length_min, trip_length_max, currency)
+		 VALUES ($1, $2, $3, $4, $5, $6)
+		 RETURNING id`,
+		jobID, originCount, destinationCount, tripLengthMin, tripLengthMax, currency,
+	).Scan(&sweepID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to create price graph sweep: %w", err)
+	}
+	return sweepID, nil
+}
+
+func (p *PostgresDBImpl) UpdatePriceGraphSweepStatus(ctx context.Context, sweepID int, status string, startedAt, completedAt sql.NullTime, errorCount int) error {
+	var started interface{}
+	if startedAt.Valid {
+		started = startedAt.Time
+	}
+	var completed interface{}
+	if completedAt.Valid {
+		completed = completedAt.Time
+	}
+
+	_, err := p.db.ExecContext(ctx,
+		`UPDATE price_graph_sweeps
+         SET status = $1,
+             error_count = $2,
+             started_at = COALESCE($3, started_at),
+             completed_at = COALESCE($4, completed_at),
+             updated_at = NOW()
+         WHERE id = $5`,
+		status, errorCount, started, completed, sweepID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update price graph sweep %d status: %w", sweepID, err)
+	}
+	return nil
+}
+
+func (p *PostgresDBImpl) GetPriceGraphSweepByID(ctx context.Context, sweepID int) (*PriceGraphSweep, error) {
+	var sweep PriceGraphSweep
+	err := p.db.QueryRowContext(ctx,
+		`SELECT id, job_id, status, origin_count, destination_count,
+                trip_length_min, trip_length_max, currency, error_count,
+                created_at, updated_at, started_at, completed_at
+         FROM price_graph_sweeps
+         WHERE id = $1`,
+		sweepID,
+	).Scan(&sweep.ID, &sweep.JobID, &sweep.Status, &sweep.OriginCount, &sweep.DestinationCount,
+		&sweep.TripLengthMin, &sweep.TripLengthMax, &sweep.Currency, &sweep.ErrorCount,
+		&sweep.CreatedAt, &sweep.UpdatedAt, &sweep.StartedAt, &sweep.CompletedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("price graph sweep with ID %d not found", sweepID)
+		}
+		return nil, fmt.Errorf("error getting price graph sweep %d: %w", sweepID, err)
+	}
+	return &sweep, nil
+}
+
+func (p *PostgresDBImpl) ListPriceGraphSweeps(ctx context.Context, limit, offset int) (Rows, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	return p.db.QueryContext(ctx,
+		`SELECT id, job_id, status, origin_count, destination_count,
+                trip_length_min, trip_length_max, currency, error_count,
+                created_at, updated_at, started_at, completed_at
+         FROM price_graph_sweeps
+         ORDER BY created_at DESC
+         LIMIT $1 OFFSET $2`,
+		limit, offset,
+	)
+}
+
+func (p *PostgresDBImpl) InsertPriceGraphResult(ctx context.Context, record PriceGraphResultRecord) error {
+	if record.QueriedAt.IsZero() {
+		record.QueriedAt = time.Now()
+	}
+	_, err := p.db.ExecContext(ctx,
+		`INSERT INTO price_graph_results
+			(sweep_id, origin, destination, departure_date, return_date,
+			 trip_length, price, currency, queried_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		record.SweepID,
+		record.Origin,
+		record.Destination,
+		record.DepartureDate,
+		record.ReturnDate,
+		record.TripLength,
+		record.Price,
+		record.Currency,
+		record.QueriedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to insert price graph result for %s -> %s: %w", record.Origin, record.Destination, err)
+	}
+	return nil
+}
+
+func (p *PostgresDBImpl) ListPriceGraphResults(ctx context.Context, sweepID, limit, offset int) (Rows, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	return p.db.QueryContext(ctx,
+		`SELECT id, sweep_id, origin, destination, departure_date,
+                return_date, trip_length, price, currency, queried_at, created_at
+         FROM price_graph_results
+         WHERE sweep_id = $1
+         ORDER BY price ASC
+         LIMIT $2 OFFSET $3`,
+		sweepID, limit, offset,
 	)
 }
 

@@ -292,6 +292,72 @@ func (s *Scheduler) executeScheduledBulkSearch(jobID int, jobName string) {
 	log.Printf("Successfully enqueued scheduled bulk search: %s (bulk job ID: %s)", jobName, bulkJobID)
 }
 
+// EnqueuePriceGraphSweep enqueues a price graph sweep job and returns the sweep ID
+func (s *Scheduler) EnqueuePriceGraphSweep(ctx context.Context, payload PriceGraphSweepPayload) (int, error) {
+	if len(payload.Origins) == 0 {
+		return 0, fmt.Errorf("price graph sweep requires at least one origin")
+	}
+	if len(payload.Destinations) == 0 {
+		return 0, fmt.Errorf("price graph sweep requires at least one destination")
+	}
+
+	lengths := payload.TripLengths
+	if len(lengths) == 0 {
+		lengths = []int{0}
+	}
+
+	var minLen, maxLen sql.NullInt32
+	if len(lengths) > 0 {
+		minVal := lengths[0]
+		maxVal := lengths[0]
+		for _, l := range lengths {
+			if l < minVal {
+				minVal = l
+			}
+			if l > maxVal {
+				maxVal = l
+			}
+		}
+		minLen = sql.NullInt32{Int32: int32(minVal), Valid: true}
+		maxLen = sql.NullInt32{Int32: int32(maxVal), Valid: true}
+	}
+
+	var jobRef sql.NullInt32
+	if payload.JobID > 0 {
+		jobRef = sql.NullInt32{Int32: int32(payload.JobID), Valid: true}
+	}
+
+	currencyCode := strings.ToUpper(payload.Currency)
+	if currencyCode == "" {
+		currencyCode = "USD"
+	}
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	sweepID, err := s.postgresDB.CreatePriceGraphSweep(ctx, jobRef, len(payload.Origins), len(payload.Destinations), minLen, maxLen, currencyCode)
+	if err != nil {
+		return 0, fmt.Errorf("failed to create price graph sweep: %w", err)
+	}
+
+	payload.SweepID = sweepID
+	payload.Currency = currencyCode
+	payload.TripLengths = lengths
+
+	if payload.RateLimitMillis <= 0 {
+		payload.RateLimitMillis = 750
+	}
+
+	if _, err := s.queue.Enqueue(ctx, "price_graph_sweep", payload); err != nil {
+		_ = s.postgresDB.UpdatePriceGraphSweepStatus(ctx, sweepID, "failed", sql.NullTime{}, sql.NullTime{}, 1)
+		return 0, fmt.Errorf("failed to enqueue price graph sweep: %w", err)
+	}
+
+	log.Printf("Enqueued price graph sweep %d covering %d origins × %d destinations", sweepID, len(payload.Origins), len(payload.Destinations))
+	return sweepID, nil
+}
+
 // processFlightSearch processes a flight search job
 func (s *Scheduler) processFlightSearch(ctx context.Context, job queue.Job) error {
 	// Map the payload to flights API arguments

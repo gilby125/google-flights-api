@@ -95,6 +95,18 @@ After the database containers are running, you may need to seed the database wit
 
 ---
 
+### Price Graph Sweep Jobs
+
+To catalogue the cheapest fares across large origin/destination grids without storing full offer payloads, the API now exposes a dedicated price graph sweep pipeline.
+
+- `POST /api/v1/admin/price-graph-sweeps` enqueues a sweep. Supply origins, destinations, a departure window, optional `trip_lengths` (array of nights), and traveller preferences. The worker reuses a cached price-graph session and throttles requests; you can raise or lower the interval with `rate_limit_millis` (defaults to 750 ms between calls).
+- `GET /api/v1/admin/price-graph-sweeps` lists recent sweeps together with status, error counts, and trip-length ranges.
+- `GET /api/v1/admin/price-graph-sweeps/:id` returns the stored low-fare grid for a sweep; each row contains route, departure/return dates, trip length, and price snapshot.
+
+The sweep data is stored separately in `price_graph_sweeps` and `price_graph_results`, so it will not interfere with existing bulk-search runs. When worker concurrency is high, adjust `rate_limit_millis` or the global worker concurrency settings to avoid tripping Google Flights rate limits.
+
+---
+
 ## Using the Go Client Library
 
 This section details how to use the `flights` package directly in your own Go projects.
@@ -245,4 +257,4 @@ go run ./examples/example3/main.go
 
 ## Bug / Feature / Suggestion
 
-If you've found a bug, have a suggestion, or a feature you're looking for is not yet implemented, please feel free to [open an issue](https://github.com/krisukox/google-flights-api/issues). I'll try to handle it ASAP.
+
