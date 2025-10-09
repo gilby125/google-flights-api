@@ -22,7 +22,7 @@ func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Ne
 		Password: cfg.RedisConfig.Password,
 		DB:       cfg.RedisConfig.DB,
 	})
-	
+
 	redisCache := cache.NewRedisCache(redisClient, "flights_api")
 	cacheManager := cache.NewCacheManager(redisCache)
 
@@ -37,15 +37,7 @@ func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Ne
 	// Setup middleware
 	router.Use(middleware.RequestLogger())
 	router.Use(middleware.Recovery())
-	
-	// Add response caching middleware for specific routes
-	router.Use(middleware.ResponseCache(cacheManager, middleware.CacheConfig{
-		TTL:       cache.MediumTTL,
-		KeyPrefix: "http_cache",
-		SkipPaths: []string{"/api/v1/search", "/api/search", "/health", "/api/v1/admin"},
-		OnlyMethods: []string{"GET"},
-	}))
-	
+
 	// CORS middleware
 	router.Use(func(c *gin.Context) {
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
@@ -84,13 +76,19 @@ func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Ne
 
 	// Legacy API routes (for backward compatibility)
 	apiGroup := router.Group("/api")
+	apiGroup.Use(middleware.ResponseCache(cacheManager, middleware.CacheConfig{
+		TTL:         cache.MediumTTL,
+		KeyPrefix:   "http_cache",
+		SkipPaths:   []string{"/api/search"},
+		OnlyMethods: []string{"GET"},
+	}))
 	{
 		// Direct flight search (immediate results, bypasses queue)
 		apiGroup.POST("/search", DirectFlightSearch())
 		apiGroup.GET("/search-test", func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"message": "Search test endpoint working"})
 		})
-		
+
 		// Cached endpoints for development
 		apiGroup.GET("/airports", CachedAirportsHandler(cacheManager))
 		apiGroup.GET("/price-history", MockPriceHistoryHandler())
@@ -98,6 +96,12 @@ func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Ne
 
 	// API v1 routes (production endpoints)
 	v1 := router.Group("/api/v1")
+	v1.Use(middleware.ResponseCache(cacheManager, middleware.CacheConfig{
+		TTL:         cache.MediumTTL,
+		KeyPrefix:   "http_cache",
+		SkipPaths:   []string{"/api/v1/admin"},
+		OnlyMethods: []string{"GET"},
+	}))
 	{
 		// Airport routes
 		v1.GET("/airports", GetAirports(postgresDB))
@@ -144,7 +148,7 @@ func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Ne
 		c.Header("Content-Type", "text/html")
 		c.File("./web/search/index.html")
 	})
-	
+
 	// Search page route - serve index.html directly
 	router.GET("/search", func(c *gin.Context) {
 		c.Header("Content-Type", "text/html")
