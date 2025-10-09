@@ -533,7 +533,10 @@ func (p *PostgresDBImpl) GetBulkSearchByID(ctx context.Context, searchID int) (*
 func (p *PostgresDBImpl) QueryBulkSearchResultsPaginated(ctx context.Context, searchID, limit, offset int) (Rows, error) {
 	return p.db.QueryContext(ctx,
 		`SELECT origin, destination, departure_date, return_date,
-			price, currency, airline_code, duration
+			price, currency, airline_code, duration,
+			src_airport_code, dst_airport_code, src_city, dst_city,
+			flight_duration, return_flight_duration,
+			outbound_flights, return_flights, offer_json
 		FROM bulk_search_results
 		WHERE bulk_search_id = $1
 		ORDER BY price ASC
@@ -601,11 +604,28 @@ func (p *PostgresDBImpl) CompleteBulkSearch(ctx context.Context, summary BulkSea
 }
 
 func (p *PostgresDBImpl) InsertBulkSearchResult(ctx context.Context, result BulkSearchResultRecord) error {
+	outboundJSON := result.OutboundFlightsJSON
+	if len(outboundJSON) == 0 {
+		outboundJSON = []byte("[]")
+	}
+	returnJSON := result.ReturnFlightsJSON
+	if len(returnJSON) == 0 {
+		returnJSON = []byte("[]")
+	}
+	offerJSON := result.OfferJSON
+	if len(offerJSON) == 0 {
+		offerJSON = []byte("{}")
+	}
+
 	_, err := p.db.ExecContext(ctx,
 		`INSERT INTO bulk_search_results
 			(bulk_search_id, origin, destination, departure_date, return_date,
-             price, currency, airline_code, duration)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+			 price, currency, airline_code, duration,
+			 src_airport_code, dst_airport_code, src_city, dst_city,
+			 flight_duration, return_flight_duration,
+			 outbound_flights, return_flights, offer_json)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
+			 $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
 		result.BulkSearchID,
 		result.Origin,
 		result.Destination,
@@ -615,6 +635,15 @@ func (p *PostgresDBImpl) InsertBulkSearchResult(ctx context.Context, result Bulk
 		result.Currency,
 		result.AirlineCode,
 		result.Duration,
+		result.SrcAirportCode,
+		result.DstAirportCode,
+		result.SrcCity,
+		result.DstCity,
+		result.FlightDuration,
+		result.ReturnFlightDuration,
+		outboundJSON,
+		returnJSON,
+		offerJSON,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to insert bulk search result: %w", err)
@@ -924,6 +953,15 @@ func (p *PostgresDBImpl) InitSchema() error {
             currency VARCHAR(3) NOT NULL,
             airline_code VARCHAR(3),
             duration INTEGER,
+            src_airport_code VARCHAR(3),
+            dst_airport_code VARCHAR(3),
+            src_city TEXT,
+            dst_city TEXT,
+            flight_duration INTEGER,
+            return_flight_duration INTEGER,
+            outbound_flights JSONB,
+            return_flights JSONB,
+            offer_json JSONB,
             created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
         )
     `)

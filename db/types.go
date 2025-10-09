@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
 	"time"
 
 	"github.com/gilby125/google-flights-api/flights"
@@ -133,14 +134,23 @@ type BulkSearch struct {
 
 // BulkSearchResult represents a single result row from a bulk search
 type BulkSearchResult struct {
-	Origin        string
-	Destination   string
-	DepartureDate time.Time
-	ReturnDate    sql.NullTime
-	Price         float64
-	Currency      string
-	AirlineCode   string
-	Duration      int
+	Origin               string
+	Destination          string
+	DepartureDate        time.Time
+	ReturnDate           sql.NullTime
+	Price                float64
+	Currency             string
+	AirlineCode          sql.NullString
+	Duration             sql.NullInt32
+	SrcAirportCode       sql.NullString
+	DstAirportCode       sql.NullString
+	SrcCity              sql.NullString
+	DstCity              sql.NullString
+	FlightDuration       sql.NullInt32
+	ReturnFlightDuration sql.NullInt32
+	OutboundFlights      json.RawMessage
+	ReturnFlights        json.RawMessage
+	OfferJSON            json.RawMessage
 }
 
 // BulkSearchSummary represents aggregated results for a bulk search run
@@ -157,15 +167,24 @@ type BulkSearchSummary struct {
 
 // BulkSearchResultRecord represents the data needed to insert a bulk search result
 type BulkSearchResultRecord struct {
-	BulkSearchID  int
-	Origin        string
-	Destination   string
-	DepartureDate time.Time
-	ReturnDate    sql.NullTime
-	Price         float64
-	Currency      string
-	AirlineCode   string
-	Duration      int
+	BulkSearchID         int
+	Origin               string
+	Destination          string
+	DepartureDate        time.Time
+	ReturnDate           sql.NullTime
+	Price                float64
+	Currency             string
+	AirlineCode          sql.NullString
+	Duration             sql.NullInt32
+	SrcAirportCode       sql.NullString
+	DstAirportCode       sql.NullString
+	SrcCity              sql.NullString
+	DstCity              sql.NullString
+	FlightDuration       sql.NullInt32
+	ReturnFlightDuration sql.NullInt32
+	OutboundFlightsJSON  []byte
+	ReturnFlightsJSON    []byte
+	OfferJSON            []byte
 }
 
 // Airport represents an airport row

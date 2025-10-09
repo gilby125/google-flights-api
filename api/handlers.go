@@ -2,6 +2,7 @@ package api
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -1032,7 +1033,9 @@ func getBulkSearchResults(pgDB db.PostgresDB) gin.HandlerFunc {
 		for rows.Next() {
 			var result db.BulkSearchResult
 			if err := rows.Scan(&result.Origin, &result.Destination, &result.DepartureDate, &result.ReturnDate,
-				&result.Price, &result.Currency, &result.AirlineCode, &result.Duration); err != nil {
+				&result.Price, &result.Currency, &result.AirlineCode, &result.Duration,
+				&result.SrcAirportCode, &result.DstAirportCode, &result.SrcCity, &result.DstCity,
+				&result.FlightDuration, &result.ReturnFlightDuration, &result.OutboundFlights, &result.ReturnFlights, &result.OfferJSON); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scan bulk search result: " + err.Error()})
 				return
 			}
@@ -1043,12 +1046,42 @@ func getBulkSearchResults(pgDB db.PostgresDB) gin.HandlerFunc {
 				"departure_date": result.DepartureDate,
 				"price":          result.Price,
 				"currency":       result.Currency,
-				"airline_code":   result.AirlineCode,
-				"duration":       result.Duration,
 			}
 			if result.ReturnDate.Valid {
-				recordReturn := result.ReturnDate.Time
-				entry["return_date"] = recordReturn
+				entry["return_date"] = result.ReturnDate.Time
+			}
+			if result.AirlineCode.Valid {
+				entry["airline_code"] = result.AirlineCode.String
+			}
+			if result.Duration.Valid {
+				entry["duration"] = result.Duration.Int32
+			}
+			if result.SrcAirportCode.Valid {
+				entry["src_airport_code"] = result.SrcAirportCode.String
+			}
+			if result.DstAirportCode.Valid {
+				entry["dst_airport_code"] = result.DstAirportCode.String
+			}
+			if result.SrcCity.Valid {
+				entry["src_city"] = result.SrcCity.String
+			}
+			if result.DstCity.Valid {
+				entry["dst_city"] = result.DstCity.String
+			}
+			if result.FlightDuration.Valid {
+				entry["flight_duration"] = result.FlightDuration.Int32
+			}
+			if result.ReturnFlightDuration.Valid {
+				entry["return_flight_duration"] = result.ReturnFlightDuration.Int32
+			}
+			if len(result.OutboundFlights) > 0 {
+				entry["outbound_flights"] = json.RawMessage(result.OutboundFlights)
+			}
+			if len(result.ReturnFlights) > 0 {
+				entry["return_flights"] = json.RawMessage(result.ReturnFlights)
+			}
+			if len(result.OfferJSON) > 0 {
+				entry["offer_json"] = json.RawMessage(result.OfferJSON)
 			}
 
 			results = append(results, entry)

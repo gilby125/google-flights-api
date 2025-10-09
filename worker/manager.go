@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"strings"
 	"sync"
 	"time"
 
@@ -58,6 +59,66 @@ type workerState struct {
 	ProcessedJobs int
 	StartedAt     time.Time
 	LastHeartbeat time.Time
+}
+
+func nullString(value string) sql.NullString {
+	if value == "" {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: value, Valid: true}
+}
+
+func nullInt32(value int) sql.NullInt32 {
+	if value == 0 {
+		return sql.NullInt32{}
+	}
+	return sql.NullInt32{Int32: int32(value), Valid: true}
+}
+
+func durationToNullMinutes(d time.Duration) sql.NullInt32 {
+	minutes := int(d.Minutes())
+	if minutes <= 0 {
+		return sql.NullInt32{}
+	}
+	return sql.NullInt32{Int32: int32(minutes), Valid: true}
+}
+
+func flightsToJSON(flights []flights.Flight) []byte {
+	legs := make([]map[string]interface{}, 0, len(flights))
+	for _, f := range flights {
+		leg := map[string]interface{}{
+			"dep_airport_code": f.DepAirportCode,
+			"dep_airport_name": f.DepAirportName,
+			"dep_city":         f.DepCity,
+			"arr_airport_code": f.ArrAirportCode,
+			"arr_airport_name": f.ArrAirportName,
+			"arr_city":         f.ArrCity,
+			"dep_time":         f.DepTime,
+			"arr_time":         f.ArrTime,
+			"duration_minutes": int(f.Duration.Minutes()),
+			"airplane":         f.Airplane,
+			"flight_number":    f.FlightNumber,
+			"airline_name":     f.AirlineName,
+			"legroom":          f.Legroom,
+		}
+		if f.Unknown != nil {
+			leg["unknown"] = f.Unknown
+		}
+		legs = append(legs, leg)
+	}
+	data, err := json.Marshal(legs)
+	if err != nil {
+		return []byte("[]")
+	}
+	return data
+}
+
+func offerToJSON(offer flights.FullOffer) []byte {
+	data, err := json.Marshal(offer)
+	if err != nil {
+		return []byte("{}")
+	}
+	return data
 }
 
 // WorkerStatus is a snapshot of worker metrics exposed via the API.
@@ -785,18 +846,29 @@ func (m *Manager) processBulkSearch(ctx context.Context, worker *Worker, session
 			}
 		}
 
-		duration := int(result.BestOffer.FlightDuration.Minutes())
+		flightDuration := int(result.BestOffer.FlightDuration.Minutes())
+		returnFlightDuration := int(result.BestOffer.ReturnFlightDuration.Minutes())
+		totalDuration := flightDuration + returnFlightDuration
 
 		record := db.BulkSearchResultRecord{
-			BulkSearchID:  bulkSearchID,
-			Origin:        result.Origin,
-			Destination:   result.Destination,
-			DepartureDate: departureDate,
-			ReturnDate:    returnDate,
-			Price:         result.BestOffer.Price,
-			Currency:      payload.Currency,
-			AirlineCode:   airlineCode,
-			Duration:      duration,
+			BulkSearchID:         bulkSearchID,
+			Origin:               result.Origin,
+			Destination:          result.Destination,
+			DepartureDate:        departureDate,
+			ReturnDate:           returnDate,
+			Price:                result.BestOffer.Price,
+			Currency:             strings.ToUpper(payload.Currency),
+			AirlineCode:          nullString(airlineCode),
+			Duration:             nullInt32(totalDuration),
+			SrcAirportCode:       nullString(result.BestOffer.SrcAirportCode),
+			DstAirportCode:       nullString(result.BestOffer.DstAirportCode),
+			SrcCity:              nullString(result.BestOffer.SrcCity),
+			DstCity:              nullString(result.BestOffer.DstCity),
+			FlightDuration:       durationToNullMinutes(result.BestOffer.FlightDuration),
+			ReturnFlightDuration: durationToNullMinutes(result.BestOffer.ReturnFlightDuration),
+			OutboundFlightsJSON:  flightsToJSON(result.BestOffer.Flight),
+			ReturnFlightsJSON:    flightsToJSON(result.BestOffer.ReturnFlight),
+			OfferJSON:            offerToJSON(result.BestOffer),
 		}
 
 		if insertErr := m.postgresDB.InsertBulkSearchResult(ctx, record); insertErr != nil {
