@@ -32,7 +32,7 @@ type Neo4jResult interface {
 	Next() bool // Removed context from Next again based on error at line 96
 	Record() *neo4j.Record
 	Err() error
-	// Add other methods if needed, e.g., Consume()
+	Close() error // Close the result and underlying session
 }
 
 // Ensure neo4j.Session implements Neo4jSession (adjust if methods differ slightly)
@@ -48,6 +48,39 @@ type Neo4jResult interface {
 type Neo4jDB struct {
 	driver neo4j.Driver
 }
+
+// Neo4jResultWithSession wraps a Neo4j result and its session to ensure proper cleanup.
+// The session is closed when Close() is called on this wrapper.
+type Neo4jResultWithSession struct {
+	result  neo4j.Result
+	session neo4j.Session
+}
+
+// Next advances the result cursor
+func (r *Neo4jResultWithSession) Next() bool {
+	return r.result.Next()
+}
+
+// Record returns the current record
+func (r *Neo4jResultWithSession) Record() *neo4j.Record {
+	return r.result.Record()
+}
+
+// Err returns any error from result iteration
+func (r *Neo4jResultWithSession) Err() error {
+	return r.result.Err()
+}
+
+// Close closes the underlying session (and implicitly the result)
+func (r *Neo4jResultWithSession) Close() error {
+	if r.session != nil {
+		return r.session.Close()
+	}
+	return nil
+}
+
+// Ensure Neo4jResultWithSession implements Neo4jResult
+var _ Neo4jResult = (*Neo4jResultWithSession)(nil)
 
 // NewNeo4jDB creates a new Neo4j database connection
 func NewNeo4jDB(cfg config.Neo4jConfig) (*Neo4jDB, error) {
@@ -71,31 +104,22 @@ func (n *Neo4jDB) Close() error {
 	return n.driver.Close()
 }
 
-// ExecuteReadQuery runs a read-only query against Neo4j
+// ExecuteReadQuery runs a read-only query against Neo4j.
+// The returned Neo4jResult wraps both the result and session - caller MUST call Close() when done.
 func (n *Neo4jDB) ExecuteReadQuery(ctx context.Context, query string, params map[string]interface{}) (Neo4jResult, error) {
-	// NewSession takes only SessionConfig
 	session := n.driver.NewSession(neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
-	// We cannot easily defer session.Close() here because we need to return the result first.
-	// The caller (handler) will be responsible for managing the result lifecycle,
-	// or we need a more complex pattern (e.g., passing a callback).
-	// For now, let's return the raw result, assuming the caller handles it.
-	// A better approach might involve processing the result within this method.
 
-	// session.Run takes query, params (NO ctx based on errors)
 	result, err := session.Run(query, params)
 	if err != nil {
-		session.Close() // Close takes no arguments
+		session.Close()
 		return nil, fmt.Errorf("failed to run Neo4j query: %w", err)
 	}
 
-	// IMPORTANT: The session needs to be closed after the result is processed.
-	// This current implementation returns the raw driver result, which keeps the session open.
-	// This is simpler for mocking but requires careful handling in the calling code (handler).
-	// A more robust pattern would process the result here or use a callback.
-	// Consider adding a wrapper around neo4j.Result that closes the session on its own Close().
-
-	// For now, returning the raw result:
-	return result, nil // Caller MUST eventually close the session associated with this result.
+	// Return wrapper that will close session when Close() is called
+	return &Neo4jResultWithSession{
+		result:  result,
+		session: session,
+	}, nil
 }
 
 // GetDriver returns the underlying database driver - Deprecated for testability

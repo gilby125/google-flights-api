@@ -32,17 +32,17 @@ type PostgresDB interface {
 	GetFlightSegmentsByOfferID(ctx context.Context, offerID int) (Rows, error)
 	CountSearches(ctx context.Context) (int, error)
 	QuerySearchesPaginated(ctx context.Context, limit, offset int) (Rows, error)
-	DeleteJobDetailsByJobID(tx Tx, jobID int) error
-	DeleteScheduledJobByID(tx Tx, jobID int) (int64, error)
+	DeleteJobDetailsByJobID(ctx context.Context, tx Tx, jobID int) error
+	DeleteScheduledJobByID(ctx context.Context, tx Tx, jobID int) (int64, error)
 	GetJobDetailsByID(ctx context.Context, jobID int) (*JobDetails, error) // Define JobDetails struct later
 	UpdateJobLastRun(ctx context.Context, jobID int) error
 	UpdateJobEnabled(ctx context.Context, jobID int, enabled bool) (int64, error)
 	GetJobCronExpression(ctx context.Context, jobID int) (string, error)
 	ListJobs(ctx context.Context) (Rows, error)
-	CreateScheduledJob(tx Tx, name, cronExpression string, enabled bool) (int, error)
-	CreateJobDetails(tx Tx, details JobDetails) error // Use JobDetails struct
-	UpdateScheduledJob(tx Tx, jobID int, name, cronExpression string) error
-	UpdateJobDetails(tx Tx, jobID int, details JobDetails) error              // Use JobDetails struct
+	CreateScheduledJob(ctx context.Context, tx Tx, name, cronExpression string, enabled bool) (int, error)
+	CreateJobDetails(ctx context.Context, tx Tx, details JobDetails) error
+	UpdateScheduledJob(ctx context.Context, tx Tx, jobID int, name, cronExpression string) error
+	UpdateJobDetails(ctx context.Context, tx Tx, jobID int, details JobDetails) error
 	GetJobByID(ctx context.Context, jobID int) (*ScheduledJob, error)         // Define ScheduledJob struct later
 	GetBulkSearchByID(ctx context.Context, searchID int) (*BulkSearch, error) // Define BulkSearch struct later
 	QueryBulkSearchResultsPaginated(ctx context.Context, searchID, limit, offset int) (Rows, error)
@@ -60,6 +60,13 @@ type PostgresDB interface {
 	ListPriceGraphSweeps(ctx context.Context, limit, offset int) (Rows, error)
 	InsertPriceGraphResult(ctx context.Context, record PriceGraphResultRecord) error
 	ListPriceGraphResults(ctx context.Context, sweepID, limit, offset int) (Rows, error)
+
+	// Continuous sweep progress methods
+	SaveContinuousSweepProgress(ctx context.Context, progress ContinuousSweepProgress) error
+	GetContinuousSweepProgress(ctx context.Context) (*ContinuousSweepProgress, error)
+	InsertContinuousSweepStats(ctx context.Context, stats ContinuousSweepStats) error
+	ListContinuousSweepStats(ctx context.Context, limit int) ([]ContinuousSweepStats, error)
+	ListContinuousSweepResults(ctx context.Context, filters ContinuousSweepResultsFilter) ([]PriceGraphResultRecord, error)
 }
 
 // Tx defines the interface for database transactions
@@ -354,16 +361,16 @@ func (p *PostgresDBImpl) QuerySearchesPaginated(ctx context.Context, limit, offs
 	)
 }
 
-func (p *PostgresDBImpl) DeleteJobDetailsByJobID(tx Tx, jobID int) error {
-	_, err := tx.ExecContext(context.Background(), "DELETE FROM job_details WHERE job_id = $1", jobID)
+func (p *PostgresDBImpl) DeleteJobDetailsByJobID(ctx context.Context, tx Tx, jobID int) error {
+	_, err := tx.ExecContext(ctx, "DELETE FROM job_details WHERE job_id = $1", jobID)
 	if err != nil {
 		return fmt.Errorf("error deleting job details for job ID %d: %w", jobID, err)
 	}
 	return nil
 }
 
-func (p *PostgresDBImpl) DeleteScheduledJobByID(tx Tx, jobID int) (int64, error) {
-	result, err := tx.ExecContext(context.Background(), "DELETE FROM scheduled_jobs WHERE id = $1", jobID)
+func (p *PostgresDBImpl) DeleteScheduledJobByID(ctx context.Context, tx Tx, jobID int) (int64, error) {
+	result, err := tx.ExecContext(ctx, "DELETE FROM scheduled_jobs WHERE id = $1", jobID)
 	if err != nil {
 		return 0, fmt.Errorf("error deleting scheduled job ID %d: %w", jobID, err)
 	}
@@ -444,9 +451,9 @@ func (p *PostgresDBImpl) ListJobs(ctx context.Context) (Rows, error) {
 	)
 }
 
-func (p *PostgresDBImpl) CreateScheduledJob(tx Tx, name, cronExpression string, enabled bool) (int, error) {
+func (p *PostgresDBImpl) CreateScheduledJob(ctx context.Context, tx Tx, name, cronExpression string, enabled bool) (int, error) {
 	var jobID int
-	err := tx.QueryRowContext(context.Background(), // Use background context within transaction method
+	err := tx.QueryRowContext(ctx,
 		`INSERT INTO scheduled_jobs (name, cron_expression, enabled)
 		VALUES ($1, $2, $3) RETURNING id`,
 		name, cronExpression, enabled,
@@ -457,16 +464,16 @@ func (p *PostgresDBImpl) CreateScheduledJob(tx Tx, name, cronExpression string, 
 	return jobID, nil
 }
 
-func (p *PostgresDBImpl) CreateJobDetails(tx Tx, details JobDetails) error {
-	_, err := tx.ExecContext(context.Background(),
+func (p *PostgresDBImpl) CreateJobDetails(ctx context.Context, tx Tx, details JobDetails) error {
+	_, err := tx.ExecContext(ctx,
 		`INSERT INTO job_details
 		(job_id, origin, destination, departure_date_start, departure_date_end,
 		return_date_start, return_date_end, trip_length, dynamic_dates, days_from_execution, search_window_days, adults, children,
-		infants_lap, infants_seat, trip_type, class, stops)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
+		infants_lap, infants_seat, trip_type, class, stops, currency)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
 		details.JobID, details.Origin, details.Destination, details.DepartureDateStart, details.DepartureDateEnd,
 		details.ReturnDateStart, details.ReturnDateEnd, details.TripLength, details.DynamicDates, details.DaysFromExecution, details.SearchWindowDays, details.Adults, details.Children,
-		details.InfantsLap, details.InfantsSeat, details.TripType, details.Class, details.Stops,
+		details.InfantsLap, details.InfantsSeat, details.TripType, details.Class, details.Stops, details.Currency,
 	)
 	if err != nil {
 		return fmt.Errorf("error creating job details: %w", err)
@@ -474,8 +481,8 @@ func (p *PostgresDBImpl) CreateJobDetails(tx Tx, details JobDetails) error {
 	return nil
 }
 
-func (p *PostgresDBImpl) UpdateScheduledJob(tx Tx, jobID int, name, cronExpression string) error {
-	_, err := tx.ExecContext(context.Background(),
+func (p *PostgresDBImpl) UpdateScheduledJob(ctx context.Context, tx Tx, jobID int, name, cronExpression string) error {
+	_, err := tx.ExecContext(ctx,
 		`UPDATE scheduled_jobs SET name = $1, cron_expression = $2, updated_at = NOW() WHERE id = $3`,
 		name, cronExpression, jobID,
 	)
@@ -485,14 +492,14 @@ func (p *PostgresDBImpl) UpdateScheduledJob(tx Tx, jobID int, name, cronExpressi
 	return nil
 }
 
-func (p *PostgresDBImpl) UpdateJobDetails(tx Tx, jobID int, details JobDetails) error {
-	_, err := tx.ExecContext(context.Background(),
+func (p *PostgresDBImpl) UpdateJobDetails(ctx context.Context, tx Tx, jobID int, details JobDetails) error {
+	_, err := tx.ExecContext(ctx,
 		`UPDATE job_details SET origin = $1, destination = $2, departure_date_start = $3, departure_date_end = $4,
 		return_date_start = $5, return_date_end = $6, trip_length = $7, adults = $8, children = $9,
-		infants_lap = $10, infants_seat = $11, trip_type = $12, class = $13, stops = $14 WHERE job_id = $15`,
+		infants_lap = $10, infants_seat = $11, trip_type = $12, class = $13, stops = $14, currency = $15, updated_at = NOW() WHERE job_id = $16`,
 		details.Origin, details.Destination, details.DepartureDateStart, details.DepartureDateEnd,
 		details.ReturnDateStart, details.ReturnDateEnd, details.TripLength, details.Adults, details.Children,
-		details.InfantsLap, details.InfantsSeat, details.TripType, details.Class, details.Stops,
+		details.InfantsLap, details.InfantsSeat, details.TripType, details.Class, details.Stops, details.Currency,
 		jobID,
 	)
 	if err != nil {
@@ -916,6 +923,247 @@ func (p *PostgresDBImpl) ListPriceGraphResults(ctx context.Context, sweepID, lim
 	)
 }
 
+// SaveContinuousSweepProgress saves or updates the continuous sweep progress (upsert)
+func (p *PostgresDBImpl) SaveContinuousSweepProgress(ctx context.Context, progress ContinuousSweepProgress) error {
+	_, err := p.db.ExecContext(ctx,
+		`INSERT INTO continuous_sweep_progress
+			(id, sweep_number, route_index, total_routes, current_origin, current_destination,
+			 queries_completed, errors_count, last_error, sweep_started_at, last_updated,
+			 pacing_mode, target_duration_hours, min_delay_ms, is_running, is_paused, international_only)
+		 VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), $10, $11, $12, $13, $14, $15)
+		 ON CONFLICT (id) DO UPDATE SET
+			sweep_number = $1,
+			route_index = $2,
+			total_routes = $3,
+			current_origin = $4,
+			current_destination = $5,
+			queries_completed = $6,
+			errors_count = $7,
+			last_error = $8,
+			sweep_started_at = $9,
+			last_updated = NOW(),
+			pacing_mode = $10,
+			target_duration_hours = $11,
+			min_delay_ms = $12,
+			is_running = $13,
+			is_paused = $14,
+			international_only = $15`,
+		progress.SweepNumber,
+		progress.RouteIndex,
+		progress.TotalRoutes,
+		progress.CurrentOrigin,
+		progress.CurrentDestination,
+		progress.QueriesCompleted,
+		progress.ErrorsCount,
+		progress.LastError,
+		progress.SweepStartedAt,
+		progress.PacingMode,
+		progress.TargetDurationHours,
+		progress.MinDelayMs,
+		progress.IsRunning,
+		progress.IsPaused,
+		progress.InternationalOnly,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to save continuous sweep progress: %w", err)
+	}
+	return nil
+}
+
+// GetContinuousSweepProgress retrieves the current continuous sweep progress
+func (p *PostgresDBImpl) GetContinuousSweepProgress(ctx context.Context) (*ContinuousSweepProgress, error) {
+	var progress ContinuousSweepProgress
+	err := p.db.QueryRowContext(ctx,
+		`SELECT id, sweep_number, route_index, total_routes, current_origin, current_destination,
+		        queries_completed, errors_count, last_error, sweep_started_at, last_updated,
+		        pacing_mode, target_duration_hours, min_delay_ms, is_running, is_paused,
+		        COALESCE(international_only, TRUE)
+		 FROM continuous_sweep_progress
+		 WHERE id = 1`,
+	).Scan(
+		&progress.ID,
+		&progress.SweepNumber,
+		&progress.RouteIndex,
+		&progress.TotalRoutes,
+		&progress.CurrentOrigin,
+		&progress.CurrentDestination,
+		&progress.QueriesCompleted,
+		&progress.ErrorsCount,
+		&progress.LastError,
+		&progress.SweepStartedAt,
+		&progress.LastUpdated,
+		&progress.PacingMode,
+		&progress.TargetDurationHours,
+		&progress.MinDelayMs,
+		&progress.IsRunning,
+		&progress.IsPaused,
+		&progress.InternationalOnly,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			// Return a default progress if none exists
+			return &ContinuousSweepProgress{
+				ID:                  1,
+				SweepNumber:         1,
+				RouteIndex:          0,
+				TotalRoutes:         0,
+				PacingMode:          "adaptive",
+				TargetDurationHours: 24,
+				MinDelayMs:          3000,
+				IsRunning:           false,
+				IsPaused:            false,
+				InternationalOnly:   true,
+			}, nil
+		}
+		return nil, fmt.Errorf("failed to get continuous sweep progress: %w", err)
+	}
+	return &progress, nil
+}
+
+// InsertContinuousSweepStats inserts a completed sweep's statistics
+func (p *PostgresDBImpl) InsertContinuousSweepStats(ctx context.Context, stats ContinuousSweepStats) error {
+	_, err := p.db.ExecContext(ctx,
+		`INSERT INTO continuous_sweep_stats
+			(sweep_number, started_at, completed_at, total_routes, successful_queries,
+			 failed_queries, total_duration_seconds, avg_delay_ms, min_price_found, max_price_found)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		stats.SweepNumber,
+		stats.StartedAt,
+		stats.CompletedAt,
+		stats.TotalRoutes,
+		stats.SuccessfulQueries,
+		stats.FailedQueries,
+		stats.TotalDurationSeconds,
+		stats.AvgDelayMs,
+		stats.MinPriceFound,
+		stats.MaxPriceFound,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to insert continuous sweep stats: %w", err)
+	}
+	return nil
+}
+
+// ListContinuousSweepStats retrieves the most recent sweep statistics
+func (p *PostgresDBImpl) ListContinuousSweepStats(ctx context.Context, limit int) ([]ContinuousSweepStats, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	rows, err := p.db.QueryContext(ctx,
+		`SELECT id, sweep_number, started_at, completed_at, total_routes, successful_queries,
+		        failed_queries, total_duration_seconds, avg_delay_ms, min_price_found, max_price_found, created_at
+		 FROM continuous_sweep_stats
+		 ORDER BY created_at DESC
+		 LIMIT $1`,
+		limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list continuous sweep stats: %w", err)
+	}
+	defer rows.Close()
+
+	var statsList []ContinuousSweepStats
+	for rows.Next() {
+		var stats ContinuousSweepStats
+		if err := rows.Scan(
+			&stats.ID,
+			&stats.SweepNumber,
+			&stats.StartedAt,
+			&stats.CompletedAt,
+			&stats.TotalRoutes,
+			&stats.SuccessfulQueries,
+			&stats.FailedQueries,
+			&stats.TotalDurationSeconds,
+			&stats.AvgDelayMs,
+			&stats.MinPriceFound,
+			&stats.MaxPriceFound,
+			&stats.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan continuous sweep stats: %w", err)
+		}
+		statsList = append(statsList, stats)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating continuous sweep stats: %w", err)
+	}
+
+	return statsList, nil
+}
+
+// ListContinuousSweepResults returns price graph results from continuous sweeps (sweep_id = 0)
+func (p *PostgresDBImpl) ListContinuousSweepResults(ctx context.Context, filters ContinuousSweepResultsFilter) ([]PriceGraphResultRecord, error) {
+	if filters.Limit <= 0 {
+		filters.Limit = 100
+	}
+	if filters.Limit > 1000 {
+		filters.Limit = 1000
+	}
+
+	// Build dynamic query with filters
+	query := `SELECT sweep_id, origin, destination, departure_date,
+	                 return_date, trip_length, price, currency, queried_at
+	          FROM price_graph_results
+	          WHERE sweep_id = 0`
+	args := []interface{}{}
+	argIdx := 1
+
+	if filters.Origin != "" {
+		query += fmt.Sprintf(" AND origin = $%d", argIdx)
+		args = append(args, filters.Origin)
+		argIdx++
+	}
+	if filters.Destination != "" {
+		query += fmt.Sprintf(" AND destination = $%d", argIdx)
+		args = append(args, filters.Destination)
+		argIdx++
+	}
+	if !filters.FromDate.IsZero() {
+		query += fmt.Sprintf(" AND departure_date >= $%d", argIdx)
+		args = append(args, filters.FromDate)
+		argIdx++
+	}
+	if !filters.ToDate.IsZero() {
+		query += fmt.Sprintf(" AND departure_date <= $%d", argIdx)
+		args = append(args, filters.ToDate)
+		argIdx++
+	}
+
+	query += fmt.Sprintf(" ORDER BY queried_at DESC LIMIT $%d OFFSET $%d", argIdx, argIdx+1)
+	args = append(args, filters.Limit, filters.Offset)
+
+	rows, err := p.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list continuous sweep results: %w", err)
+	}
+	defer rows.Close()
+
+	var results []PriceGraphResultRecord
+	for rows.Next() {
+		var r PriceGraphResultRecord
+		if err := rows.Scan(
+			&r.SweepID,
+			&r.Origin,
+			&r.Destination,
+			&r.DepartureDate,
+			&r.ReturnDate,
+			&r.TripLength,
+			&r.Price,
+			&r.Currency,
+			&r.QueriedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan continuous sweep result: %w", err)
+		}
+		results = append(results, r)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating continuous sweep results: %w", err)
+	}
+
+	return results, nil
+}
+
 // --- End Implementation ---
 
 // GetDB returns the underlying database connection
@@ -1315,12 +1563,102 @@ func (p *PostgresDBImpl) InitSchema() error {
             trip_length INTEGER,
             price DECIMAL(12, 2) NOT NULL,
             currency VARCHAR(3) NOT NULL,
+            distance_miles DECIMAL(10, 2),
+            cost_per_mile DECIMAL(10, 4),
             queried_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
             created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
         )
     `)
 	if err != nil {
 		return fmt.Errorf("failed to create price_graph_results table: %w", err)
+	}
+
+	// Create price_graph_sweep_job_details table for scheduled sweep jobs
+	_, err = p.db.Exec(`
+        CREATE TABLE IF NOT EXISTS price_graph_sweep_job_details (
+            id SERIAL PRIMARY KEY,
+            job_id INTEGER REFERENCES scheduled_jobs(id) ON DELETE CASCADE,
+            trip_lengths INTEGER[] DEFAULT '{7,14}',
+            departure_window_days INTEGER DEFAULT 30,
+            dynamic_dates BOOLEAN DEFAULT TRUE,
+            trip_type VARCHAR(20) DEFAULT 'round_trip',
+            class VARCHAR(20) DEFAULT 'economy',
+            stops VARCHAR(20) DEFAULT 'any',
+            adults INTEGER DEFAULT 1,
+            currency VARCHAR(3) DEFAULT 'USD',
+            rate_limit_millis INTEGER DEFAULT 3000,
+            international_only BOOLEAN DEFAULT TRUE,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        )
+    `)
+	if err != nil {
+		return fmt.Errorf("failed to create price_graph_sweep_job_details table: %w", err)
+	}
+
+	// Create continuous_sweep_progress table for tracking sweep state
+	_, err = p.db.Exec(`
+        CREATE TABLE IF NOT EXISTS continuous_sweep_progress (
+            id SERIAL PRIMARY KEY,
+            sweep_number INTEGER DEFAULT 1,
+            route_index INTEGER DEFAULT 0,
+            total_routes INTEGER DEFAULT 0,
+            current_origin VARCHAR(10),
+            current_destination VARCHAR(10),
+            queries_completed INTEGER DEFAULT 0,
+            errors_count INTEGER DEFAULT 0,
+            last_error TEXT,
+            sweep_started_at TIMESTAMP WITH TIME ZONE,
+            last_updated TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            pacing_mode VARCHAR(20) DEFAULT 'adaptive',
+            target_duration_hours INTEGER DEFAULT 24,
+            min_delay_ms INTEGER DEFAULT 3000,
+            is_running BOOLEAN DEFAULT FALSE,
+            is_paused BOOLEAN DEFAULT FALSE,
+            international_only BOOLEAN DEFAULT TRUE
+        )
+    `)
+	if err != nil {
+		return fmt.Errorf("failed to create continuous_sweep_progress table: %w", err)
+	}
+
+	// Insert default progress row if not exists
+	_, err = p.db.Exec(`
+        INSERT INTO continuous_sweep_progress (id, sweep_number, route_index, total_routes)
+        VALUES (1, 1, 0, 0)
+        ON CONFLICT (id) DO NOTHING
+    `)
+	if err != nil {
+		return fmt.Errorf("failed to insert default continuous_sweep_progress: %w", err)
+	}
+
+	// Create continuous_sweep_stats table for historical tracking
+	_, err = p.db.Exec(`
+        CREATE TABLE IF NOT EXISTS continuous_sweep_stats (
+            id SERIAL PRIMARY KEY,
+            sweep_number INTEGER NOT NULL,
+            started_at TIMESTAMP WITH TIME ZONE NOT NULL,
+            completed_at TIMESTAMP WITH TIME ZONE,
+            total_routes INTEGER,
+            successful_queries INTEGER DEFAULT 0,
+            failed_queries INTEGER DEFAULT 0,
+            total_duration_seconds INTEGER,
+            avg_delay_ms INTEGER,
+            min_price_found DECIMAL(10,2),
+            max_price_found DECIMAL(10,2),
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        )
+    `)
+	if err != nil {
+		return fmt.Errorf("failed to create continuous_sweep_stats table: %w", err)
+	}
+
+	// Add job_type column to scheduled_jobs if not exists
+	_, err = p.db.Exec(`
+        ALTER TABLE scheduled_jobs ADD COLUMN IF NOT EXISTS job_type VARCHAR(50) DEFAULT 'bulk_search'
+    `)
+	if err != nil {
+		return fmt.Errorf("failed to add job_type column: %w", err)
 	}
 
 	// Create indexes for better query performance
@@ -1338,6 +1676,8 @@ func (p *PostgresDBImpl) InitSchema() error {
         CREATE INDEX IF NOT EXISTS idx_bulk_search_offers_search_id ON bulk_search_offers(bulk_search_id);
         CREATE INDEX IF NOT EXISTS idx_price_graph_results_sweep_id ON price_graph_results(sweep_id);
         CREATE INDEX IF NOT EXISTS idx_price_graph_results_route_date ON price_graph_results(origin, destination, departure_date);
+        CREATE INDEX IF NOT EXISTS idx_sweep_stats_sweep_number ON continuous_sweep_stats(sweep_number);
+        CREATE INDEX IF NOT EXISTS idx_sweep_progress_updated ON continuous_sweep_progress(last_updated);
     `)
 	if err != nil {
 		return fmt.Errorf("failed to create indexes: %w", err)

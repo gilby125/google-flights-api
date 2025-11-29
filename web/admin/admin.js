@@ -1,5 +1,16 @@
 // Admin Panel JavaScript
 
+// HTML escaping utility to prevent XSS
+function escapeHtml(unsafe) {
+    if (unsafe == null) return '';
+    return String(unsafe)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
 // API endpoints - use relative paths to work with any host
 const API_BASE = '/api/v1';
 const ENDPOINTS = {
@@ -8,7 +19,8 @@ const ENDPOINTS = {
     QUEUE: `${API_BASE}/admin/queue`,
     AIRPORTS: `${API_BASE}/airports`,
     AIRLINES: `${API_BASE}/airlines`,
-    PRICE_GRAPH_SWEEPS: `${API_BASE}/admin/price-graph-sweeps`
+    PRICE_GRAPH_SWEEPS: `${API_BASE}/admin/price-graph-sweeps`,
+    CONTINUOUS_SWEEP: `${API_BASE}/admin/continuous-sweep`
 };
 
 // DOM elements
@@ -150,24 +162,28 @@ async function loadJobs() {
     // Add jobs to table
     jobs.forEach(job => {
         const row = document.createElement('tr');
-        
-        // Get job details safely
-        const origin = job.details?.origin || job.origin || 'N/A';
-        const destination = job.details?.destination || job.destination || 'N/A';
-        const schedule = job.cron_expression || 'N/A';
+
+        // Get job details safely and escape for HTML
+        const origin = escapeHtml(job.details?.origin || job.origin || 'N/A');
+        const destination = escapeHtml(job.details?.destination || job.destination || 'N/A');
+        const schedule = escapeHtml(job.cron_expression || 'N/A');
+        const jobName = escapeHtml(job.name || 'Unnamed Job');
         const isDynamic = job.details?.dynamic_dates || false;
-        
+
         // Format route with dynamic indicator
         let routeDisplay = `${origin} → ${destination}`;
         if (isDynamic) {
-            const daysFromExecution = job.details?.days_from_execution || 'N/A';
-            const searchWindowDays = job.details?.search_window_days || 'N/A';
+            const daysFromExecution = escapeHtml(job.details?.days_from_execution || 'N/A');
+            const searchWindowDays = escapeHtml(job.details?.search_window_days || 'N/A');
             routeDisplay += `<br><small class="text-info"><i class="bi bi-arrow-clockwise"></i> Dynamic: +${daysFromExecution}d (${searchWindowDays}d window)</small>`;
         }
-        
+
+        // Validate job.id is a number to prevent injection in onclick handlers
+        const jobId = Number.isInteger(job.id) ? job.id : 0;
+
         row.innerHTML = `
-            <td>${job.id || 'N/A'}</td>
-            <td>${job.name || 'Unnamed Job'}</td>
+            <td>${jobId || 'N/A'}</td>
+            <td>${jobName}</td>
             <td><code>${schedule}</code></td>
             <td>${routeDisplay}</td>
             <td>
@@ -179,15 +195,15 @@ async function loadJobs() {
             <td>${job.last_run ? new Date(job.last_run).toLocaleString() : 'Never'}</td>
             <td>
                 <div class="btn-group btn-group-sm">
-                    <button class="btn btn-outline-primary" onclick="runJob(${job.id})" title="Run Job">
+                    <button class="btn btn-outline-primary" onclick="runJob(${jobId})" title="Run Job">
                         <i class="bi bi-play-fill"></i>
                     </button>
                     <button class="btn btn-outline-${job.enabled ? 'warning' : 'success'}"
-                        onclick="${job.enabled ? 'disableJob' : 'enableJob'}(${job.id})" 
+                        onclick="${job.enabled ? 'disableJob' : 'enableJob'}(${jobId})"
                         title="${job.enabled ? 'Disable' : 'Enable'} Job">
                         <i class="bi bi-${job.enabled ? 'pause-fill' : 'check-lg'}"></i>
                     </button>
-                    <button class="btn btn-outline-danger" onclick="deleteJob(${job.id})" title="Delete Job">
+                    <button class="btn btn-outline-danger" onclick="deleteJob(${jobId})" title="Delete Job">
                         <i class="bi bi-trash"></i>
                     </button>
                 </div>
@@ -231,15 +247,19 @@ async function loadWorkers() {
     // Add workers to table
     workers.forEach(worker => {
         const row = document.createElement('tr');
+        const workerId = Number.isInteger(worker.id) ? worker.id : escapeHtml(worker.id);
+        const workerStatus = escapeHtml(worker.status);
+        const currentJob = escapeHtml(worker.current_job || 'None');
+        const processedJobs = Number.isInteger(worker.processed_jobs) ? worker.processed_jobs : 0;
         row.innerHTML = `
-            <td>${worker.id}</td>
+            <td>${workerId}</td>
             <td>
                 <span class="badge ${worker.status === 'active' ? 'bg-success' : 'bg-secondary'}">
-                    ${worker.status}
+                    ${workerStatus}
                 </span>
             </td>
-            <td>${worker.current_job || 'None'}</td>
-            <td>${worker.processed_jobs}</td>
+            <td>${currentJob}</td>
+            <td>${processedJobs}</td>
             <td>${formatDuration(worker.uptime)}</td>
         `;
         elements.workersTable.appendChild(row);
@@ -272,12 +292,17 @@ async function loadQueueStatus() {
     // Add queues to table
     Object.entries(queues).forEach(([name, stats]) => {
         const row = document.createElement('tr');
+        const queueName = escapeHtml(name);
+        const pending = Number.isInteger(stats.pending) ? stats.pending : 0;
+        const processing = Number.isInteger(stats.processing) ? stats.processing : 0;
+        const completed = Number.isInteger(stats.completed) ? stats.completed : 0;
+        const failed = Number.isInteger(stats.failed) ? stats.failed : 0;
         row.innerHTML = `
-            <td>${name}</td>
-            <td>${stats.pending || 0}</td>
-            <td>${stats.processing || 0}</td>
-            <td>${stats.completed || 0}</td>
-            <td>${stats.failed || 0}</td>
+            <td>${queueName}</td>
+            <td>${pending}</td>
+            <td>${processing}</td>
+            <td>${completed}</td>
+            <td>${failed}</td>
         `;
         elements.queueTable.appendChild(row);
     });
@@ -546,8 +571,10 @@ function renderPriceGraphResults(summary, results) {
     results.forEach(result => {
         const row = document.createElement('tr');
         const priceValue = Number(result.price);
+        const origin = escapeHtml(result.origin);
+        const destination = escapeHtml(result.destination);
         row.innerHTML = `
-            <td><strong>${result.origin}</strong> → <strong>${result.destination}</strong></td>
+            <td><strong>${origin}</strong> → <strong>${destination}</strong></td>
             <td>${formatDate(result.departure_date)}</td>
             <td>${formatDate(result.return_date)}</td>
             <td>${result.trip_length ?? '—'}</td>
@@ -977,7 +1004,7 @@ function formatSweepStatusBadge(status) {
         unknown: 'bg-secondary'
     };
     const cssClass = badgeClasses[normalized] || 'bg-secondary';
-    const label = normalized.replace(/_/g, ' ');
+    const label = escapeHtml(normalized.replace(/_/g, ' '));
     return `<span class="badge ${cssClass} text-uppercase">${label}</span>`;
 }
 
@@ -1060,5 +1087,484 @@ function safeParseJSON(responseText, fallbackValue = null) {
     }
 }
 
+// ============================================
+// Continuous Sweep Functions
+// ============================================
+
+// Interval for auto-refreshing sweep status
+let sweepStatusInterval = null;
+
+// Initialize continuous sweep controls
+function initContinuousSweepControls() {
+    const startBtn = document.getElementById('sweepStartBtn');
+    const pauseBtn = document.getElementById('sweepPauseBtn');
+    const resumeBtn = document.getElementById('sweepResumeBtn');
+    const stopBtn = document.getElementById('sweepStopBtn');
+    const skipBtn = document.getElementById('sweepSkipBtn');
+    const restartBtn = document.getElementById('sweepRestartBtn');
+    const refreshStatusBtn = document.getElementById('refreshSweepStatusBtn');
+    const refreshStatsBtn = document.getElementById('refreshSweepStatsBtn');
+    const refreshResultsBtn = document.getElementById('refreshSweepResultsBtn');
+    const configForm = document.getElementById('sweepConfigForm');
+
+    if (startBtn) startBtn.addEventListener('click', startContinuousSweep);
+    if (pauseBtn) pauseBtn.addEventListener('click', pauseContinuousSweep);
+    if (resumeBtn) resumeBtn.addEventListener('click', resumeContinuousSweep);
+    if (stopBtn) stopBtn.addEventListener('click', stopContinuousSweep);
+    if (skipBtn) skipBtn.addEventListener('click', skipCurrentRoute);
+    if (restartBtn) restartBtn.addEventListener('click', restartCurrentSweep);
+    if (refreshStatusBtn) refreshStatusBtn.addEventListener('click', loadContinuousSweepStatus);
+    if (refreshStatsBtn) refreshStatsBtn.addEventListener('click', loadContinuousSweepStats);
+    if (refreshResultsBtn) refreshResultsBtn.addEventListener('click', loadContinuousSweepResults);
+    if (configForm) configForm.addEventListener('submit', updateSweepConfig);
+
+    // Initial load
+    loadContinuousSweepStatus();
+    loadContinuousSweepStats();
+    loadContinuousSweepResults();
+
+    // Auto-refresh every 5 seconds when sweep is running
+    sweepStatusInterval = setInterval(loadContinuousSweepStatus, 5000);
+}
+
+// Load continuous sweep status
+async function loadContinuousSweepStatus() {
+    try {
+        const response = await fetch(`${ENDPOINTS.CONTINUOUS_SWEEP}/status`);
+
+        if (response.status === 503) {
+            // Sweep not initialized
+            showSweepNotReady();
+            return;
+        }
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        const status = await response.json();
+        updateSweepStatusUI(status);
+    } catch (error) {
+        console.error('Error loading sweep status:', error);
+    }
+}
+
+// Update sweep status UI
+function updateSweepStatusUI(status) {
+    const notReady = document.getElementById('sweepStatusNotReady');
+    const content = document.getElementById('sweepStatusContent');
+
+    if (!status || (!status.is_running && status.route_index === 0)) {
+        showSweepNotReady();
+        return;
+    }
+
+    // Show status content
+    if (notReady) notReady.style.display = 'none';
+    if (content) content.style.display = 'block';
+
+    // Update status badge
+    const statusBadge = document.getElementById('sweepStatusBadge');
+    const statusText = document.getElementById('sweepStatusText');
+    if (statusBadge && statusText) {
+        if (status.is_paused) {
+            statusBadge.className = 'badge bg-warning';
+            statusBadge.textContent = 'Paused';
+            statusText.textContent = 'Sweep is paused';
+        } else if (status.is_running) {
+            statusBadge.className = 'badge bg-success';
+            statusBadge.textContent = 'Running';
+            statusText.textContent = status.pacing_mode === 'adaptive' ? 'Adaptive mode' : 'Fixed delay mode';
+        } else {
+            statusBadge.className = 'badge bg-secondary';
+            statusBadge.textContent = 'Stopped';
+            statusText.textContent = 'Sweep is not running';
+        }
+    }
+
+    // Update progress bar
+    const progressBar = document.getElementById('sweepProgressBar');
+    const progressPercent = status.progress_percent || 0;
+    if (progressBar) {
+        progressBar.style.width = `${progressPercent}%`;
+        progressBar.textContent = `${progressPercent.toFixed(1)}%`;
+    }
+
+    // Update route index
+    const routeIndex = document.getElementById('sweepRouteIndex');
+    const totalRoutes = document.getElementById('sweepTotalRoutes');
+    if (routeIndex) routeIndex.textContent = status.route_index || 0;
+    if (totalRoutes) totalRoutes.textContent = status.total_routes || 0;
+
+    // Update stats
+    const sweepNumber = document.getElementById('sweepNumber');
+    const queriesPerHour = document.getElementById('sweepQueriesPerHour');
+    const completed = document.getElementById('sweepCompleted');
+    const errors = document.getElementById('sweepErrors');
+    const currentRoute = document.getElementById('sweepCurrentRoute');
+    const currentDelay = document.getElementById('sweepCurrentDelay');
+    const estCompletion = document.getElementById('sweepEstCompletion');
+
+    if (sweepNumber) sweepNumber.textContent = status.sweep_number || 1;
+    if (queriesPerHour) queriesPerHour.textContent = (status.queries_per_hour || 0).toFixed(1);
+    if (completed) completed.textContent = status.queries_completed || 0;
+    if (errors) errors.textContent = status.errors_count || 0;
+    if (currentRoute) {
+        currentRoute.textContent = status.current_origin && status.current_destination
+            ? `${status.current_origin} → ${status.current_destination}`
+            : '-';
+    }
+    if (currentDelay) currentDelay.textContent = `${status.current_delay_ms || 0}ms`;
+    if (estCompletion) {
+        if (status.estimated_completion) {
+            estCompletion.textContent = new Date(status.estimated_completion).toLocaleString();
+        } else {
+            estCompletion.textContent = '-';
+        }
+    }
+
+    // Show last error if present
+    const lastError = document.getElementById('sweepLastError');
+    const lastErrorText = document.getElementById('sweepLastErrorText');
+    if (status.last_error && lastError && lastErrorText) {
+        lastError.style.display = 'block';
+        lastErrorText.textContent = status.last_error;
+    } else if (lastError) {
+        lastError.style.display = 'none';
+    }
+
+    // Update button states
+    updateSweepButtonStates(status);
+
+    // Update config form with current values
+    const pacingMode = document.getElementById('sweepPacingMode');
+    const targetHours = document.getElementById('sweepTargetHours');
+    const minDelay = document.getElementById('sweepMinDelay');
+    if (pacingMode && status.pacing_mode) pacingMode.value = status.pacing_mode;
+    if (targetHours && status.target_duration_hours) targetHours.value = status.target_duration_hours;
+    if (minDelay && status.current_delay_ms) minDelay.value = status.current_delay_ms;
+}
+
+// Show sweep not ready state
+function showSweepNotReady() {
+    const notReady = document.getElementById('sweepStatusNotReady');
+    const content = document.getElementById('sweepStatusContent');
+
+    if (notReady) notReady.style.display = 'block';
+    if (content) content.style.display = 'none';
+
+    // Reset button states
+    const startBtn = document.getElementById('sweepStartBtn');
+    const pauseBtn = document.getElementById('sweepPauseBtn');
+    const resumeBtn = document.getElementById('sweepResumeBtn');
+    const stopBtn = document.getElementById('sweepStopBtn');
+    const skipBtn = document.getElementById('sweepSkipBtn');
+    const restartBtn = document.getElementById('sweepRestartBtn');
+
+    if (startBtn) startBtn.disabled = false;
+    if (pauseBtn) pauseBtn.disabled = true;
+    if (resumeBtn) resumeBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = true;
+    if (skipBtn) skipBtn.disabled = true;
+    if (restartBtn) restartBtn.disabled = true;
+}
+
+// Update button states based on sweep status
+function updateSweepButtonStates(status) {
+    const startBtn = document.getElementById('sweepStartBtn');
+    const pauseBtn = document.getElementById('sweepPauseBtn');
+    const resumeBtn = document.getElementById('sweepResumeBtn');
+    const stopBtn = document.getElementById('sweepStopBtn');
+    const skipBtn = document.getElementById('sweepSkipBtn');
+    const restartBtn = document.getElementById('sweepRestartBtn');
+
+    const isRunning = status.is_running;
+    const isPaused = status.is_paused;
+
+    if (startBtn) startBtn.disabled = isRunning;
+    if (pauseBtn) pauseBtn.disabled = !isRunning || isPaused;
+    if (resumeBtn) resumeBtn.disabled = !isPaused;
+    if (stopBtn) stopBtn.disabled = !isRunning;
+    if (skipBtn) skipBtn.disabled = !isRunning || isPaused;
+    if (restartBtn) restartBtn.disabled = !isRunning;
+}
+
+// Start continuous sweep
+async function startContinuousSweep() {
+    try {
+        setButtonLoading(document.getElementById('sweepStartBtn'), true);
+
+        const response = await fetch(`${ENDPOINTS.CONTINUOUS_SWEEP}/start`, {
+            method: 'POST'
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Failed to start sweep');
+        }
+
+        showAlert('Continuous sweep started', 'success');
+        await loadContinuousSweepStatus();
+    } catch (error) {
+        console.error('Error starting sweep:', error);
+        showAlert(`Error starting sweep: ${error.message}`, 'danger');
+    } finally {
+        setButtonLoading(document.getElementById('sweepStartBtn'), false);
+    }
+}
+
+// Pause continuous sweep
+async function pauseContinuousSweep() {
+    try {
+        const response = await fetch(`${ENDPOINTS.CONTINUOUS_SWEEP}/pause`, {
+            method: 'POST'
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Failed to pause sweep');
+        }
+
+        showAlert('Sweep paused', 'info');
+        await loadContinuousSweepStatus();
+    } catch (error) {
+        console.error('Error pausing sweep:', error);
+        showAlert(`Error pausing sweep: ${error.message}`, 'danger');
+    }
+}
+
+// Resume continuous sweep
+async function resumeContinuousSweep() {
+    try {
+        const response = await fetch(`${ENDPOINTS.CONTINUOUS_SWEEP}/resume`, {
+            method: 'POST'
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Failed to resume sweep');
+        }
+
+        showAlert('Sweep resumed', 'success');
+        await loadContinuousSweepStatus();
+    } catch (error) {
+        console.error('Error resuming sweep:', error);
+        showAlert(`Error resuming sweep: ${error.message}`, 'danger');
+    }
+}
+
+// Stop continuous sweep
+async function stopContinuousSweep() {
+    if (!confirm('Are you sure you want to stop the continuous sweep? Progress will be saved.')) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`${ENDPOINTS.CONTINUOUS_SWEEP}/stop`, {
+            method: 'POST'
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Failed to stop sweep');
+        }
+
+        showAlert('Sweep stopped. Progress has been saved.', 'warning');
+        await loadContinuousSweepStatus();
+    } catch (error) {
+        console.error('Error stopping sweep:', error);
+        showAlert(`Error stopping sweep: ${error.message}`, 'danger');
+    }
+}
+
+// Skip current route
+async function skipCurrentRoute() {
+    try {
+        const response = await fetch(`${ENDPOINTS.CONTINUOUS_SWEEP}/skip`, {
+            method: 'POST'
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Failed to skip route');
+        }
+
+        showAlert('Route skipped', 'info');
+        await loadContinuousSweepStatus();
+    } catch (error) {
+        console.error('Error skipping route:', error);
+        showAlert(`Error skipping route: ${error.message}`, 'danger');
+    }
+}
+
+// Restart current sweep
+async function restartCurrentSweep() {
+    if (!confirm('Are you sure you want to restart the sweep from the beginning?')) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`${ENDPOINTS.CONTINUOUS_SWEEP}/restart`, {
+            method: 'POST'
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Failed to restart sweep');
+        }
+
+        showAlert('Sweep restarted from beginning', 'success');
+        await loadContinuousSweepStatus();
+    } catch (error) {
+        console.error('Error restarting sweep:', error);
+        showAlert(`Error restarting sweep: ${error.message}`, 'danger');
+    }
+}
+
+// Update sweep configuration
+async function updateSweepConfig(event) {
+    event.preventDefault();
+
+    const pacingMode = document.getElementById('sweepPacingMode')?.value;
+    const targetHours = parseInt(document.getElementById('sweepTargetHours')?.value || '24', 10);
+    const minDelay = parseInt(document.getElementById('sweepMinDelay')?.value || '3000', 10);
+
+    try {
+        const response = await fetch(`${ENDPOINTS.CONTINUOUS_SWEEP}/config`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                pacing_mode: pacingMode,
+                target_duration_hours: targetHours,
+                min_delay_ms: minDelay
+            })
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Failed to update config');
+        }
+
+        showAlert('Configuration updated', 'success');
+        await loadContinuousSweepStatus();
+    } catch (error) {
+        console.error('Error updating config:', error);
+        showAlert(`Error updating config: ${error.message}`, 'danger');
+    }
+}
+
+// Load historical sweep stats
+async function loadContinuousSweepStats() {
+    const table = document.getElementById('sweepStatsTable');
+    if (!table) return;
+
+    try {
+        const response = await fetch(`${ENDPOINTS.CONTINUOUS_SWEEP}/stats?limit=10`);
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        const stats = data.stats || [];
+
+        table.innerHTML = '';
+
+        if (stats.length === 0) {
+            table.innerHTML = `<tr><td colspan="9" class="text-center py-3 text-muted">No historical data yet.</td></tr>`;
+            return;
+        }
+
+        stats.forEach(stat => {
+            const row = document.createElement('tr');
+
+            const startedAt = stat.started_at ? new Date(stat.started_at).toLocaleString() : '-';
+            const completedAt = stat.completed_at ? new Date(stat.completed_at).toLocaleString() : '-';
+            const duration = stat.total_duration_seconds
+                ? formatDuration(stat.total_duration_seconds)
+                : '-';
+            const avgDelay = stat.avg_delay_ms ? `${stat.avg_delay_ms}ms` : '-';
+            const priceRange = (stat.min_price_found != null && stat.max_price_found != null)
+                ? `$${stat.min_price_found.toFixed(0)} - $${stat.max_price_found.toFixed(0)}`
+                : '-';
+
+            row.innerHTML = `
+                <td>${stat.sweep_number || '-'}</td>
+                <td>${startedAt}</td>
+                <td>${completedAt}</td>
+                <td>${duration}</td>
+                <td>${stat.total_routes || '-'}</td>
+                <td class="text-success">${stat.successful_queries || 0}</td>
+                <td class="text-danger">${stat.failed_queries || 0}</td>
+                <td>${avgDelay}</td>
+                <td>${priceRange}</td>
+            `;
+
+            table.appendChild(row);
+        });
+    } catch (error) {
+        console.error('Error loading sweep stats:', error);
+        table.innerHTML = `<tr><td colspan="9" class="text-center py-3 text-danger">Failed to load stats</td></tr>`;
+    }
+}
+
+// Load continuous sweep results
+async function loadContinuousSweepResults() {
+    const table = document.getElementById('sweepResultsTable');
+    const container = document.getElementById('sweepResultsContainer');
+    if (!table || !container) return;
+
+    try {
+        const response = await fetch(`${ENDPOINTS.CONTINUOUS_SWEEP}/results?limit=100`);
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        const results = data.results || [];
+
+        container.style.display = 'block';
+        table.innerHTML = '';
+
+        if (results.length === 0) {
+            table.innerHTML = `<tr><td colspan="7" class="text-center py-3 text-muted">No results captured yet. Start a sweep to begin collecting data.</td></tr>`;
+            return;
+        }
+
+        results.forEach(result => {
+            const row = document.createElement('tr');
+
+            const origin = escapeHtml(result.origin);
+            const destination = escapeHtml(result.destination);
+            const departureDate = result.departure_date ? new Date(result.departure_date).toLocaleDateString() : '-';
+            const returnDate = result.return_date ? new Date(result.return_date).toLocaleDateString() : '-';
+            const tripLength = result.trip_length != null ? result.trip_length : '-';
+            const price = result.price != null ? `$${Number(result.price).toFixed(2)}` : '-';
+            const costPerMile = result.cost_per_mile != null ? `$${Number(result.cost_per_mile).toFixed(4)}` : '-';
+
+            row.innerHTML = `
+                <td>${origin}</td>
+                <td>${destination}</td>
+                <td>${departureDate}</td>
+                <td>${returnDate}</td>
+                <td>${tripLength}</td>
+                <td class="fw-bold">${price}</td>
+                <td>${costPerMile}</td>
+            `;
+
+            table.appendChild(row);
+        });
+    } catch (error) {
+        console.error('Error loading sweep results:', error);
+        table.innerHTML = `<tr><td colspan="7" class="text-center py-3 text-danger">Failed to load results</td></tr>`;
+    }
+}
+
 // Initialize when DOM is loaded
-document.addEventListener('DOMContentLoaded', initAdminPanel);
+document.addEventListener('DOMContentLoaded', () => {
+    initAdminPanel();
+    initContinuousSweepControls();
+});

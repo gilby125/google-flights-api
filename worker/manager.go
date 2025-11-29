@@ -195,6 +195,8 @@ type Manager struct {
 	workerStates  []*workerState
 	leaderElector *LeaderElector
 	redisClient   *redis.Client
+	sweepRunner   *ContinuousSweepRunner
+	sweepMutex    sync.RWMutex // Protects sweepRunner access
 }
 
 // NewManager creates a new worker manager.
@@ -1275,4 +1277,18 @@ func (m *Manager) generateDateRange(startDate, endDate time.Time, tripLength int
 // GetScheduler returns the scheduler instance
 func (m *Manager) GetScheduler() *Scheduler {
 	return m.scheduler
+}
+
+// GetSweepRunner returns the continuous sweep runner instance
+func (m *Manager) GetSweepRunner() *ContinuousSweepRunner {
+	m.sweepMutex.RLock()
+	defer m.sweepMutex.RUnlock()
+	return m.sweepRunner
+}
+
+// SetSweepRunner sets the continuous sweep runner instance
+func (m *Manager) SetSweepRunner(runner *ContinuousSweepRunner) {
+	m.sweepMutex.Lock()
+	defer m.sweepMutex.Unlock()
+	m.sweepRunner = runner
 }

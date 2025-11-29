@@ -181,6 +181,11 @@ func (m *MockNeo4jResult) Err() error {
 	return args.Error(0) // Allow overriding
 }
 
+func (m *MockNeo4jResult) Close() error {
+	args := m.Called()
+	return args.Error(0)
+}
+
 // Ensure MockNeo4jResult implements db.Neo4jResult
 var _ db.Neo4jResult = (*MockNeo4jResult)(nil)
 

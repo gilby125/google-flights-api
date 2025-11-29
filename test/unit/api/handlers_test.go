@@ -1020,9 +1020,9 @@ func TestDeleteJob_Success(t *testing.T) {
 
 	// Configure mock DB and Tx
 	mockDB.On("BeginTx", mock.Anything).Return(mockTx, nil)
-	mockDB.On("DeleteJobDetailsByJobID", mockTx, jobID).Return(nil)
-	// Correct mock for DeleteScheduledJobByID: Expects Tx and int, returns int64 and error
-	mockDB.On("DeleteScheduledJobByID", mock.AnythingOfType("*mocks.MockTx"), jobID).Return(int64(1), nil)
+	mockDB.On("DeleteJobDetailsByJobID", mock.Anything, mockTx, jobID).Return(nil)
+	// Correct mock for DeleteScheduledJobByID: Expects ctx, Tx and int, returns int64 and error
+	mockDB.On("DeleteScheduledJobByID", mock.Anything, mock.AnythingOfType("*mocks.MockTx"), jobID).Return(int64(1), nil)
 	mockTx.On("Commit").Return(nil)
 	mockTx.On("Rollback").Return(nil) // Should not be called ideally, but good practice
 
@@ -1092,7 +1092,7 @@ func TestDeleteJob_DeleteDetailsError(t *testing.T) {
 
 	// Configure mock DB and Tx
 	mockDB.On("BeginTx", mock.Anything).Return(mockTx, nil)
-	mockDB.On("DeleteJobDetailsByJobID", mockTx, jobID).Return(assert.AnError) // Error here
+	mockDB.On("DeleteJobDetailsByJobID", mock.Anything, mockTx, jobID).Return(assert.AnError) // Error here
 	mockTx.On("Rollback").Return(nil)                                          // Expect rollback
 
 	// Act
@@ -1118,9 +1118,9 @@ func TestDeleteJob_DeleteJobError(t *testing.T) {
 
 	// Configure mock DB and Tx
 	mockDB.On("BeginTx", mock.Anything).Return(mockTx, nil)
-	mockDB.On("DeleteJobDetailsByJobID", mockTx, jobID).Return(nil)
+	mockDB.On("DeleteJobDetailsByJobID", mock.Anything, mockTx, jobID).Return(nil)
 	// Correct mock for DeleteScheduledJobByID
-	mockDB.On("DeleteScheduledJobByID", mock.AnythingOfType("*mocks.MockTx"), jobID).Return(int64(0), assert.AnError)
+	mockDB.On("DeleteScheduledJobByID", mock.Anything, mock.AnythingOfType("*mocks.MockTx"), jobID).Return(int64(0), assert.AnError)
 	mockTx.On("Rollback").Return(nil) // Expect rollback
 
 	// Act
@@ -1146,9 +1146,9 @@ func TestDeleteJob_NotFound(t *testing.T) {
 
 	// Configure mock DB and Tx
 	mockDB.On("BeginTx", mock.Anything).Return(mockTx, nil)
-	mockDB.On("DeleteJobDetailsByJobID", mockTx, jobID).Return(nil) // Assume details might exist or delete does nothing if not found
+	mockDB.On("DeleteJobDetailsByJobID", mock.Anything, mockTx, jobID).Return(nil) // Assume details might exist or delete does nothing if not found
 	// Correct mock for DeleteScheduledJobByID
-	mockDB.On("DeleteScheduledJobByID", mock.AnythingOfType("*mocks.MockTx"), jobID).Return(int64(0), nil)
+	mockDB.On("DeleteScheduledJobByID", mock.Anything, mock.AnythingOfType("*mocks.MockTx"), jobID).Return(int64(0), nil)
 	mockTx.On("Rollback").Return(nil) // Expect rollback because job not found
 
 	// Act
@@ -1174,9 +1174,9 @@ func TestDeleteJob_CommitError(t *testing.T) {
 
 	// Configure mock DB and Tx
 	mockDB.On("BeginTx", mock.Anything).Return(mockTx, nil)
-	mockDB.On("DeleteJobDetailsByJobID", mockTx, jobID).Return(nil)
+	mockDB.On("DeleteJobDetailsByJobID", mock.Anything, mockTx, jobID).Return(nil)
 	// Correct mock for DeleteScheduledJobByID
-	mockDB.On("DeleteScheduledJobByID", mock.AnythingOfType("*mocks.MockTx"), jobID).Return(int64(1), nil)
+	mockDB.On("DeleteScheduledJobByID", mock.Anything, mock.AnythingOfType("*mocks.MockTx"), jobID).Return(int64(1), nil)
 	mockTx.On("Commit").Return(assert.AnError) // Error on commit
 	mockTx.On("Rollback").Return(nil)          // Should not be called if commit fails, but mock anyway
 

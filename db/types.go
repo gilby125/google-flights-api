@@ -89,6 +89,7 @@ type ScheduledJob struct {
 	LastRun        sql.NullTime
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
+	JobType        string // "bulk_search" or "price_graph_sweep"
 }
 
 // JobDetails represents the data structure for job details row
@@ -299,6 +300,92 @@ type Airline struct {
 	Code    string
 	Name    string
 	Country string
+}
+
+// PriceGraphSweepJobDetails represents sweep-specific job configuration
+type PriceGraphSweepJobDetails struct {
+	ID                  int
+	JobID               int
+	TripLengths         []int
+	DepartureWindowDays int
+	DynamicDates        bool
+	TripType            string
+	Class               string
+	Stops               string
+	Adults              int
+	Currency            string
+	RateLimitMillis     int
+	InternationalOnly   bool
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+}
+
+// ContinuousSweepProgress tracks the current state of the continuous sweep
+type ContinuousSweepProgress struct {
+	ID                  int
+	SweepNumber         int
+	RouteIndex          int
+	TotalRoutes         int
+	CurrentOrigin       sql.NullString
+	CurrentDestination  sql.NullString
+	QueriesCompleted    int
+	ErrorsCount         int
+	LastError           sql.NullString
+	SweepStartedAt      sql.NullTime
+	LastUpdated         time.Time
+	PacingMode          string // "adaptive" or "fixed"
+	TargetDurationHours int
+	MinDelayMs          int
+	IsRunning           bool
+	IsPaused            bool
+	InternationalOnly   bool
+}
+
+// ContinuousSweepStats represents historical stats for completed sweeps
+type ContinuousSweepStats struct {
+	ID                   int
+	SweepNumber          int
+	StartedAt            time.Time
+	CompletedAt          sql.NullTime
+	TotalRoutes          int
+	SuccessfulQueries    int
+	FailedQueries        int
+	TotalDurationSeconds sql.NullInt32
+	AvgDelayMs           sql.NullInt32
+	MinPriceFound        sql.NullFloat64
+	MaxPriceFound        sql.NullFloat64
+	CreatedAt            time.Time
+}
+
+// SweepStatusResponse is the API response for sweep status
+type SweepStatusResponse struct {
+	IsRunning            bool      `json:"is_running"`
+	IsPaused             bool      `json:"is_paused"`
+	SweepNumber          int       `json:"sweep_number"`
+	RouteIndex           int       `json:"route_index"`
+	TotalRoutes          int       `json:"total_routes"`
+	ProgressPercent      float64   `json:"progress_percent"`
+	CurrentOrigin        string    `json:"current_origin"`
+	CurrentDestination   string    `json:"current_destination"`
+	QueriesCompleted     int       `json:"queries_completed"`
+	ErrorsCount          int       `json:"errors_count"`
+	LastError            string    `json:"last_error,omitempty"`
+	SweepStartedAt       time.Time `json:"sweep_started_at,omitempty"`
+	EstimatedCompletion  time.Time `json:"estimated_completion,omitempty"`
+	PacingMode           string    `json:"pacing_mode"`
+	CurrentDelayMs       int       `json:"current_delay_ms"`
+	TargetDurationHours  int       `json:"target_duration_hours"`
+	QueriesPerHour       float64   `json:"queries_per_hour"`
+}
+
+// ContinuousSweepResultsFilter defines filters for querying continuous sweep results
+type ContinuousSweepResultsFilter struct {
+	Origin      string
+	Destination string
+	FromDate    time.Time
+	ToDate      time.Time
+	Limit       int
+	Offset      int
 }
 
 // --- End Struct Definitions ---

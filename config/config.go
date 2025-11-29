@@ -19,6 +19,8 @@ type Config struct {
 	RedisConfig       RedisConfig
 	WorkerConfig      WorkerConfig
 	LetsEncryptConfig LetsEncryptConfig
+	NTFYConfig        NTFYConfig
+	AdminAuthConfig   AdminAuthConfig
 	WorkerEnabled     bool
 }
 
@@ -81,6 +83,26 @@ type WorkerConfig struct {
 	SchedulerLockTTL   time.Duration
 	SchedulerLockRenew time.Duration
 	SchedulerLockKey   string
+}
+
+// NTFYConfig holds NTFY push notification configuration
+type NTFYConfig struct {
+	ServerURL       string
+	Topic           string
+	Username        string
+	Password        string
+	Enabled         bool
+	StallThreshold  time.Duration
+	ErrorThreshold  int
+	ErrorWindow     time.Duration
+}
+
+// AdminAuthConfig holds admin authentication configuration
+type AdminAuthConfig struct {
+	Enabled  bool
+	Username string
+	Password string
+	Token    string // Alternative: Bearer token auth
 }
 
 // Load loads configuration from environment variables
@@ -156,15 +178,43 @@ func Load() (*Config, error) {
 		SchedulerLockKey:   schedulerLockKey,
 	}
 
+	// NTFY notification config
+	ntfyEnabled, _ := strconv.ParseBool(getEnv("NTFY_ENABLED", "false"))
+	ntfyErrorThreshold, _ := strconv.Atoi(getEnv("NTFY_ERROR_THRESHOLD", "10"))
+	ntfyStallThreshold, _ := time.ParseDuration(getEnv("NTFY_STALL_THRESHOLD", "15m"))
+	ntfyErrorWindow, _ := time.ParseDuration(getEnv("NTFY_ERROR_WINDOW", "5m"))
+
+	ntfyConfig := NTFYConfig{
+		ServerURL:      getEnv("NTFY_SERVER_URL", "https://ntfy.sh"),
+		Topic:          getEnv("NTFY_TOPIC", ""),
+		Username:       getEnv("NTFY_USERNAME", ""),
+		Password:       getEnv("NTFY_PASSWORD", ""),
+		Enabled:        ntfyEnabled,
+		StallThreshold: ntfyStallThreshold,
+		ErrorThreshold: ntfyErrorThreshold,
+		ErrorWindow:    ntfyErrorWindow,
+	}
+
+	// Admin authentication config
+	adminAuthEnabled, _ := strconv.ParseBool(getEnv("ADMIN_AUTH_ENABLED", "false"))
+	adminAuthConfig := AdminAuthConfig{
+		Enabled:  adminAuthEnabled,
+		Username: getEnv("ADMIN_AUTH_USERNAME", ""),
+		Password: getEnv("ADMIN_AUTH_PASSWORD", ""),
+		Token:    getEnv("ADMIN_AUTH_TOKEN", ""),
+	}
+
 	return &Config{
-		Port:           port,
-		Environment:    environment,
-		LoggingConfig:  loggingConfig,
-		PostgresConfig: postgresConfig,
-		Neo4jConfig:    neo4jConfig,
-		RedisConfig:    redisConfig,
-		WorkerConfig:   workerConfig,
-		WorkerEnabled:  workerEnabled,
+		Port:            port,
+		Environment:     environment,
+		LoggingConfig:   loggingConfig,
+		PostgresConfig:  postgresConfig,
+		Neo4jConfig:     neo4jConfig,
+		RedisConfig:     redisConfig,
+		WorkerConfig:    workerConfig,
+		NTFYConfig:      ntfyConfig,
+		AdminAuthConfig: adminAuthConfig,
+		WorkerEnabled:   workerEnabled,
 	}, nil
 }
 

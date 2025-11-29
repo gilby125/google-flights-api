@@ -193,13 +193,13 @@ func (m *MockPostgresDB) QuerySearchesPaginated(ctx context.Context, limit, offs
 	return rows, args.Error(1)
 }
 
-func (m *MockPostgresDB) DeleteJobDetailsByJobID(tx db.Tx, jobID int) error {
-	args := m.Called(tx, jobID)
+func (m *MockPostgresDB) DeleteJobDetailsByJobID(ctx context.Context, tx db.Tx, jobID int) error {
+	args := m.Called(ctx, tx, jobID)
 	return args.Error(0)
 }
 
-func (m *MockPostgresDB) DeleteScheduledJobByID(tx db.Tx, jobID int) (int64, error) {
-	args := m.Called(tx, jobID)
+func (m *MockPostgresDB) DeleteScheduledJobByID(ctx context.Context, tx db.Tx, jobID int) (int64, error) {
+	args := m.Called(ctx, tx, jobID)
 	// Return the configured values directly
 	return args.Get(0).(int64), args.Error(1)
 }
@@ -237,23 +237,23 @@ func (m *MockPostgresDB) ListJobs(ctx context.Context) (db.Rows, error) {
 	return rows, args.Error(1)
 }
 
-func (m *MockPostgresDB) CreateScheduledJob(tx db.Tx, name, cronExpression string, enabled bool) (int, error) {
-	args := m.Called(tx, name, cronExpression, enabled)
+func (m *MockPostgresDB) CreateScheduledJob(ctx context.Context, tx db.Tx, name, cronExpression string, enabled bool) (int, error) {
+	args := m.Called(ctx, tx, name, cronExpression, enabled)
 	return args.Int(0), args.Error(1)
 }
 
-func (m *MockPostgresDB) CreateJobDetails(tx db.Tx, details db.JobDetails) error {
-	args := m.Called(tx, details)
+func (m *MockPostgresDB) CreateJobDetails(ctx context.Context, tx db.Tx, details db.JobDetails) error {
+	args := m.Called(ctx, tx, details)
 	return args.Error(0)
 }
 
-func (m *MockPostgresDB) UpdateScheduledJob(tx db.Tx, jobID int, name, cronExpression string) error {
-	args := m.Called(tx, jobID, name, cronExpression)
+func (m *MockPostgresDB) UpdateScheduledJob(ctx context.Context, tx db.Tx, jobID int, name, cronExpression string) error {
+	args := m.Called(ctx, tx, jobID, name, cronExpression)
 	return args.Error(0)
 }
 
-func (m *MockPostgresDB) UpdateJobDetails(tx db.Tx, jobID int, details db.JobDetails) error {
-	args := m.Called(tx, jobID, details)
+func (m *MockPostgresDB) UpdateJobDetails(ctx context.Context, tx db.Tx, jobID int, details db.JobDetails) error {
+	args := m.Called(ctx, tx, jobID, details)
 	return args.Error(0)
 }
 
@@ -376,6 +376,43 @@ func (m *MockPostgresDB) ListPriceGraphResults(ctx context.Context, sweepID, lim
 		rows = r.(db.Rows)
 	}
 	return rows, args.Error(1)
+}
+
+func (m *MockPostgresDB) SaveContinuousSweepProgress(ctx context.Context, progress db.ContinuousSweepProgress) error {
+	args := m.Called(ctx, progress)
+	return args.Error(0)
+}
+
+func (m *MockPostgresDB) GetContinuousSweepProgress(ctx context.Context) (*db.ContinuousSweepProgress, error) {
+	args := m.Called(ctx)
+	var progress *db.ContinuousSweepProgress
+	if p := args.Get(0); p != nil {
+		progress = p.(*db.ContinuousSweepProgress)
+	}
+	return progress, args.Error(1)
+}
+
+func (m *MockPostgresDB) InsertContinuousSweepStats(ctx context.Context, stats db.ContinuousSweepStats) error {
+	args := m.Called(ctx, stats)
+	return args.Error(0)
+}
+
+func (m *MockPostgresDB) ListContinuousSweepStats(ctx context.Context, limit int) ([]db.ContinuousSweepStats, error) {
+	args := m.Called(ctx, limit)
+	var statsList []db.ContinuousSweepStats
+	if s := args.Get(0); s != nil {
+		statsList = s.([]db.ContinuousSweepStats)
+	}
+	return statsList, args.Error(1)
+}
+
+func (m *MockPostgresDB) ListContinuousSweepResults(ctx context.Context, filters db.ContinuousSweepResultsFilter) ([]db.PriceGraphResultRecord, error) {
+	args := m.Called(ctx, filters)
+	var results []db.PriceGraphResultRecord
+	if r := args.Get(0); r != nil {
+		results = r.([]db.PriceGraphResultRecord)
+	}
+	return results, args.Error(1)
 }
 
 // Ensure MockPostgresDB implements db.PostgresDB
