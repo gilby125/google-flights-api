@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS price_graph_results (
     departure_date DATE NOT NULL,
     return_date DATE,
     trip_length INTEGER,
-    price NUMERIC(10, 2) NOT NULL,
+    price NUMERIC(12, 2) NOT NULL,
     currency VARCHAR(3) NOT NULL,
     queried_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()

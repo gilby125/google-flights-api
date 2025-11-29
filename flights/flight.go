@@ -13,8 +13,8 @@ import (
 
 	_ "time/tzdata"
 
-	"github.com/hashicorp/go-retryablehttp"
 	"github.com/gilby125/google-flights-api/iata"
+	"github.com/hashicorp/go-retryablehttp"
 	"golang.org/x/text/language"
 )
 

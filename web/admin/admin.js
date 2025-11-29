@@ -7,7 +7,8 @@ const ENDPOINTS = {
     WORKERS: `${API_BASE}/admin/workers`,
     QUEUE: `${API_BASE}/admin/queue`,
     AIRPORTS: `${API_BASE}/airports`,
-    AIRLINES: `${API_BASE}/airlines`
+    AIRLINES: `${API_BASE}/airlines`,
+    PRICE_GRAPH_SWEEPS: `${API_BASE}/admin/price-graph-sweeps`
 };
 
 // DOM elements
@@ -21,14 +22,35 @@ const elements = {
     queueTable: document.getElementById('queueTable'),
     refreshBtn: document.getElementById('refreshBtn'),
     saveJobBtn: document.getElementById('saveJobBtn'),
-    newJobForm: document.getElementById('newJobForm')
+    newJobForm: document.getElementById('newJobForm'),
+    priceGraphForm: document.getElementById('priceGraphForm'),
+    priceGraphTable: document.getElementById('priceGraphTable'),
+    priceGraphResultsTable: document.getElementById('priceGraphResultsTable'),
+    priceGraphResultsMeta: document.getElementById('priceGraphResultsMeta'),
+    priceGraphEmpty: document.getElementById('priceGraphEmpty'),
+    refreshSweepsBtn: document.getElementById('refreshSweepsBtn'),
+    sweepsStatus: document.getElementById('sweepsStatus'),
+    exportResultsBtn: document.getElementById('exportResultsBtn')
 };
+
+// State for price graph results
+let currentSweepId = null;
+let currentSweepResults = [];
 
 // Initialize the admin panel
 async function initAdminPanel() {
     // Add event listeners
     elements.refreshBtn.addEventListener('click', refreshData);
     elements.saveJobBtn.addEventListener('click', saveJob);
+    if (elements.refreshSweepsBtn) {
+        elements.refreshSweepsBtn.addEventListener('click', () => loadPriceGraphSweeps(true));
+    }
+    if (elements.priceGraphForm) {
+        elements.priceGraphForm.addEventListener('submit', submitPriceGraphSweep);
+    }
+    if (elements.exportResultsBtn) {
+        elements.exportResultsBtn.addEventListener('click', exportPriceGraphResults);
+    }
     
     // Initialize Bootstrap modals
     const newJobModalEl = document.getElementById('newJobModal');
@@ -45,6 +67,17 @@ async function initAdminPanel() {
     const dateEndEl = document.getElementById('dateEnd');
     if (dateStartEl) dateStartEl.value = dateString;
     if (dateEndEl) dateEndEl.value = dateString;
+
+    const pgDepartureFrom = document.getElementById('pgDepartureFrom');
+    const pgDepartureTo = document.getElementById('pgDepartureTo');
+    if (pgDepartureFrom && pgDepartureTo) {
+        const departStart = new Date();
+        departStart.setDate(departStart.getDate() + 21);
+        const departEnd = new Date(departStart);
+        departEnd.setDate(departEnd.getDate() + 7);
+        pgDepartureFrom.value = departStart.toISOString().split('T')[0];
+        pgDepartureTo.value = departEnd.toISOString().split('T')[0];
+    }
 
     // Initialize cron preview
     updateCronPreview();
@@ -77,6 +110,10 @@ async function refreshData() {
             loadSearchCounts().catch(err => {
                 console.error('Error loading search counts:', err);
                 elements.searchesCount.textContent = '?';
+            }),
+            loadPriceGraphSweeps().catch(err => {
+                console.error('Error loading price graph sweeps:', err);
+                if (elements.sweepsStatus) elements.sweepsStatus.textContent = 'Failed to load sweeps';
             })
         ];
         
@@ -274,6 +311,282 @@ async function loadSearchCounts() {
             }
         }
     }
+}
+
+// Submit a new price graph sweep request
+async function submitPriceGraphSweep(event) {
+    event.preventDefault();
+
+    if (!elements.priceGraphForm) return;
+    if (!elements.priceGraphForm.checkValidity()) {
+        elements.priceGraphForm.reportValidity();
+        return;
+    }
+
+    const submitBtn = document.getElementById('submitPriceGraphBtn');
+    setButtonLoading(submitBtn, true);
+
+    try {
+        const origins = parseAirportList(document.getElementById('pgOrigins')?.value || '');
+        const destinations = parseAirportList(document.getElementById('pgDestinations')?.value || '');
+
+        if (!origins.length || !destinations.length) {
+            throw new Error('At least one origin and destination are required');
+        }
+
+        const departureFrom = document.getElementById('pgDepartureFrom')?.value;
+        const departureTo = document.getElementById('pgDepartureTo')?.value;
+        if (!departureFrom || !departureTo) {
+            throw new Error('Departure window is required');
+        }
+
+        const tripLengths = parseNumberList(document.getElementById('pgTripLengths')?.value || '');
+
+        const payload = {
+            origins,
+            destinations,
+            departure_date_from: `${departureFrom}T00:00:00Z`,
+            departure_date_to: `${departureTo}T00:00:00Z`,
+            trip_lengths: tripLengths.length ? tripLengths : undefined,
+            trip_type: document.getElementById('pgTripType')?.value || 'round_trip',
+            class: document.getElementById('pgClass')?.value || 'economy',
+            stops: document.getElementById('pgStops')?.value || 'any',
+            adults: parseInt(document.getElementById('pgAdults')?.value || '1', 10),
+            children: parseInt(document.getElementById('pgChildren')?.value || '0', 10),
+            infants_lap: parseInt(document.getElementById('pgInfantsLap')?.value || '0', 10),
+            infants_seat: parseInt(document.getElementById('pgInfantsSeat')?.value || '0', 10),
+            currency: (document.getElementById('pgCurrency')?.value || 'USD').trim().toUpperCase()
+        };
+
+        const rateLimitRaw = document.getElementById('pgRateLimit')?.value;
+        const rateLimit = parseInt(rateLimitRaw || '', 10);
+        if (!Number.isNaN(rateLimit) && rateLimit >= 0) {
+            payload.rate_limit_millis = rateLimit;
+        }
+
+        // Remove undefined keys
+        Object.keys(payload).forEach(key => {
+            if (payload[key] === undefined || payload[key] === null) {
+                delete payload[key];
+            }
+        });
+
+        const response = await fetch(ENDPOINTS.PRICE_GRAPH_SWEEPS, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            const errorBody = safeParseJSON(errorText, {});
+            throw new Error(errorBody.error || `Failed to enqueue sweep (HTTP ${response.status})`);
+        }
+
+        const dataText = await response.text();
+        const data = safeParseJSON(dataText, {});
+        const sweepId = data?.sweep_id;
+
+        showAlert('Price graph sweep enqueued.', 'success');
+
+        await loadPriceGraphSweeps(true);
+
+        if (sweepId) {
+            await viewPriceGraphResults(sweepId, true);
+            if (elements.priceGraphResultsMeta) {
+                elements.priceGraphResultsMeta.textContent = `Sweep #${sweepId} queued. Results will populate as the worker progresses.`;
+            }
+        }
+    } catch (error) {
+        console.error('Error enqueueing price graph sweep:', error);
+        showAlert(`Error enqueueing sweep: ${error.message}`, 'danger');
+    } finally {
+        setButtonLoading(submitBtn, false);
+    }
+}
+
+// Load recent price graph sweeps
+async function loadPriceGraphSweeps(refreshResults = false) {
+    if (!elements.priceGraphTable) return;
+
+    if (elements.sweepsStatus) {
+        elements.sweepsStatus.textContent = 'Loading...';
+    }
+
+    const response = await fetch(`${ENDPOINTS.PRICE_GRAPH_SWEEPS}?limit=50`);
+    if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: failed to load price graph sweeps`);
+    }
+
+    const responseText = await response.text();
+    const data = safeParseJSON(responseText, {});
+    const sweeps = Array.isArray(data) ? data : Array.isArray(data.items) ? data.items : [];
+
+    elements.priceGraphTable.innerHTML = '';
+
+    if (!sweeps.length) {
+        const emptyRow = document.createElement('tr');
+        emptyRow.innerHTML = `<td colspan="7" class="text-center py-4 text-muted">No sweeps found.</td>`;
+        elements.priceGraphTable.appendChild(emptyRow);
+        if (elements.sweepsStatus) elements.sweepsStatus.textContent = '';
+        return;
+    }
+
+    sweeps.forEach(sweep => {
+        const row = document.createElement('tr');
+        row.dataset.sweepId = sweep.id;
+
+        const statusBadge = formatSweepStatusBadge(sweep.status);
+        const coverage = `${sweep.origin_count || 0} × ${sweep.destination_count || 0}`;
+        const tripWindow = formatTripLengthRange(sweep.trip_length_min, sweep.trip_length_max);
+        const updatedAt = sweep.updated_at ? new Date(sweep.updated_at).toLocaleString() : '—';
+
+        row.innerHTML = `
+            <td>${sweep.id}</td>
+            <td>${statusBadge}</td>
+            <td>${coverage}</td>
+            <td>${tripWindow}</td>
+            <td>${sweep.error_count || 0}</td>
+            <td>${updatedAt}</td>
+            <td class="text-end">
+                <div class="btn-group btn-group-sm">
+                    <button class="btn btn-outline-primary" onclick="viewPriceGraphResults(${sweep.id})">
+                        <i class="bi bi-eye"></i>
+                    </button>
+                </div>
+            </td>
+        `;
+
+        elements.priceGraphTable.appendChild(row);
+    });
+
+    if (elements.sweepsStatus) {
+        const timestamp = new Date().toLocaleTimeString();
+        elements.sweepsStatus.textContent = `Last updated ${timestamp}`;
+    }
+
+    if (refreshResults && currentSweepId) {
+        const stillExists = sweeps.some(sweep => sweep.id === currentSweepId);
+        if (stillExists) {
+            await viewPriceGraphResults(currentSweepId, true);
+        }
+    }
+}
+
+// View results for a specific sweep
+async function viewPriceGraphResults(sweepId, silent = false) {
+    currentSweepId = sweepId;
+
+    if (elements.priceGraphResultsMeta && !silent) {
+        elements.priceGraphResultsMeta.textContent = `Loading results for sweep #${sweepId}...`;
+    }
+    if (elements.exportResultsBtn) {
+        elements.exportResultsBtn.disabled = true;
+    }
+
+    highlightSelectedSweepRow(sweepId);
+
+    try {
+        const response = await fetch(`${ENDPOINTS.PRICE_GRAPH_SWEEPS}/${sweepId}`);
+        if (!response.ok) {
+            const errorText = await response.text();
+            const errorBody = safeParseJSON(errorText, {});
+            throw new Error(errorBody.error || `Failed to load sweep results (HTTP ${response.status})`);
+        }
+
+        const responseText = await response.text();
+        const data = safeParseJSON(responseText, {});
+        const summary = data?.sweep || {};
+        const results = Array.isArray(data?.results) ? data.results : [];
+
+        currentSweepResults = results;
+
+        renderPriceGraphResults(summary, results);
+
+        if (elements.priceGraphResultsMeta) {
+            const statusLabel = summary.status ? summary.status.replace(/_/g, ' ') : 'unknown';
+            const currency = (summary.currency || (results[0]?.currency) || 'USD').toUpperCase();
+            const message = `Sweep #${summary.id || sweepId} • ${results.length} fares • ${currency.toUpperCase()} • ${statusLabel}`;
+            elements.priceGraphResultsMeta.textContent = message;
+        }
+
+        if (elements.exportResultsBtn) {
+            elements.exportResultsBtn.disabled = results.length === 0;
+        }
+
+        if (!silent) {
+            showAlert(`Loaded results for sweep #${sweepId}`, 'info');
+        }
+    } catch (error) {
+        console.error(`Error loading results for sweep ${sweepId}:`, error);
+        if (elements.priceGraphResultsMeta) {
+            elements.priceGraphResultsMeta.textContent = `Failed to load sweep #${sweepId}: ${error.message}`;
+        }
+        showAlert(`Error loading sweep results: ${error.message}`, 'danger');
+    }
+}
+
+// Render price graph result rows
+function renderPriceGraphResults(summary, results) {
+    if (!elements.priceGraphResultsTable) return;
+
+    elements.priceGraphResultsTable.innerHTML = '';
+
+    if (!results.length) {
+        const emptyRow = document.createElement('tr');
+        emptyRow.innerHTML = `<td colspan="5" class="text-center py-4 text-muted">No results stored for this sweep yet.</td>`;
+        elements.priceGraphResultsTable.appendChild(emptyRow);
+        return;
+    }
+
+    const formatter = buildCurrencyFormatter(summary?.currency || results[0]?.currency || 'USD');
+
+    results.forEach(result => {
+        const row = document.createElement('tr');
+        const priceValue = Number(result.price);
+        row.innerHTML = `
+            <td><strong>${result.origin}</strong> → <strong>${result.destination}</strong></td>
+            <td>${formatDate(result.departure_date)}</td>
+            <td>${formatDate(result.return_date)}</td>
+            <td>${result.trip_length ?? '—'}</td>
+            <td class="text-end">${Number.isFinite(priceValue) ? formatter(priceValue) : '—'}</td>
+        `;
+        elements.priceGraphResultsTable.appendChild(row);
+    });
+}
+
+// Export current sweep results to CSV
+function exportPriceGraphResults() {
+    if (!currentSweepResults.length || !currentSweepId) return;
+
+    const header = ['sweep_id', 'origin', 'destination', 'departure_date', 'return_date', 'trip_length', 'price', 'currency', 'queried_at'];
+    const rows = currentSweepResults.map(result => [
+        result.sweep_id || currentSweepId,
+        result.origin || '',
+        result.destination || '',
+        formatDateISO(result.departure_date),
+        formatDateISO(result.return_date),
+        result.trip_length ?? '',
+        result.price ?? '',
+        result.currency || '',
+        formatDateISO(result.queried_at)
+    ]);
+
+    const csvContent = [header, ...rows]
+        .map(line => line.map(escapeCsvValue).join(','))
+        .join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `price-graph-sweep-${currentSweepId}.csv`;
+    link.click();
+
+    URL.revokeObjectURL(url);
 }
 
 // Save a new job
@@ -587,6 +900,119 @@ function toggleDateMode() {
         if (daysFromExecutionInput) daysFromExecutionInput.removeAttribute('required');
         if (searchWindowDaysInput) searchWindowDaysInput.removeAttribute('required');
     }
+}
+
+function setButtonLoading(button, isLoading) {
+    if (!button) return;
+    if (isLoading) {
+        if (!button.dataset.originalHtml) {
+            button.dataset.originalHtml = button.innerHTML;
+        }
+        button.disabled = true;
+        button.innerHTML = `<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Processing...`;
+    } else {
+        button.disabled = false;
+        if (button.dataset.originalHtml) {
+            button.innerHTML = button.dataset.originalHtml;
+        }
+    }
+}
+
+function parseAirportList(input) {
+    return input
+        .split(',')
+        .map(code => code.trim().toUpperCase())
+        .filter(code => code.length > 0);
+}
+
+function parseNumberList(input) {
+    return input
+        .split(',')
+        .map(value => parseInt(value.trim(), 10))
+        .filter(value => !Number.isNaN(value) && Number.isFinite(value));
+}
+
+function formatTripLengthRange(minVal, maxVal) {
+    if (minVal == null && maxVal == null) return '—';
+    if (minVal == null) return `${maxVal}`;
+    if (maxVal == null) return `${minVal}`;
+    if (minVal === maxVal) return `${minVal}`;
+    return `${minVal} - ${maxVal}`;
+}
+
+function formatDate(value) {
+    if (!value) return '—';
+    try {
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) {
+            return '—';
+        }
+        return date.toLocaleDateString();
+    } catch (err) {
+        return '—';
+    }
+}
+
+function formatDateISO(value) {
+    if (!value) return '';
+    try {
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) {
+            return '';
+        }
+        return date.toISOString();
+    } catch (err) {
+        return '';
+    }
+}
+
+function formatSweepStatusBadge(status) {
+    const normalized = (status || 'unknown').toLowerCase();
+    const badgeClasses = {
+        queued: 'bg-secondary',
+        running: 'bg-info text-dark',
+        completed: 'bg-success',
+        completed_with_errors: 'bg-warning text-dark',
+        failed: 'bg-danger',
+        unknown: 'bg-secondary'
+    };
+    const cssClass = badgeClasses[normalized] || 'bg-secondary';
+    const label = normalized.replace(/_/g, ' ');
+    return `<span class="badge ${cssClass} text-uppercase">${label}</span>`;
+}
+
+function highlightSelectedSweepRow(sweepId) {
+    if (!elements.priceGraphTable) return;
+    const rows = elements.priceGraphTable.querySelectorAll('tr');
+    rows.forEach(row => {
+        if (row.dataset && row.dataset.sweepId) {
+            row.classList.toggle('table-active', row.dataset.sweepId === String(sweepId));
+        } else {
+            row.classList.remove('table-active');
+        }
+    });
+}
+
+function buildCurrencyFormatter(currencyCode) {
+    try {
+        const formatter = new Intl.NumberFormat(undefined, {
+            style: 'currency',
+            currency: (currencyCode || 'USD').toUpperCase(),
+            maximumFractionDigits: 2
+        });
+        return value => formatter.format(value);
+    } catch (err) {
+        return value => value.toFixed(2);
+    }
+}
+
+function escapeCsvValue(value) {
+    if (value == null) return '';
+    const stringValue = String(value);
+    if (/[",\n]/.test(stringValue)) {
+        return `"${stringValue.replace(/"/g, '""')}"`;
+    }
+    return stringValue;
 }
 
 // Utility function to safely parse JSON responses that might be malformed

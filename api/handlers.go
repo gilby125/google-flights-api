@@ -1430,11 +1430,34 @@ func getBulkSearchOffers(pgDB db.PostgresDB) gin.HandlerFunc {
 		if offset < 0 {
 			offset = 0
 		}
+		sortBy := c.DefaultQuery("sort_by", "price")
 
 		offers, err := pgDB.ListBulkSearchOffers(c.Request.Context(), bulkID)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load bulk search offers: " + err.Error()})
 			return
+		}
+
+		// Sort offers based on sort_by parameter
+		switch sortBy {
+		case "cost_per_mile":
+			sort.Slice(offers, func(i, j int) bool {
+				// Offers without cost_per_mile go to the end
+				if !offers[i].CostPerMile.Valid && !offers[j].CostPerMile.Valid {
+					return offers[i].Price < offers[j].Price // fallback to price
+				}
+				if !offers[i].CostPerMile.Valid {
+					return false
+				}
+				if !offers[j].CostPerMile.Valid {
+					return true
+				}
+				return offers[i].CostPerMile.Float64 < offers[j].CostPerMile.Float64
+			})
+		default: // "price" or any other value defaults to price sorting
+			sort.Slice(offers, func(i, j int) bool {
+				return offers[i].Price < offers[j].Price
+			})
 		}
 
 		total := len(offers)
@@ -1484,6 +1507,12 @@ func getBulkSearchOffers(pgDB db.PostgresDB) gin.HandlerFunc {
 			}
 			if offer.ReturnFlightDuration.Valid {
 				entry["return_flight_duration"] = offer.ReturnFlightDuration.Int32
+			}
+			if offer.DistanceMiles.Valid {
+				entry["distance_miles"] = offer.DistanceMiles.Float64
+			}
+			if offer.CostPerMile.Valid {
+				entry["cost_per_mile"] = offer.CostPerMile.Float64
 			}
 			if len(offer.OutboundFlights) > 0 {
 				entry["outbound_flights"] = json.RawMessage(offer.OutboundFlights)

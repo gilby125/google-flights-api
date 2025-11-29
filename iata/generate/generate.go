@@ -18,6 +18,8 @@ type airport struct {
 	Iata string
 	Tz   string
 	City string
+	Lat  float64
+	Lon  float64
 }
 
 type result struct {
@@ -65,7 +67,7 @@ func main() {
 	var wg sync.WaitGroup
 
 	caseTmpl := `	case "%s":
-		return Location{"%s", "%s"}
+		return Location{"%s", "%s", %f, %f}
 `
 
 	var a airport
@@ -80,7 +82,7 @@ func main() {
 		checked[a.Iata] = struct{}{}
 
 		wg.Add(1)
-		go func(iata, tz, city string) {
+		go func(iata, tz, city string, lat, lon float64) {
 			defer wg.Done()
 
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute*2)
@@ -92,10 +94,10 @@ func main() {
 			}
 
 			if ok {
-				res := result{line: fmt.Sprintf(caseTmpl, iata, city, tz), err: nil}
+				res := result{line: fmt.Sprintf(caseTmpl, iata, city, tz, lat, lon), err: nil}
 				out <- res
 			}
-		}(a.Iata, a.Tz, a.City)
+		}(a.Iata, a.Tz, a.City, a.Lat, a.Lon)
 	}
 
 	go func() {
@@ -104,7 +106,7 @@ func main() {
 	}()
 
 	iataFileContent := fmt.Sprintf(
-		`// Package iata contains IATA airport codes, which are supported by the Google Flights API, along with time zones.
+		`// Package iata contains IATA airport codes, which are supported by the Google Flights API, along with time zones and coordinates.
 // This package was generated using an airport list (which can be found at this address: [airports.json])
 // and the Google Flights API.
 //
@@ -115,10 +117,16 @@ func main() {
 // [airports.json]: https://github.com/mwgg/Airports/blob/%s/airports.json
 package iata
 
-type Location struct{ City, Tz string }
+// Location contains airport location data including city, timezone, and coordinates.
+type Location struct {
+	City string
+	Tz   string
+	Lat  float64
+	Lon  float64
+}
 
-// IATATimeZone turns IATA airport codes into the time zone where the airport is located.
-// If IATATimeZone can't find an IATA airport code, then it returns "Not supported IATA Code".
+// IATATimeZone returns airport location data for the given IATA code.
+// If the IATA code is not found, it returns a Location with "Not supported IATA Code" values and zero coordinates.
 func IATATimeZone(iata string) Location {
 	switch iata {
 `, time.Now().Format(time.DateOnly), commitHash)
@@ -139,7 +147,7 @@ func IATATimeZone(iata string) Location {
 	}
 
 	iataFileContent += `	}
-	return Location{"Not supported IATA Code", "Not supported IATA Code"}
+	return Location{"Not supported IATA Code", "Not supported IATA Code", 0, 0}
 }
 `
 

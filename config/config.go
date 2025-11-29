@@ -73,11 +73,14 @@ type RedisConfig struct {
 
 // WorkerConfig holds worker configuration
 type WorkerConfig struct {
-	Concurrency     int
-	MaxRetries      int
-	RetryDelay      time.Duration
-	JobTimeout      time.Duration
-	ShutdownTimeout time.Duration
+	Concurrency        int
+	MaxRetries         int
+	RetryDelay         time.Duration
+	JobTimeout         time.Duration
+	ShutdownTimeout    time.Duration
+	SchedulerLockTTL   time.Duration
+	SchedulerLockRenew time.Duration
+	SchedulerLockKey   string
 }
 
 // Load loads configuration from environment variables
@@ -138,13 +141,19 @@ func Load() (*Config, error) {
 	retryDelay, _ := time.ParseDuration(getEnv("WORKER_RETRY_DELAY", "30s"))
 	jobTimeout, _ := time.ParseDuration(getEnv("WORKER_JOB_TIMEOUT", "10m"))
 	shutdownTimeout, _ := time.ParseDuration(getEnv("WORKER_SHUTDOWN_TIMEOUT", "30s"))
+	schedulerLockTTL, _ := time.ParseDuration(getEnv("SCHEDULER_LOCK_TTL", "30s"))
+	schedulerLockRenew, _ := time.ParseDuration(getEnv("SCHEDULER_LOCK_RENEW", "10s"))
+	schedulerLockKey := getEnv("SCHEDULER_LOCK_KEY", "scheduler:leader")
 
 	workerConfig := WorkerConfig{
-		Concurrency:     concurrency,
-		MaxRetries:      maxRetries,
-		RetryDelay:      retryDelay,
-		JobTimeout:      jobTimeout,
-		ShutdownTimeout: shutdownTimeout,
+		Concurrency:        concurrency,
+		MaxRetries:         maxRetries,
+		RetryDelay:         retryDelay,
+		JobTimeout:         jobTimeout,
+		ShutdownTimeout:    shutdownTimeout,
+		SchedulerLockTTL:   schedulerLockTTL,
+		SchedulerLockRenew: schedulerLockRenew,
+		SchedulerLockKey:   schedulerLockKey,
 	}
 
 	return &Config{

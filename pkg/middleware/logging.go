@@ -47,7 +47,7 @@ func RequestLogger() gin.HandlerFunc {
 
 		// Log based on status code
 		logMsg := "HTTP Request"
-		
+
 		switch {
 		case statusCode >= 500:
 			logger.WithFields(fields).Error(nil, logMsg)

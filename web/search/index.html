@@ -1,226 +1,300 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Flight Search Test</title>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Flight Search</title>
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+      crossorigin="anonymous"
+    />
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css"
+      rel="stylesheet"
+      crossorigin="anonymous"
+    />
+    <link
+      href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css"
+      rel="stylesheet"
+      crossorigin="anonymous"
+    />
     <style>
-        body {
-            font-family: Arial, sans-serif;
-            max-width: 800px;
-            margin: 0 auto;
-            padding: 20px;
-        }
-        .form-group {
-            margin-bottom: 15px;
-        }
-        label {
-            display: block;
-            margin-bottom: 5px;
-        }
-        input, select {
-            width: 100%;
-            padding: 8px;
-            box-sizing: border-box;
-        }
-        button {
-            padding: 10px 15px;
-            background-color: #4CAF50;
-            color: white;
-            border: none;
-            cursor: pointer;
-        }
-        #results {
-            margin-top: 20px;
-            border: 1px solid #ddd;
-            padding: 15px;
-            display: none;
-        }
-        .flight-offer {
-            border-bottom: 1px solid #eee;
-            padding: 10px 0;
-        }
+      body {
+        background-color: #f8f9fa;
+      }
+
+      .card {
+        border-radius: 0.75rem;
+        box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+      }
+
+      .card-header {
+        border-top-left-radius: 0.75rem;
+        border-top-right-radius: 0.75rem;
+      }
+
+      .flight-card {
+        border: 1px solid rgba(15, 23, 42, 0.1);
+        border-radius: 0.75rem;
+        padding: 1.25rem;
+        margin-bottom: 1rem;
+        background: #ffffff;
+        box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
+      }
+
+      .chart-container {
+        position: relative;
+        height: 320px;
+      }
+
+      #advancedBtn {
+        font-weight: 500;
+      }
+
+      #advancedOptions {
+        background: rgba(13, 110, 253, 0.04);
+        border-radius: 0.75rem;
+        padding: 1.5rem;
+        border: 1px dashed rgba(13, 110, 253, 0.3);
+      }
+
+      #loadingIndicator {
+        display: none;
+      }
     </style>
-</head>
-<body>
-    <h1>Flight Search Test</h1>
-    
-    <form id="searchForm">
-        <div class="form-group">
-            <label for="origin">Origin:</label>
-            <input type="text" id="origin" name="origin" required placeholder="e.g., JFK">
+  </head>
+  <body>
+    <div class="container py-4">
+      <header class="mb-4">
+        <h1 class="display-6 fw-semibold text-primary mb-2">Search Flights</h1>
+        <p class="text-muted mb-0">
+          Compare fares, review price history, and jump straight to Google
+          Flights.
+        </p>
+      </header>
+
+      <div class="card mb-4">
+        <div class="card-body">
+          <form id="searchForm" novalidate>
+            <div class="row g-3">
+              <div class="col-md-6">
+                <label for="origin" class="form-label">Origin</label>
+                <input
+                  type="text"
+                  id="origin"
+                  class="form-control"
+                  placeholder="e.g. JFK, New York"
+                  required
+                />
+              </div>
+              <div class="col-md-6">
+                <label for="destination" class="form-label">Destination</label>
+                <input
+                  type="text"
+                  id="destination"
+                  class="form-control"
+                  placeholder="e.g. LAX, Los Angeles"
+                  required
+                />
+              </div>
+              <div class="col-md-4">
+                <label for="departure_date" class="form-label"
+                  >Departure Date</label
+                >
+                <input
+                  type="text"
+                  id="departure_date"
+                  class="form-control"
+                  placeholder="Select date"
+                  required
+                />
+              </div>
+              <div class="col-md-4">
+                <label for="return_date" class="form-label">Return Date</label>
+                <input
+                  type="text"
+                  id="return_date"
+                  class="form-control"
+                  placeholder="Select date (optional)"
+                />
+              </div>
+              <div class="col-md-4">
+                <label for="trip_type" class="form-label">Trip Type</label>
+                <select id="trip_type" class="form-select">
+                  <option value="round_trip" selected>Round trip</option>
+                  <option value="one_way">One way</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="d-flex flex-wrap align-items-center gap-3 mt-3">
+              <button
+                type="button"
+                class="btn btn-link text-decoration-none px-0"
+                id="advancedBtn"
+              >
+                <i class="bi bi-sliders me-2"></i>Advanced options
+              </button>
+              <div class="text-muted small">
+                Adjust cabin class, stops, passengers, and currency.
+              </div>
+            </div>
+
+            <div
+              id="advancedOptions"
+              class="row g-3 mt-1"
+              style="display: none"
+            >
+              <div class="col-md-3">
+                <label for="class" class="form-label">Cabin Class</label>
+                <select id="class" class="form-select">
+                  <option value="economy" selected>Economy</option>
+                  <option value="premium_economy">Premium Economy</option>
+                  <option value="business">Business</option>
+                  <option value="first">First</option>
+                </select>
+              </div>
+              <div class="col-md-3">
+                <label for="stops" class="form-label">Stops</label>
+                <select id="stops" class="form-select">
+                  <option value="any" selected>Any</option>
+                  <option value="non_stop">Non-stop</option>
+                  <option value="1">1 stop</option>
+                  <option value="2">2+ stops</option>
+                </select>
+              </div>
+              <div class="col-md-2">
+                <label for="adults" class="form-label">Adults</label>
+                <input
+                  type="number"
+                  id="adults"
+                  class="form-control"
+                  value="1"
+                  min="1"
+                  required
+                />
+              </div>
+              <div class="col-md-2">
+                <label for="children" class="form-label">Children</label>
+                <input
+                  type="number"
+                  id="children"
+                  class="form-control"
+                  value="0"
+                  min="0"
+                />
+              </div>
+              <div class="col-md-2">
+                <label for="infantsLap" class="form-label">Infants (lap)</label>
+                <input
+                  type="number"
+                  id="infantsLap"
+                  class="form-control"
+                  value="0"
+                  min="0"
+                />
+              </div>
+              <div class="col-md-2">
+                <label for="infantsSeat" class="form-label"
+                  >Infants (seat)</label
+                >
+                <input
+                  type="number"
+                  id="infantsSeat"
+                  class="form-control"
+                  value="0"
+                  min="0"
+                />
+              </div>
+              <div class="col-md-2">
+                <label for="currency" class="form-label">Currency</label>
+                <input
+                  type="text"
+                  id="currency"
+                  class="form-control text-uppercase"
+                  value="USD"
+                  maxlength="3"
+                />
+              </div>
+            </div>
+
+            <div class="d-flex flex-wrap align-items-center gap-3 mt-4">
+              <button type="submit" class="btn btn-primary px-4">
+                <i class="bi bi-search me-2"></i>Search Flights
+              </button>
+              <div
+                id="loadingIndicator"
+                class="d-flex align-items-center text-muted"
+              >
+                <div
+                  class="spinner-border spinner-border-sm me-2"
+                  role="status"
+                  aria-hidden="true"
+                ></div>
+                Searching fares…
+              </div>
+            </div>
+          </form>
         </div>
-        
-        <div class="form-group">
-            <label for="destination">Destination:</label>
-            <input type="text" id="destination" name="destination" required placeholder="e.g., LAX">
+      </div>
+
+      <div class="card mb-4" id="priceGraphCard" style="display: none">
+        <div class="card-header bg-light">
+          <i class="bi bi-graph-up-arrow me-2 text-primary"></i>
+          Price History
         </div>
-        
-        <div class="form-group">
-            <label for="departure_date">Departure Date:</label>
-            <input type="date" id="departure_date" name="departure_date" required>
+        <div class="card-body">
+          <div class="chart-container">
+            <canvas
+              id="priceGraph"
+              role="img"
+              aria-label="Flight price history"
+            ></canvas>
+          </div>
         </div>
-        
-        <div class="form-group">
-            <label for="trip_type">Trip Type:</label>
-            <select id="trip_type" name="trip_type">
-                <option value="one_way">One Way</option>
-                <option value="round_trip">Round Trip</option>
+      </div>
+
+      <div class="card" id="resultsCard" style="display: none">
+        <div
+          class="card-header bg-white d-flex flex-wrap justify-content-between align-items-center gap-3"
+        >
+          <div>
+            <h2 class="h5 mb-0">Flight Results</h2>
+            <p class="text-muted mb-0 small">
+              We’ll sort the best fares for you—choose another ordering if you
+              prefer.
+            </p>
+          </div>
+          <div class="d-flex align-items-center gap-2">
+            <label for="sortResults" class="form-label mb-0 text-muted small"
+              >Sort by</label
+            >
+            <select id="sortResults" class="form-select form-select-sm">
+              <option value="price">Lowest price</option>
+              <option value="duration">Shortest duration</option>
+              <option value="departure">Earliest departure</option>
             </select>
+          </div>
         </div>
-        
-        <div class="form-group" id="return_date_group" style="display:none;">
-            <label for="return_date">Return Date:</label>
-            <input type="date" id="return_date" name="return_date">
+        <div class="card-body">
+          <div id="flightResults"></div>
         </div>
-        
-        <div class="form-group">
-            <label for="adults">Adults:</label>
-            <input type="number" id="adults" name="adults" min="1" value="1">
-        </div>
-        
-        <button type="submit">Search Flights</button>
-    </form>
-    
-    <div id="results">
-        <h2>Search Results</h2>
-        <div id="offers"></div>
+      </div>
     </div>
-    
-    <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            // Show/hide return date based on trip type
-            document.getElementById('trip_type').addEventListener('change', function() {
-                const returnDateGroup = document.getElementById('return_date_group');
-                if (this.value === 'round_trip') {
-                    returnDateGroup.style.display = 'block';
-                } else {
-                    returnDateGroup.style.display = 'none';
-                }
-            });
-            
-            // Handle form submission
-            document.getElementById('searchForm').addEventListener('submit', function(e) {
-                e.preventDefault();
-                
-                // Get form data
-                const formData = {
-                    origin: document.getElementById('origin').value,
-                    destination: document.getElementById('destination').value,
-                    departure_date: document.getElementById('departure_date').value,
-                    trip_type: document.getElementById('trip_type').value,
-                    adults: parseInt(document.getElementById('adults').value)
-                };
-                
-                // Add return date if round trip
-                if (formData.trip_type === 'round_trip') {
-                    formData.return_date = document.getElementById('return_date').value;
-                }
-                
-                // Log the request data
-                console.log('Sending search request:', formData);
-                
-                // Send API request
-                fetch('/api/search', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(formData)
-                })
-                .then(response => {
-                    console.log('Response status:', response.status);
-                    return response.json();
-                })
-                .then(data => {
-                    console.log('Search results:', data);
-                    displayResults(data);
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                    alert('An error occurred while searching for flights. Please try again.');
-                });
-            });
-            
-            // Create Google Flights URL based on flight details
-            function createGoogleFlightsUrl(origin, destination, departureDate, tripType = 'round_trip') {
-                // Format the date as YYYY-MM-DD
-                const formattedDate = departureDate.toISOString().split('T')[0];
-                
-                // Construct the Google Flights URL
-                const encodedOrigin = encodeURIComponent(origin);
-                const encodedDestination = encodeURIComponent(destination);
-                const encodedDate = encodeURIComponent(formattedDate);
-                
-                // Add trip type parameter
-                const tripTypeParam = tripType === 'one_way' ? '&tfs=oneway' : '';
-                
-                return `https://www.google.com/travel/flights?q=Flights%20from%20${encodedOrigin}%20to%20${encodedDestination}%20on%20${encodedDate}${tripTypeParam}`;
-            }
-            
-            // Display search results
-            function displayResults(data) {
-                const offersContainer = document.getElementById('offers');
-                offersContainer.innerHTML = '';
-                
-                if (data.offers && data.offers.length > 0) {
-                    data.offers.forEach(offer => {
-                        const offerElement = document.createElement('div');
-                        offerElement.className = 'flight-offer';
-                        
-                        // Get the first segment for Google Flights link
-                        const firstSegment = offer.segments[0];
-                        const departureDate = new Date(firstSegment.departure_time);
-                        
-                        // Use the Google Flights URL from the backend if available, otherwise fall back to client-side generation
-                        let googleFlightsUrl = offer.google_flights_url;
-                        if (!googleFlightsUrl) {
-                            // Fallback to client-side URL generation if backend URL is not available
-                            const tripType = document.getElementById('trip_type').value;
-                            googleFlightsUrl = createGoogleFlightsUrl(
-                                firstSegment.departure_airport,
-                                firstSegment.arrival_airport,
-                                departureDate,
-                                tripType
-                            );
-                        }
-                        
-                        let offerHtml = `
-                            <h3>$${offer.price} ${offer.currency}</h3>
-                            <p>Total Duration: ${Math.floor(offer.total_duration / 60)}h ${offer.total_duration % 60}m</p>
-                        `;
-                        
-                        offer.segments.forEach((segment, index) => {
-                            offerHtml += `
-                                <div class="segment">
-                                    <p><strong>${index === 0 ? 'Outbound' : 'Return'}</strong></p>
-                                    <p>${segment.departure_airport} → ${segment.arrival_airport}</p>
-                                    <p>${new Date(segment.departure_time).toLocaleString()} - ${new Date(segment.arrival_time).toLocaleString()}</p>
-                                    <p>${segment.airline} ${segment.flight_number}</p>
-                                </div>
-                            `;
-                        });
-                        
-                        // Add Google Flights link
-                        offerHtml += `
-                            <div class="flight-actions" style="margin-top: 15px;">
-                                <a href="${googleFlightsUrl}" target="_blank" style="display: inline-block; padding: 8px 15px; background-color: #4285F4; color: white; text-decoration: none; border-radius: 4px; font-weight: bold;">
-                                    View on Google Flights
-                                </a>
-                            </div>
-                        `;
-                        
-                        offerElement.innerHTML = offerHtml;
-                        offersContainer.appendChild(offerElement);
-                    });
-                    
-                    document.getElementById('results').style.display = 'block';
-                } else {
-                    offersContainer.innerHTML = '<p>No flights found matching your criteria.</p>';
-                    document.getElementById('results').style.display = 'block';
-                }
-            }
-        });
-    </script>
-</body>
+
+    <script
+      src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
+      crossorigin="anonymous"
+    ></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.js"
+      crossorigin="anonymous"
+    ></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"
+      crossorigin="anonymous"
+    ></script>
+    <script src="search.js"></script>
+  </body>
 </html>

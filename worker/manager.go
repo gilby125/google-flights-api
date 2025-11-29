@@ -15,7 +15,10 @@ import (
 	"github.com/gilby125/google-flights-api/config"
 	"github.com/gilby125/google-flights-api/db"
 	"github.com/gilby125/google-flights-api/flights"
+	"github.com/gilby125/google-flights-api/iata"
+	"github.com/gilby125/google-flights-api/pkg/geo"
 	"github.com/gilby125/google-flights-api/queue"
+	"github.com/redis/go-redis/v9"
 	"golang.org/x/text/currency"
 	"golang.org/x/text/language"
 )
@@ -91,6 +94,24 @@ func timeToNullTime(t time.Time) sql.NullTime {
 	return sql.NullTime{Time: t, Valid: true}
 }
 
+// calculateDistanceAndCostPerMile returns distance in miles and cost per mile for a route.
+// Uses IATA airport coordinates for calculation. Returns null values if coordinates are unavailable.
+func calculateDistanceAndCostPerMile(origin, destination string, price float64) (sql.NullFloat64, sql.NullFloat64) {
+	originLoc := iata.IATATimeZone(origin)
+	destLoc := iata.IATATimeZone(destination)
+
+	// Check if we have valid coordinates (non-zero lat/lon)
+	if (originLoc.Lat == 0 && originLoc.Lon == 0) || (destLoc.Lat == 0 && destLoc.Lon == 0) {
+		return sql.NullFloat64{}, sql.NullFloat64{}
+	}
+
+	distance := geo.Haversine(originLoc.Lat, originLoc.Lon, destLoc.Lat, destLoc.Lon)
+	costPerMile := geo.CostPerMile(price, distance)
+
+	return sql.NullFloat64{Float64: distance, Valid: true},
+		sql.NullFloat64{Float64: costPerMile, Valid: true}
+}
+
 func flightsToJSON(flights []flights.Flight) []byte {
 	legs := make([]map[string]any, 0, len(flights))
 	for _, f := range flights {
@@ -160,34 +181,67 @@ type WorkerStatus struct {
 
 // Manager manages a pool of workers
 type Manager struct {
-	queue        queue.Queue
-	postgresDB   db.PostgresDB    // Changed type from pointer to interface
-	neo4jDB      db.Neo4jDatabase // Use the interface type
-	config       config.WorkerConfig
-	workers      []*Worker
-	stopChan     chan struct{}
-	workerWg     sync.WaitGroup
-	flightCache  map[string]*flights.Session
-	cacheMutex   sync.RWMutex
-	scheduler    *Scheduler
-	statsMutex   sync.RWMutex
-	workerStates []*workerState
+	queue         queue.Queue
+	postgresDB    db.PostgresDB    // Changed type from pointer to interface
+	neo4jDB       db.Neo4jDatabase // Use the interface type
+	config        config.WorkerConfig
+	workers       []*Worker
+	stopChan      chan struct{}
+	workerWg      sync.WaitGroup
+	flightCache   map[string]*flights.Session
+	cacheMutex    sync.RWMutex
+	scheduler     *Scheduler
+	statsMutex    sync.RWMutex
+	workerStates  []*workerState
+	leaderElector *LeaderElector
+	redisClient   *redis.Client
 }
 
-// NewManager creates a new worker manager
-func NewManager(queue queue.Queue, postgresDB db.PostgresDB, neo4jDB db.Neo4jDatabase, config config.WorkerConfig) *Manager { // Changed neo4jDB parameter type to interface
+// NewManager creates a new worker manager.
+// If redisClient is provided, leader election is enabled for the scheduler.
+// If redisClient is nil, the scheduler runs on every instance (legacy behavior).
+func NewManager(queue queue.Queue, redisClient *redis.Client, postgresDB db.PostgresDB, neo4jDB db.Neo4jDatabase, config config.WorkerConfig) *Manager {
 	// Pass nil for Cronner to use the default cron instance
 	scheduler := NewScheduler(queue, postgresDB, nil)
-	return &Manager{
+	m := &Manager{
 		queue:        queue,
-		postgresDB:   postgresDB, // Use unexported field name
-		neo4jDB:      neo4jDB,    // Use unexported field name
+		postgresDB:   postgresDB,
+		neo4jDB:      neo4jDB,
 		config:       config,
 		stopChan:     make(chan struct{}),
 		flightCache:  make(map[string]*flights.Session),
 		scheduler:    scheduler,
 		workerStates: make([]*workerState, config.Concurrency),
+		redisClient:  redisClient,
 	}
+
+	// Create leader elector if Redis client is provided
+	if redisClient != nil {
+		m.leaderElector = NewLeaderElector(
+			redisClient,
+			config.SchedulerLockKey,
+			config.SchedulerLockTTL,
+			config.SchedulerLockRenew,
+			m.onBecomeLeader,
+			m.onLoseLeader,
+		)
+	}
+
+	return m
+}
+
+// onBecomeLeader is called when this instance becomes the scheduler leader.
+func (m *Manager) onBecomeLeader() {
+	log.Println("This instance became the scheduler leader - starting scheduler")
+	if err := m.scheduler.Start(); err != nil {
+		log.Printf("Failed to start scheduler after becoming leader: %v", err)
+	}
+}
+
+// onLoseLeader is called when this instance loses scheduler leadership.
+func (m *Manager) onLoseLeader() {
+	log.Println("This instance lost scheduler leadership - stopping scheduler")
+	m.scheduler.Stop()
 }
 
 // updateWorkerState applies the provided update function while holding the mutex.
@@ -239,7 +293,8 @@ func (m *Manager) WorkerStatuses() []WorkerStatus {
 	return statuses
 }
 
-// Start starts the worker pool and scheduler
+// Start starts the worker pool and scheduler.
+// If leader election is enabled, only the leader instance runs the scheduler.
 func (m *Manager) Start() {
 	log.Printf("Starting worker pool with %d workers", m.config.Concurrency)
 
@@ -255,7 +310,7 @@ func (m *Manager) Start() {
 	}
 	m.statsMutex.Unlock()
 
-	// Create and start workers
+	// Create and start workers (ALL instances run workers)
 	for i := 0; i < m.config.Concurrency; i++ {
 		worker := &Worker{
 			postgresDB: m.postgresDB,
@@ -267,15 +322,22 @@ func (m *Manager) Start() {
 		go m.runWorker(i, worker)
 	}
 
-	// Start the scheduler
-	if err := m.scheduler.Start(); err != nil {
-		log.Printf("Warning: Failed to start scheduler: %v", err)
+	// Start leader election if enabled, otherwise start scheduler directly
+	if m.leaderElector != nil {
+		m.leaderElector.Start()
+		log.Println("Leader election started - scheduler will run on leader instance only")
 	} else {
-		log.Println("Scheduler started successfully")
+		// Legacy behavior: start scheduler on every instance
+		if err := m.scheduler.Start(); err != nil {
+			log.Printf("Warning: Failed to start scheduler: %v", err)
+		} else {
+			log.Println("Scheduler started successfully (no leader election)")
+		}
 	}
 }
 
-// Stop stops the worker pool and scheduler
+// Stop stops the worker pool and scheduler.
+// If leader election is enabled, it releases leadership first.
 func (m *Manager) Stop() {
 	log.Println("Stopping worker pool and scheduler")
 
@@ -290,8 +352,13 @@ func (m *Manager) Stop() {
 	}
 	m.statsMutex.Unlock()
 
-	// Stop the scheduler
-	m.scheduler.Stop()
+	// Stop leader election first (releases lock and stops scheduler if leader)
+	if m.leaderElector != nil {
+		m.leaderElector.Stop()
+	} else {
+		// Legacy behavior: stop scheduler directly
+		m.scheduler.Stop()
+	}
 
 	// Signal all workers to stop
 	close(m.stopChan)
@@ -805,6 +872,7 @@ func (m *Manager) processBulkSearch(ctx context.Context, worker *Worker, session
 
 					if bulkSearchID > 0 {
 						for _, offer := range offers {
+							distanceMiles, costPerMile := calculateDistanceAndCostPerMile(origin, destination, offer.Price)
 							offerRecord := db.BulkSearchOfferRecord{
 								BulkSearchID:         bulkSearchID,
 								Origin:               origin,
@@ -820,6 +888,8 @@ func (m *Manager) processBulkSearch(ctx context.Context, worker *Worker, session
 								DstCity:              nullString(offer.DstCity),
 								FlightDuration:       durationToNullMinutes(offer.FlightDuration),
 								ReturnFlightDuration: durationToNullMinutes(offer.ReturnFlightDuration),
+								DistanceMiles:        distanceMiles,
+								CostPerMile:          costPerMile,
 								OutboundFlightsJSON:  flightsToJSON(offer.Flight),
 								ReturnFlightsJSON:    flightsToJSON(offer.ReturnFlight),
 								OfferJSON:            offerToJSON(offer),
@@ -845,6 +915,12 @@ func (m *Manager) processBulkSearch(ctx context.Context, worker *Worker, session
 	// Store the lowest fare results summary
 	log.Printf("Bulk search summary: found lowest fares for %d out of %d routes", len(routeResults), totalRoutes)
 	for routeKey, result := range routeResults {
+		// Skip routes with no valid offers (Price == math.MaxFloat64 is the sentinel value)
+		if result.BestOffer.Price >= math.MaxFloat64 {
+			log.Printf("Skipping storage for route %s: no valid offers found", routeKey)
+			continue
+		}
+
 		// Store the best offer for each route
 		bestSearchPayload := FlightSearchPayload{
 			Origin:        result.Origin,
@@ -1120,6 +1196,7 @@ func (m *Manager) processPriceGraphSweep(ctx context.Context, worker *Worker, se
 				}
 
 				for _, offer := range offers {
+					distanceMiles, costPerMile := calculateDistanceAndCostPerMile(origin, destination, offer.Price)
 					record := db.PriceGraphResultRecord{
 						SweepID:       sweepID,
 						Origin:        origin,
@@ -1129,6 +1206,8 @@ func (m *Manager) processPriceGraphSweep(ctx context.Context, worker *Worker, se
 						TripLength:    nullInt32(length),
 						Price:         offer.Price,
 						Currency:      strings.ToUpper(payload.Currency),
+						DistanceMiles: distanceMiles,
+						CostPerMile:   costPerMile,
 						QueriedAt:     time.Now(),
 					}
 

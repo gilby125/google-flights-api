@@ -51,7 +51,7 @@ func (f Flight) String() string {
 type Offer struct {
 	StartDate  time.Time // start date of the offer
 	ReturnDate time.Time // return date of the offer
-	Price      float64   // price of the offer
+	Price      float64   // price of the offer (0 means price unavailable)
 }
 
 func (o Offer) String() string {

@@ -619,8 +619,9 @@ func (p *PostgresDBImpl) InsertBulkSearchOffer(ctx context.Context, record BulkS
 			(bulk_search_id, origin, destination, departure_date, return_date,
 			 price, currency, airline_codes, src_airport_code, dst_airport_code,
 			 src_city, dst_city, flight_duration, return_flight_duration,
+			 distance_miles, cost_per_mile,
 			 outbound_flights, return_flights, offer_json)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
 		record.BulkSearchID,
 		record.Origin,
 		record.Destination,
@@ -635,6 +636,8 @@ func (p *PostgresDBImpl) InsertBulkSearchOffer(ctx context.Context, record BulkS
 		record.DstCity,
 		record.FlightDuration,
 		record.ReturnFlightDuration,
+		record.DistanceMiles,
+		record.CostPerMile,
 		record.OutboundFlightsJSON,
 		record.ReturnFlightsJSON,
 		record.OfferJSON,
@@ -649,7 +652,8 @@ func (p *PostgresDBImpl) QueryBulkSearchOffersPaginated(ctx context.Context, sea
 	return p.db.QueryContext(ctx,
 		`SELECT origin, destination, departure_date, return_date, price, currency,
 			airline_codes, src_airport_code, dst_airport_code, src_city, dst_city,
-			flight_duration, return_flight_duration, outbound_flights, return_flights, offer_json, created_at
+			flight_duration, return_flight_duration, distance_miles, cost_per_mile,
+			outbound_flights, return_flights, offer_json, created_at
 		 FROM bulk_search_offers
 		 WHERE bulk_search_id = $1
 		 ORDER BY price ASC
@@ -662,7 +666,8 @@ func (p *PostgresDBImpl) ListBulkSearchOffers(ctx context.Context, searchID int)
 	rows, err := p.db.QueryContext(ctx,
 		`SELECT id, bulk_search_id, origin, destination, departure_date, return_date, price, currency,
 			airline_codes, src_airport_code, dst_airport_code, src_city, dst_city,
-			flight_duration, return_flight_duration, outbound_flights, return_flights, offer_json, created_at
+			flight_duration, return_flight_duration, distance_miles, cost_per_mile,
+			outbound_flights, return_flights, offer_json, created_at
 		 FROM bulk_search_offers
 		 WHERE bulk_search_id = $1
 		 ORDER BY origin, destination, departure_date, return_date NULLS FIRST, price ASC, created_at ASC`,
@@ -696,6 +701,8 @@ func (p *PostgresDBImpl) ListBulkSearchOffers(ctx context.Context, searchID int)
 			&offer.DstCity,
 			&offer.FlightDuration,
 			&offer.ReturnFlightDuration,
+			&offer.DistanceMiles,
+			&offer.CostPerMile,
 			&offer.OutboundFlights,
 			&offer.ReturnFlights,
 			&offer.OfferJSON,
@@ -871,8 +878,8 @@ func (p *PostgresDBImpl) InsertPriceGraphResult(ctx context.Context, record Pric
 	_, err := p.db.ExecContext(ctx,
 		`INSERT INTO price_graph_results
 			(sweep_id, origin, destination, departure_date, return_date,
-			 trip_length, price, currency, queried_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+			 trip_length, price, currency, distance_miles, cost_per_mile, queried_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
 		record.SweepID,
 		record.Origin,
 		record.Destination,
@@ -881,6 +888,8 @@ func (p *PostgresDBImpl) InsertPriceGraphResult(ctx context.Context, record Pric
 		record.TripLength,
 		record.Price,
 		record.Currency,
+		record.DistanceMiles,
+		record.CostPerMile,
 		record.QueriedAt,
 	)
 	if err != nil {
@@ -1003,7 +1012,7 @@ func (p *PostgresDBImpl) InitSchema() error {
         CREATE TABLE IF NOT EXISTS flight_prices (
             id SERIAL PRIMARY KEY,
             flight_id INTEGER REFERENCES flights(id),
-            price DECIMAL(10, 2) NOT NULL,
+            price DECIMAL(12, 2) NOT NULL,
             currency VARCHAR(3) NOT NULL,
             cabin_class VARCHAR(20) NOT NULL,
             search_date TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -1102,8 +1111,8 @@ func (p *PostgresDBImpl) InitSchema() error {
             class VARCHAR(20) NOT NULL,
             stops VARCHAR(20) NOT NULL,
             currency VARCHAR(3) NOT NULL,
-            min_price DECIMAL(10, 2),
-            max_price DECIMAL(10, 2),
+            min_price DECIMAL(12, 2),
+            max_price DECIMAL(12, 2),
             search_time TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
             created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
             search_query_id INTEGER REFERENCES search_queries(id)
@@ -1118,7 +1127,7 @@ func (p *PostgresDBImpl) InitSchema() error {
         CREATE TABLE IF NOT EXISTS flight_offers (
             id SERIAL PRIMARY KEY,
             search_id UUID NOT NULL,
-            price DECIMAL(10, 2) NOT NULL,
+            price DECIMAL(12, 2) NOT NULL,
             currency VARCHAR(3) NOT NULL,
             airline_codes TEXT[] NOT NULL,
             outbound_duration INTEGER NOT NULL,
@@ -1169,9 +1178,9 @@ func (p *PostgresDBImpl) InitSchema() error {
             created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
             updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
             completed_at TIMESTAMP WITH TIME ZONE,
-            min_price DECIMAL(10, 2),
-			max_price DECIMAL(10, 2),
-			average_price DECIMAL(10, 2)
+            min_price DECIMAL(12, 2),
+			max_price DECIMAL(12, 2),
+			average_price DECIMAL(12, 2)
         )
     `)
 	if err != nil {
@@ -1187,7 +1196,7 @@ func (p *PostgresDBImpl) InitSchema() error {
             destination VARCHAR(3) NOT NULL,
             departure_date DATE NOT NULL,
             return_date DATE,
-            price DECIMAL(10, 2) NOT NULL,
+            price DECIMAL(12, 2) NOT NULL,
             currency VARCHAR(3) NOT NULL,
             airline_code VARCHAR(3),
             duration INTEGER,
@@ -1216,7 +1225,7 @@ func (p *PostgresDBImpl) InitSchema() error {
             destination VARCHAR(3) NOT NULL,
             departure_date DATE NOT NULL,
             return_date DATE,
-            price DECIMAL(10, 2) NOT NULL,
+            price DECIMAL(12, 2) NOT NULL,
             currency VARCHAR(3) NOT NULL,
             airline_codes TEXT[],
             src_airport_code VARCHAR(3),
@@ -1272,6 +1281,48 @@ func (p *PostgresDBImpl) InitSchema() error {
 		return fmt.Errorf("failed to create app_secrets table: %w", err)
 	}
 
+	// Create price_graph_sweeps table
+	_, err = p.db.Exec(`
+        CREATE TABLE IF NOT EXISTS price_graph_sweeps (
+            id SERIAL PRIMARY KEY,
+            job_id INTEGER REFERENCES scheduled_jobs(id),
+            status VARCHAR(32) NOT NULL DEFAULT 'queued',
+            origin_count INTEGER NOT NULL DEFAULT 0,
+            destination_count INTEGER NOT NULL DEFAULT 0,
+            trip_length_min INTEGER,
+            trip_length_max INTEGER,
+            currency VARCHAR(3) NOT NULL DEFAULT 'USD',
+            error_count INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+            started_at TIMESTAMP WITH TIME ZONE,
+            completed_at TIMESTAMP WITH TIME ZONE
+        )
+    `)
+	if err != nil {
+		return fmt.Errorf("failed to create price_graph_sweeps table: %w", err)
+	}
+
+	// Create price_graph_results table
+	_, err = p.db.Exec(`
+        CREATE TABLE IF NOT EXISTS price_graph_results (
+            id SERIAL PRIMARY KEY,
+            sweep_id INTEGER NOT NULL REFERENCES price_graph_sweeps(id) ON DELETE CASCADE,
+            origin VARCHAR(3) NOT NULL,
+            destination VARCHAR(3) NOT NULL,
+            departure_date DATE NOT NULL,
+            return_date DATE,
+            trip_length INTEGER,
+            price DECIMAL(12, 2) NOT NULL,
+            currency VARCHAR(3) NOT NULL,
+            queried_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+            created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+        )
+    `)
+	if err != nil {
+		return fmt.Errorf("failed to create price_graph_results table: %w", err)
+	}
+
 	// Create indexes for better query performance
 	_, err = p.db.Exec(`
         CREATE INDEX IF NOT EXISTS idx_airports_code ON airports(code);
@@ -1285,6 +1336,8 @@ func (p *PostgresDBImpl) InitSchema() error {
         CREATE INDEX IF NOT EXISTS idx_bulk_searches_status ON bulk_searches(status);
         CREATE INDEX IF NOT EXISTS idx_bulk_search_results_search_id ON bulk_search_results(bulk_search_id);
         CREATE INDEX IF NOT EXISTS idx_bulk_search_offers_search_id ON bulk_search_offers(bulk_search_id);
+        CREATE INDEX IF NOT EXISTS idx_price_graph_results_sweep_id ON price_graph_results(sweep_id);
+        CREATE INDEX IF NOT EXISTS idx_price_graph_results_route_date ON price_graph_results(origin, destination, departure_date);
     `)
 	if err != nil {
 		return fmt.Errorf("failed to create indexes: %w", err)

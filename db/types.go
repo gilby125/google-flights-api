@@ -193,6 +193,8 @@ type PriceGraphResult struct {
 	TripLength    sql.NullInt32
 	Price         float64
 	Currency      string
+	DistanceMiles sql.NullFloat64
+	CostPerMile   sql.NullFloat64
 	QueriedAt     time.Time
 	CreatedAt     time.Time
 }
@@ -207,6 +209,8 @@ type PriceGraphResultRecord struct {
 	TripLength    sql.NullInt32
 	Price         float64
 	Currency      string
+	DistanceMiles sql.NullFloat64
+	CostPerMile   sql.NullFloat64
 	QueriedAt     time.Time
 }
 
@@ -249,6 +253,8 @@ type BulkSearchOffer struct {
 	DstCity              sql.NullString
 	FlightDuration       sql.NullInt32
 	ReturnFlightDuration sql.NullInt32
+	DistanceMiles        sql.NullFloat64
+	CostPerMile          sql.NullFloat64
 	OutboundFlights      json.RawMessage
 	ReturnFlights        json.RawMessage
 	OfferJSON            json.RawMessage
@@ -271,6 +277,8 @@ type BulkSearchOfferRecord struct {
 	DstCity              sql.NullString
 	FlightDuration       sql.NullInt32
 	ReturnFlightDuration sql.NullInt32
+	DistanceMiles        sql.NullFloat64
+	CostPerMile          sql.NullFloat64
 	OutboundFlightsJSON  []byte
 	ReturnFlightsJSON    []byte
 	OfferJSON            []byte

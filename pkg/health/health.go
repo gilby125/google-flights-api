@@ -21,12 +21,12 @@ const (
 
 // Check represents a single health check
 type Check struct {
-	Name        string            `json:"name"`
-	Status      Status            `json:"status"`
-	Message     string            `json:"message,omitempty"`
-	Details     map[string]string `json:"details,omitempty"`
-	Duration    time.Duration     `json:"duration"`
-	Timestamp   time.Time         `json:"timestamp"`
+	Name      string            `json:"name"`
+	Status    Status            `json:"status"`
+	Message   string            `json:"message,omitempty"`
+	Details   map[string]string `json:"details,omitempty"`
+	Duration  time.Duration     `json:"duration"`
+	Timestamp time.Time         `json:"timestamp"`
 }
 
 // HealthReport represents the overall health of the application
@@ -261,7 +261,7 @@ func (h *HealthChecker) CheckHealth(ctx context.Context) HealthReport {
 func (h *HealthChecker) CheckReadiness(ctx context.Context) HealthReport {
 	// For readiness, we only check essential components
 	readinessCheckers := make([]Checker, 0)
-	
+
 	// Add only critical checkers for readiness
 	for _, checker := range h.checkers {
 		switch checker.(type) {
@@ -300,7 +300,7 @@ func (h *HealthChecker) CheckLiveness(ctx context.Context) HealthReport {
 		Status:    StatusUp,
 		Version:   h.version,
 		Timestamp: time.Now(),
-		Checks:    map[string]Check{
+		Checks: map[string]Check{
 			"application": {
 				Name:      "application",
 				Status:    StatusUp,

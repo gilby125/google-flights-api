@@ -68,6 +68,11 @@
                         </a>
                     </li>
                     <li class="nav-item">
+                        <a class="nav-link" href="#price-graph">
+                            <i class="bi bi-graph-up-arrow me-2"></i>Price Graph Sweeps
+                        </a>
+                    </li>
+                    <li class="nav-item">
                         <a class="nav-link" href="bulk.html">
                             <i class="bi bi-table me-2"></i>Bulk Results
                         </a>
@@ -177,6 +182,188 @@
                             </thead>
                             <tbody id="queueTable"></tbody>
                         </table>
+                    </div>
+                </section>
+
+                <section class="mt-5" id="price-graph">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <div>
+                            <h2 class="h4 mb-1">Price Graph Sweeps</h2>
+                            <p class="text-muted mb-0">
+                                Launch grid sweeps to capture low-fare snapshots and review recent runs.
+                            </p>
+                        </div>
+                        <button class="btn btn-outline-secondary" id="refreshSweepsBtn">
+                            <i class="bi bi-arrow-clockwise me-1"></i>Refresh Sweeps
+                        </button>
+                    </div>
+
+                    <div class="row g-4">
+                        <div class="col-lg-5">
+                            <div class="card shadow-sm h-100">
+                                <div class="card-header bg-primary text-white">
+                                    <i class="bi bi-rocket-takeoff me-2"></i>Enqueue Price Graph Sweep
+                                </div>
+                                <div class="card-body">
+                                    <form id="priceGraphForm" novalidate>
+                                        <div class="mb-3">
+                                            <label for="pgOrigins" class="form-label">Origins</label>
+                                            <textarea class="form-control" id="pgOrigins" rows="2" placeholder="e.g. JFK, BOS, EWR" required></textarea>
+                                            <div class="form-text">Comma-separated airport codes.</div>
+                                        </div>
+                                        <div class="mb-3">
+                                            <label for="pgDestinations" class="form-label">Destinations</label>
+                                            <textarea class="form-control" id="pgDestinations" rows="2" placeholder="e.g. LAX, SFO" required></textarea>
+                                            <div class="form-text">Comma-separated airport codes.</div>
+                                        </div>
+                                        <div class="row g-3 mb-3">
+                                            <div class="col-md-6">
+                                                <label for="pgDepartureFrom" class="form-label">Departure Start</label>
+                                                <input type="date" class="form-control" id="pgDepartureFrom" required>
+                                            </div>
+                                            <div class="col-md-6">
+                                                <label for="pgDepartureTo" class="form-label">Departure End</label>
+                                                <input type="date" class="form-control" id="pgDepartureTo" required>
+                                            </div>
+                                        </div>
+                                        <div class="mb-3">
+                                            <label for="pgTripLengths" class="form-label">Trip Lengths</label>
+                                            <input type="text" class="form-control" id="pgTripLengths" placeholder="e.g. 3,5,7">
+                                            <div class="form-text">Optional comma-separated nights. Leave blank for 0-night sweeps.</div>
+                                        </div>
+                                        <div class="row g-3 mb-3">
+                                            <div class="col-md-6">
+                                                <label for="pgTripType" class="form-label">Trip Type</label>
+                                                <select class="form-select" id="pgTripType" required>
+                                                    <option value="round_trip" selected>Round trip</option>
+                                                    <option value="one_way">One-way</option>
+                                                </select>
+                                            </div>
+                                            <div class="col-md-6">
+                                                <label for="pgClass" class="form-label">Cabin Class</label>
+                                                <select class="form-select" id="pgClass" required>
+                                                    <option value="economy" selected>Economy</option>
+                                                    <option value="premium_economy">Premium Economy</option>
+                                                    <option value="business">Business</option>
+                                                    <option value="first">First</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                        <div class="row g-3 mb-3">
+                                            <div class="col-md-6">
+                                                <label for="pgStops" class="form-label">Stops</label>
+                                                <select class="form-select" id="pgStops" required>
+                                                    <option value="any" selected>Any</option>
+                                                    <option value="nonstop">Nonstop</option>
+                                                    <option value="one_stop">One stop</option>
+                                                    <option value="two_stops">Two stops</option>
+                                                    <option value="two_stops_plus">Two+ stops</option>
+                                                </select>
+                                            </div>
+                                            <div class="col-md-6">
+                                                <label for="pgCurrency" class="form-label">Currency</label>
+                                                <input type="text" class="form-control text-uppercase" id="pgCurrency" value="USD" maxlength="3" required>
+                                            </div>
+                                        </div>
+                                        <div class="row g-3 mb-3">
+                                            <div class="col-md-3">
+                                                <label for="pgAdults" class="form-label">Adults</label>
+                                                <input type="number" class="form-control" id="pgAdults" min="1" value="1" required>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <label for="pgChildren" class="form-label">Children</label>
+                                                <input type="number" class="form-control" id="pgChildren" min="0" value="0">
+                                            </div>
+                                            <div class="col-md-3">
+                                                <label for="pgInfantsLap" class="form-label">Infants (lap)</label>
+                                                <input type="number" class="form-control" id="pgInfantsLap" min="0" value="0">
+                                            </div>
+                                            <div class="col-md-3">
+                                                <label for="pgInfantsSeat" class="form-label">Infants (seat)</label>
+                                                <input type="number" class="form-control" id="pgInfantsSeat" min="0" value="0">
+                                            </div>
+                                        </div>
+                                        <div class="mb-3">
+                                            <label for="pgRateLimit" class="form-label">Rate Limit (ms)</label>
+                                            <input type="number" class="form-control" id="pgRateLimit" min="0" placeholder="750">
+                                            <div class="form-text">Optional delay between Google Flights requests. Defaults to 750ms.</div>
+                                        </div>
+                                        <div class="d-grid">
+                                            <button type="submit" class="btn btn-primary" id="submitPriceGraphBtn">
+                                                <i class="bi bi-play-fill me-1"></i>Enqueue Sweep
+                                            </button>
+                                        </div>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-lg-7">
+                            <div class="card shadow-sm mb-4">
+                                <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                                    <span><i class="bi bi-clock-history me-2 text-secondary"></i>Recent Sweeps</span>
+                                    <small class="text-muted" id="sweepsStatus"></small>
+                                </div>
+                                <div class="card-body p-0">
+                                    <div class="table-responsive">
+                                        <table class="table table-striped table-hover mb-0">
+                                            <thead class="table-light">
+                                                <tr>
+                                                    <th scope="col">ID</th>
+                                                    <th scope="col">Status</th>
+                                                    <th scope="col">Coverage</th>
+                                                    <th scope="col">Trip Lengths</th>
+                                                    <th scope="col">Errors</th>
+                                                    <th scope="col">Updated</th>
+                                                    <th scope="col" class="text-end">Actions</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="priceGraphTable">
+                                                <tr>
+                                                    <td colspan="7" class="text-center py-4 text-muted" id="priceGraphEmpty">
+                                                        No sweeps yet. Submit the form to get started.
+                                                    </td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="card shadow-sm">
+                                <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                                    <span>
+                                        <i class="bi bi-grid-3x3-gap me-2 text-primary"></i>
+                                        Sweep Results
+                                    </span>
+                                    <div class="d-flex align-items-center gap-2">
+                                        <span class="text-muted" id="priceGraphResultsMeta">Select a sweep to view results.</span>
+                                        <button class="btn btn-outline-secondary btn-sm" id="exportResultsBtn" disabled>
+                                            <i class="bi bi-download me-1"></i>Export CSV
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="card-body p-0">
+                                    <div class="table-responsive">
+                                        <table class="table table-sm table-hover align-middle mb-0">
+                                            <thead class="table-light">
+                                                <tr>
+                                                    <th scope="col">Route</th>
+                                                    <th scope="col">Departs</th>
+                                                    <th scope="col">Returns</th>
+                                                    <th scope="col">Trip</th>
+                                                    <th scope="col" class="text-end">Price</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="priceGraphResultsTable">
+                                                <tr>
+                                                    <td colspan="5" class="text-center py-4 text-muted">Results will appear here.</td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </section>
             </main>

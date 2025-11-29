@@ -30,7 +30,7 @@ func main() {
 		Format: cfg.LoggingConfig.Format,
 	})
 
-	logger.Info("Starting Google Flights API server", 
+	logger.Info("Starting Google Flights API server",
 		"version", "1.0.0",
 		"environment", cfg.Environment,
 		"port", cfg.Port)
@@ -69,13 +69,16 @@ func main() {
 
 	// Initialize queue
 	logger.Info("Connecting to Redis queue...")
-	queue, err := queue.NewRedisQueue(cfg.RedisConfig)
+	redisQueue, err := queue.NewRedisQueue(cfg.RedisConfig)
 	if err != nil {
 		logger.Fatal(err, "Failed to connect to Redis", "host", cfg.RedisConfig.Host)
 	}
 
-	// Initialize worker manager
-	workerManager := worker.NewManager(queue, postgresDB, neo4jDB, cfg.WorkerConfig)
+	// Get Redis client for leader election
+	redisClient := redisQueue.GetClient()
+
+	// Initialize worker manager with Redis client for distributed leader election
+	workerManager := worker.NewManager(redisQueue, redisClient, postgresDB, neo4jDB, cfg.WorkerConfig)
 
 	// Start worker pool if enabled
 	if cfg.WorkerEnabled {
@@ -91,7 +94,7 @@ func main() {
 	router.LoadHTMLGlob("templates/*html")
 
 	// Register all API routes from the api package
-	api.RegisterRoutes(router, postgresDB, neo4jDB, queue, workerManager, cfg)
+	api.RegisterRoutes(router, postgresDB, neo4jDB, redisQueue, workerManager, cfg)
 
 	// Start HTTP server
 	srv := &http.Server{
@@ -124,4 +127,3 @@ func main() {
 
 	logger.Info("Server exited gracefully")
 }
-
