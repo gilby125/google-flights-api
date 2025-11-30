@@ -17,6 +17,10 @@ import (
 	"github.com/stretchr/testify/mock" // Need mock
 )
 
+func dateOnly(t time.Time) api.DateOnly {
+	return api.DateOnly{Time: time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)}
+}
+
 func TestCreateSearch(t *testing.T) {
 	// Using local router and mock queue for this test suite
 
@@ -32,7 +36,7 @@ func TestCreateSearch(t *testing.T) {
 			payload: api.SearchRequest{
 				Origin:        "JFK",
 				Destination:   "LAX",
-				DepartureDate: time.Now().AddDate(0, 0, 7),
+				DepartureDate: dateOnly(time.Now().AddDate(0, 0, 7)),
 				Adults:        1,
 				TripType:      "one_way",
 				Class:         "economy",
@@ -49,8 +53,8 @@ func TestCreateSearch(t *testing.T) {
 			payload: api.SearchRequest{
 				Origin:        "JFK",
 				Destination:   "LAX",
-				DepartureDate: time.Now().AddDate(0, 0, 7),
-				ReturnDate:    time.Now().AddDate(0, 0, 14),
+				DepartureDate: dateOnly(time.Now().AddDate(0, 0, 7)),
+				ReturnDate:    dateOnly(time.Now().AddDate(0, 0, 14)),
 				Adults:        2,
 				TripType:      "round_trip",
 				Class:         "premium_economy",
@@ -67,7 +71,7 @@ func TestCreateSearch(t *testing.T) {
 			payload: api.SearchRequest{
 				Origin:        "LHR",
 				Destination:   "SYD",
-				DepartureDate: time.Now().AddDate(0, 1, 0),
+				DepartureDate: dateOnly(time.Now().AddDate(0, 1, 0)),
 				Adults:        1,
 				TripType:      "one_way",
 				Class:         "business",
@@ -98,7 +102,7 @@ func TestCreateSearch(t *testing.T) {
 			payload: api.SearchRequest{
 				Origin:        "JFK",
 				Destination:   "LAX",
-				DepartureDate: time.Now().AddDate(0, 0, -1), // Past date should fail validation
+				DepartureDate: dateOnly(time.Now().AddDate(0, 0, -1)), // Past date should fail validation
 				Adults:        1,
 				TripType:      "one_way",
 				Class:         "economy",
@@ -113,8 +117,8 @@ func TestCreateSearch(t *testing.T) {
 			payload: api.SearchRequest{
 				Origin:        "JFK",
 				Destination:   "LAX",
-				DepartureDate: time.Now().AddDate(0, 0, 14),
-				ReturnDate:    time.Now().AddDate(0, 0, 7), // Before departure should fail validation
+				DepartureDate: dateOnly(time.Now().AddDate(0, 0, 14)),
+				ReturnDate:    dateOnly(time.Now().AddDate(0, 0, 7)), // Before departure should fail validation
 				Adults:        1,
 				TripType:      "round_trip",
 				Class:         "economy",
@@ -129,7 +133,7 @@ func TestCreateSearch(t *testing.T) {
 			payload: api.SearchRequest{
 				Origin:        "JFK",
 				Destination:   "LAX",
-				DepartureDate: time.Now().AddDate(0, 0, 7),
+				DepartureDate: dateOnly(time.Now().AddDate(0, 0, 7)),
 				Adults:        1,
 				TripType:      "multi_city", // Invalid
 				Class:         "economy",
@@ -144,7 +148,7 @@ func TestCreateSearch(t *testing.T) {
 			payload: api.SearchRequest{
 				Origin:        "JFK",
 				Destination:   "LAX",
-				DepartureDate: time.Now().AddDate(0, 0, 7),
+				DepartureDate: dateOnly(time.Now().AddDate(0, 0, 7)),
 				Adults:        1,
 				TripType:      "one_way",
 				Class:         "economy",
@@ -159,7 +163,7 @@ func TestCreateSearch(t *testing.T) {
 			payload: api.SearchRequest{
 				Origin:        "JFK",
 				Destination:   "LAX",
-				DepartureDate: time.Now().AddDate(0, 0, 7),
+				DepartureDate: dateOnly(time.Now().AddDate(0, 0, 7)),
 				Adults:        1,
 				TripType:      "one_way",
 				Class:         "invalid_class", // Invalid
@@ -174,7 +178,7 @@ func TestCreateSearch(t *testing.T) {
 			payload: api.SearchRequest{
 				Origin:        "JFK",
 				Destination:   "LAX",
-				DepartureDate: time.Now().AddDate(0, 0, 7),
+				DepartureDate: dateOnly(time.Now().AddDate(0, 0, 7)),
 				Adults:        1,
 				TripType:      "one_way",
 				Class:         "economy",
@@ -189,7 +193,7 @@ func TestCreateSearch(t *testing.T) {
 			payload: api.SearchRequest{
 				Origin:        "123", // Invalid format should fail validation
 				Destination:   "LAX",
-				DepartureDate: time.Now().AddDate(0, 0, 7),
+				DepartureDate: dateOnly(time.Now().AddDate(0, 0, 7)),
 				Adults:        1,
 				TripType:      "one_way",
 				Class:         "economy",
@@ -204,7 +208,7 @@ func TestCreateSearch(t *testing.T) {
 			payload: api.SearchRequest{
 				Origin:        "JFK",
 				Destination:   "TOOLONG", // Invalid format should fail validation
-				DepartureDate: time.Now().AddDate(0, 0, 7),
+				DepartureDate: dateOnly(time.Now().AddDate(0, 0, 7)),
 				Adults:        1,
 				TripType:      "one_way",
 				Class:         "economy",
@@ -219,7 +223,7 @@ func TestCreateSearch(t *testing.T) {
 			payload: api.SearchRequest{
 				Origin:        "JFK",
 				Destination:   "LAX",
-				DepartureDate: time.Now().AddDate(0, 0, 7),
+				DepartureDate: dateOnly(time.Now().AddDate(0, 0, 7)),
 				Adults:        0, // Invalid (min=1)
 				TripType:      "one_way",
 				Class:         "economy",
@@ -234,7 +238,7 @@ func TestCreateSearch(t *testing.T) {
 			payload: api.SearchRequest{
 				Origin:        "JFK",
 				Destination:   "LAX",
-				DepartureDate: time.Now().AddDate(0, 0, 7),
+				DepartureDate: dateOnly(time.Now().AddDate(0, 0, 7)),
 				Adults:        -1, // Invalid (min=1)
 				TripType:      "one_way",
 				Class:         "economy",

@@ -26,39 +26,75 @@ import (
 	"golang.org/x/text/language"
 )
 
+const dateLayout = "2006-01-02"
+
+// DateOnly parses YYYY-MM-DD or RFC3339 timestamps into a date (time at midnight UTC)
+type DateOnly struct {
+	time.Time
+}
+
+// UnmarshalJSON accepts either YYYY-MM-DD or RFC3339 timestamps
+func (d *DateOnly) UnmarshalJSON(b []byte) error {
+	str := strings.Trim(string(b), "\"")
+	if str == "" || str == "null" {
+		d.Time = time.Time{}
+		return nil
+	}
+
+	layouts := []string{dateLayout, time.RFC3339}
+	var lastErr error
+	for _, layout := range layouts {
+		parsed, err := time.Parse(layout, str)
+		if err == nil {
+			d.Time = parsed
+			return nil
+		}
+		lastErr = err
+	}
+	return fmt.Errorf("invalid date format %q: %w", str, lastErr)
+}
+
+// MarshalJSON renders dates as YYYY-MM-DD; zero values emit null
+func (d DateOnly) MarshalJSON() ([]byte, error) {
+	if d.Time.IsZero() {
+		return []byte("null"), nil
+	}
+	return []byte(fmt.Sprintf("\"%s\"", d.Time.Format(dateLayout))), nil
+}
+
 // SearchRequest represents a flight search request
 type SearchRequest struct {
-	Origin        string    `json:"origin" binding:"required"`
-	Destination   string    `json:"destination" binding:"required"`
-	DepartureDate time.Time `json:"departure_date" binding:"required" time_format:"2006-01-02" time_utc:"true"`
-	ReturnDate    time.Time `json:"return_date,omitempty" time_format:"2006-01-02" time_utc:"true"`
-	Adults        int       `json:"adults" binding:"required,min=1"`
-	Children      int       `json:"children" binding:"min=0"`
-	InfantsLap    int       `json:"infants_lap" binding:"min=0"`
-	InfantsSeat   int       `json:"infants_seat" binding:"min=0"`
-	TripType      string    `json:"trip_type" binding:"required,oneof=one_way round_trip"`
-	Class         string    `json:"class" binding:"required,oneof=economy premium_economy business first"`
-	Stops         string    `json:"stops" binding:"required,oneof=nonstop one_stop two_stops two_stops_plus any"` // Added two_stops_plus
-	Currency      string    `json:"currency" binding:"required,len=3"`
+	Origin        string   `json:"origin" binding:"required"`
+	Destination   string   `json:"destination" binding:"required"`
+	DepartureDate DateOnly `json:"departure_date" binding:"required"`
+	ReturnDate    DateOnly `json:"return_date,omitempty"`
+	Adults        int      `json:"adults" binding:"required,min=1"`
+	Children      int      `json:"children" binding:"min=0"`
+	InfantsLap    int      `json:"infants_lap" binding:"min=0"`
+	InfantsSeat   int      `json:"infants_seat" binding:"min=0"`
+	TripType      string   `json:"trip_type" binding:"required,oneof=one_way round_trip"`
+	Class         string   `json:"class" binding:"required,oneof=economy premium_economy business first"`
+	Stops         string   `json:"stops" binding:"required,oneof=nonstop one_stop two_stops two_stops_plus any"` // Added two_stops_plus
+	Currency      string   `json:"currency" binding:"required,len=3"`
 }
 
 // BulkSearchRequest represents a bulk flight search request
 type BulkSearchRequest struct {
-	Origins           []string  `json:"origins" binding:"required,min=1"`
-	Destinations      []string  `json:"destinations" binding:"required,min=1"`
-	DepartureDateFrom time.Time `json:"departure_date_from" binding:"required" time_format:"2006-01-02" time_utc:"true"`
-	DepartureDateTo   time.Time `json:"departure_date_to" binding:"required" time_format:"2006-01-02" time_utc:"true"`
-	ReturnDateFrom    time.Time `json:"return_date_from,omitempty" time_format:"2006-01-02" time_utc:"true"`
-	ReturnDateTo      time.Time `json:"return_date_to,omitempty" time_format:"2006-01-02" time_utc:"true"`
-	TripLength        int       `json:"trip_length,omitempty" binding:"min=0"`
-	Adults            int       `json:"adults" binding:"required,min=1"`
-	Children          int       `json:"children" binding:"min=0"`
-	InfantsLap        int       `json:"infants_lap" binding:"min=0"`
-	InfantsSeat       int       `json:"infants_seat" binding:"min=0"`
-	TripType          string    `json:"trip_type" binding:"required,oneof=one_way round_trip"`
-	Class             string    `json:"class" binding:"required,oneof=economy premium_economy business first"`
-	Stops             string    `json:"stops" binding:"required,oneof=nonstop one_stop two_stops two_stops_plus any"`
-	Currency          string    `json:"currency" binding:"required,len=3"`
+	Origins           []string `json:"origins" binding:"required,min=1"`
+	Destinations      []string `json:"destinations" binding:"required,min=1"`
+	DepartureDateFrom DateOnly `json:"departure_date_from" binding:"required"`
+	DepartureDateTo   DateOnly `json:"departure_date_to" binding:"required"`
+	ReturnDateFrom    DateOnly `json:"return_date_from,omitempty"`
+	ReturnDateTo      DateOnly `json:"return_date_to,omitempty"`
+	TripLength        int      `json:"trip_length,omitempty" binding:"min=0"`
+	Adults            int      `json:"adults" binding:"required,min=1"`
+	Children          int      `json:"children" binding:"min=0"`
+	InfantsLap        int      `json:"infants_lap" binding:"min=0"`
+	InfantsSeat       int      `json:"infants_seat" binding:"min=0"`
+	TripType          string   `json:"trip_type" binding:"required,oneof=one_way round_trip"`
+	Class             string   `json:"class" binding:"required,oneof=economy premium_economy business first"`
+	Stops             string   `json:"stops" binding:"required,oneof=nonstop one_stop two_stops two_stops_plus any"`
+	Currency          string   `json:"currency" binding:"required,len=3"`
 }
 
 // JobRequest represents a scheduled job request
@@ -113,20 +149,20 @@ type BulkJobRequest struct {
 
 // PriceGraphSweepRequest represents a request to enqueue a price graph sweep
 type PriceGraphSweepRequest struct {
-	Origins           []string  `json:"origins" binding:"required,min=1"`
-	Destinations      []string  `json:"destinations" binding:"required,min=1"`
-	DepartureDateFrom time.Time `json:"departure_date_from" binding:"required"`
-	DepartureDateTo   time.Time `json:"departure_date_to" binding:"required"`
-	TripLengths       []int     `json:"trip_lengths,omitempty"`
-	TripType          string    `json:"trip_type" binding:"required,oneof=one_way round_trip"`
-	Class             string    `json:"class" binding:"required,oneof=economy premium_economy business first"`
-	Stops             string    `json:"stops" binding:"required,oneof=nonstop one_stop two_stops two_stops_plus any"`
-	Adults            int       `json:"adults" binding:"required,min=1"`
-	Children          int       `json:"children" binding:"min=0"`
-	InfantsLap        int       `json:"infants_lap" binding:"min=0"`
-	InfantsSeat       int       `json:"infants_seat" binding:"min=0"`
-	Currency          string    `json:"currency" binding:"required,len=3"`
-	RateLimitMillis   int       `json:"rate_limit_millis,omitempty" binding:"min=0"`
+	Origins           []string `json:"origins" binding:"required,min=1"`
+	Destinations      []string `json:"destinations" binding:"required,min=1"`
+	DepartureDateFrom DateOnly `json:"departure_date_from" binding:"required"`
+	DepartureDateTo   DateOnly `json:"departure_date_to" binding:"required"`
+	TripLengths       []int    `json:"trip_lengths,omitempty"`
+	TripType          string   `json:"trip_type" binding:"required,oneof=one_way round_trip"`
+	Class             string   `json:"class" binding:"required,oneof=economy premium_economy business first"`
+	Stops             string   `json:"stops" binding:"required,oneof=nonstop one_stop two_stops two_stops_plus any"`
+	Adults            int      `json:"adults" binding:"required,min=1"`
+	Children          int      `json:"children" binding:"min=0"`
+	InfantsLap        int      `json:"infants_lap" binding:"min=0"`
+	InfantsSeat       int      `json:"infants_seat" binding:"min=0"`
+	Currency          string   `json:"currency" binding:"required,len=3"`
+	RateLimitMillis   int      `json:"rate_limit_millis,omitempty" binding:"min=0"`
 }
 
 func maybeNullInt(value sql.NullInt32) interface{} {
@@ -286,7 +322,7 @@ func CreateSearch(q queue.Queue) gin.HandlerFunc {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "Return date is required for round trips"})
 				return
 			}
-			if !req.ReturnDate.After(req.DepartureDate) {
+			if !req.ReturnDate.Time.After(req.DepartureDate.Time) {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "Return date must be after departure date"})
 				return
 			}
@@ -298,7 +334,7 @@ func CreateSearch(q queue.Queue) gin.HandlerFunc {
 				return
 			}
 			// Ensure ReturnDate is zeroed in the payload for one-way
-			req.ReturnDate = time.Time{}
+			req.ReturnDate = DateOnly{}
 		}
 		// --- End Custom Validation ---
 
@@ -306,8 +342,8 @@ func CreateSearch(q queue.Queue) gin.HandlerFunc {
 		payload := worker.FlightSearchPayload{
 			Origin:        req.Origin,
 			Destination:   req.Destination,
-			DepartureDate: req.DepartureDate,
-			ReturnDate:    req.ReturnDate, // Correctly zeroed for one-way
+			DepartureDate: req.DepartureDate.Time,
+			ReturnDate:    req.ReturnDate.Time, // Correctly zeroed for one-way
 			Adults:        req.Adults,
 			Children:      req.Children,
 			InfantsLap:    req.InfantsLap,
@@ -1044,7 +1080,7 @@ func enqueuePriceGraphSweep(pgDB db.PostgresDB, scheduler *worker.Scheduler) gin
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		if req.DepartureDateFrom.After(req.DepartureDateTo) {
+		if req.DepartureDateFrom.Time.After(req.DepartureDateTo.Time) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "departure_date_from must be before departure_date_to"})
 			return
 		}
@@ -1057,8 +1093,8 @@ func enqueuePriceGraphSweep(pgDB db.PostgresDB, scheduler *worker.Scheduler) gin
 		payload := worker.PriceGraphSweepPayload{
 			Origins:           req.Origins,
 			Destinations:      req.Destinations,
-			DepartureDateFrom: req.DepartureDateFrom,
-			DepartureDateTo:   req.DepartureDateTo,
+			DepartureDateFrom: req.DepartureDateFrom.Time,
+			DepartureDateTo:   req.DepartureDateTo.Time,
 			TripLengths:       req.TripLengths,
 			TripType:          req.TripType,
 			Class:             req.Class,
@@ -1794,10 +1830,10 @@ func CreateBulkSearch(q queue.Queue, pgDB db.PostgresDB) gin.HandlerFunc {
 		payload := worker.BulkSearchPayload{
 			Origins:           req.Origins,
 			Destinations:      req.Destinations,
-			DepartureDateFrom: req.DepartureDateFrom,
-			DepartureDateTo:   req.DepartureDateTo,
-			ReturnDateFrom:    req.ReturnDateFrom,
-			ReturnDateTo:      req.ReturnDateTo,
+			DepartureDateFrom: req.DepartureDateFrom.Time,
+			DepartureDateTo:   req.DepartureDateTo.Time,
+			ReturnDateFrom:    req.ReturnDateFrom.Time,
+			ReturnDateTo:      req.ReturnDateTo.Time,
 			TripLength:        req.TripLength,
 			Adults:            req.Adults,
 			Children:          req.Children,

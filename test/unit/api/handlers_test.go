@@ -25,6 +25,10 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
+func dateOnly(t time.Time) api.DateOnly {
+	return api.DateOnly{Time: time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)}
+}
+
 // --- Test Setup ---
 
 func setupRouter() *gin.Engine {
@@ -154,7 +158,7 @@ func TestCreateSearch_Success(t *testing.T) {
 	searchReq := api.SearchRequest{
 		Origin:        "LHR",
 		Destination:   "JFK",
-		DepartureDate: time.Now().AddDate(0, 1, 0),
+		DepartureDate: dateOnly(time.Now().AddDate(0, 1, 0)),
 		Adults:        1,
 		TripType:      "one_way",
 		Class:         "economy",
@@ -165,8 +169,8 @@ func TestCreateSearch_Success(t *testing.T) {
 	expectedPayload := worker.FlightSearchPayload{
 		Origin:        searchReq.Origin,
 		Destination:   searchReq.Destination,
-		DepartureDate: searchReq.DepartureDate,
-		ReturnDate:    searchReq.ReturnDate, // Should be zero time.Time
+		DepartureDate: searchReq.DepartureDate.Time,
+		ReturnDate:    searchReq.ReturnDate.Time, // Should be zero time.Time
 		Adults:        searchReq.Adults,
 		Children:      searchReq.Children,
 		InfantsLap:    searchReq.InfantsLap,
@@ -248,7 +252,7 @@ func TestCreateSearch_EnqueueError(t *testing.T) {
 	searchReq := api.SearchRequest{
 		Origin:        "LHR",
 		Destination:   "JFK",
-		DepartureDate: time.Now().AddDate(0, 1, 0),
+		DepartureDate: dateOnly(time.Now().AddDate(0, 1, 0)),
 		Adults:        1,
 		TripType:      "one_way",
 		Class:         "economy",
@@ -258,8 +262,8 @@ func TestCreateSearch_EnqueueError(t *testing.T) {
 	expectedPayload := worker.FlightSearchPayload{
 		Origin:        searchReq.Origin,
 		Destination:   searchReq.Destination,
-		DepartureDate: searchReq.DepartureDate,
-		ReturnDate:    searchReq.ReturnDate,
+		DepartureDate: searchReq.DepartureDate.Time,
+		ReturnDate:    searchReq.ReturnDate.Time,
 		Adults:        searchReq.Adults,
 		Children:      searchReq.Children,
 		InfantsLap:    searchReq.InfantsLap,
@@ -297,8 +301,8 @@ func TestCreateBulkSearch_Success(t *testing.T) {
 	bulkReq := api.BulkSearchRequest{
 		Origins:           []string{"LHR", "LGW"},
 		Destinations:      []string{"JFK", "EWR"},
-		DepartureDateFrom: time.Now().AddDate(0, 1, 0),
-		DepartureDateTo:   time.Now().AddDate(0, 1, 7),
+		DepartureDateFrom: dateOnly(time.Now().AddDate(0, 1, 0)),
+		DepartureDateTo:   dateOnly(time.Now().AddDate(0, 1, 7)),
 		Adults:            2,
 		TripType:          "round_trip",
 		Class:             "business",
@@ -311,11 +315,11 @@ func TestCreateBulkSearch_Success(t *testing.T) {
 	expectedPayload := worker.BulkSearchPayload{
 		Origins:           bulkReq.Origins,
 		Destinations:      bulkReq.Destinations,
-		DepartureDateFrom: bulkReq.DepartureDateFrom,
-		DepartureDateTo:   bulkReq.DepartureDateTo,
-		ReturnDateFrom:    bulkReq.ReturnDateFrom, // zero
-		ReturnDateTo:      bulkReq.ReturnDateTo,   // zero
-		TripLength:        bulkReq.TripLength,     // zero
+		DepartureDateFrom: bulkReq.DepartureDateFrom.Time,
+		DepartureDateTo:   bulkReq.DepartureDateTo.Time,
+		ReturnDateFrom:    bulkReq.ReturnDateFrom.Time, // zero
+		ReturnDateTo:      bulkReq.ReturnDateTo.Time,   // zero
+		TripLength:        bulkReq.TripLength,          // zero
 		Adults:            bulkReq.Adults,
 		Children:          bulkReq.Children,
 		InfantsLap:        bulkReq.InfantsLap,
@@ -401,8 +405,8 @@ func TestCreateBulkSearch_EnqueueError(t *testing.T) {
 	bulkReq := api.BulkSearchRequest{
 		Origins:           []string{"LHR"},
 		Destinations:      []string{"JFK"},
-		DepartureDateFrom: time.Now().AddDate(0, 1, 0),
-		DepartureDateTo:   time.Now().AddDate(0, 1, 7),
+		DepartureDateFrom: dateOnly(time.Now().AddDate(0, 1, 0)),
+		DepartureDateTo:   dateOnly(time.Now().AddDate(0, 1, 7)),
 		Adults:            1,
 		TripType:          "one_way",
 		Class:             "economy",
@@ -414,8 +418,8 @@ func TestCreateBulkSearch_EnqueueError(t *testing.T) {
 	expectedPayload := worker.BulkSearchPayload{
 		Origins:           bulkReq.Origins,
 		Destinations:      bulkReq.Destinations,
-		DepartureDateFrom: bulkReq.DepartureDateFrom,
-		DepartureDateTo:   bulkReq.DepartureDateTo,
+		DepartureDateFrom: bulkReq.DepartureDateFrom.Time,
+		DepartureDateTo:   bulkReq.DepartureDateTo.Time,
 		TripLength:        bulkReq.TripLength,
 		Adults:            bulkReq.Adults,
 		Children:          bulkReq.Children,
@@ -1093,7 +1097,7 @@ func TestDeleteJob_DeleteDetailsError(t *testing.T) {
 	// Configure mock DB and Tx
 	mockDB.On("BeginTx", mock.Anything).Return(mockTx, nil)
 	mockDB.On("DeleteJobDetailsByJobID", mock.Anything, mockTx, jobID).Return(assert.AnError) // Error here
-	mockTx.On("Rollback").Return(nil)                                          // Expect rollback
+	mockTx.On("Rollback").Return(nil)                                                         // Expect rollback
 
 	// Act
 	req, _ := http.NewRequest(http.MethodDelete, fmt.Sprintf("/jobs/%d", jobID), nil)

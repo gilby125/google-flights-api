@@ -38,8 +38,8 @@ func TestEnqueuePriceGraphSweepHandler_Success(t *testing.T) {
 	reqBody := PriceGraphSweepRequest{
 		Origins:           []string{"JFK"},
 		Destinations:      []string{"LAX"},
-		DepartureDateFrom: time.Date(2025, 2, 1, 0, 0, 0, 0, time.UTC),
-		DepartureDateTo:   time.Date(2025, 2, 10, 0, 0, 0, 0, time.UTC),
+		DepartureDateFrom: DateOnly{Time: time.Date(2025, 2, 1, 0, 0, 0, 0, time.UTC)},
+		DepartureDateTo:   DateOnly{Time: time.Date(2025, 2, 10, 0, 0, 0, 0, time.UTC)},
 		TripLengths:       []int{5, 7},
 		TripType:          "round_trip",
 		Class:             "business",
@@ -110,8 +110,8 @@ func TestEnqueuePriceGraphSweepHandler_InvalidDates(t *testing.T) {
 	reqBody := PriceGraphSweepRequest{
 		Origins:           []string{"JFK"},
 		Destinations:      []string{"LAX"},
-		DepartureDateFrom: time.Date(2025, 2, 10, 0, 0, 0, 0, time.UTC),
-		DepartureDateTo:   time.Date(2025, 2, 1, 0, 0, 0, 0, time.UTC),
+		DepartureDateFrom: DateOnly{Time: time.Date(2025, 2, 10, 0, 0, 0, 0, time.UTC)},
+		DepartureDateTo:   DateOnly{Time: time.Date(2025, 2, 1, 0, 0, 0, 0, time.UTC)},
 		TripType:          "round_trip",
 		Class:             "economy",
 		Stops:             "nonstop",
@@ -146,8 +146,8 @@ func TestEnqueuePriceGraphSweepHandler_SchedulerError(t *testing.T) {
 	reqBody := PriceGraphSweepRequest{
 		Origins:           []string{"JFK"},
 		Destinations:      []string{"LAX"},
-		DepartureDateFrom: time.Now(),
-		DepartureDateTo:   time.Now().AddDate(0, 0, 3),
+		DepartureDateFrom: DateOnly{Time: time.Now()},
+		DepartureDateTo:   DateOnly{Time: time.Now().AddDate(0, 0, 3)},
 		TripType:          "round_trip",
 		Class:             "economy",
 		Stops:             "nonstop",
