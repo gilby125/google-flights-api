@@ -134,15 +134,13 @@ jobs:
       id: meta
       run: |
         BRANCH="${GITHUB_REF_NAME}"
-        TAGS="${DOCKER_IMAGE}:${BRANCH}
-${DOCKER_IMAGE}:${GITHUB_SHA}"
-        if [ "${BRANCH}" = "main" ]; then
-          TAGS="${TAGS}
-${DOCKER_IMAGE}:latest"
-        fi
         {
           echo "tags<<EOF"
-          echo "${TAGS}"
+          echo "${DOCKER_IMAGE}:${BRANCH}"
+          echo "${DOCKER_IMAGE}:${GITHUB_SHA}"
+          if [ "${BRANCH}" = "main" ]; then
+            echo "${DOCKER_IMAGE}:latest"
+          fi
           echo "EOF"
         } >> "${GITHUB_OUTPUT}"
 
