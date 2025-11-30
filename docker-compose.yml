@@ -23,12 +23,9 @@ services:
       REDIS_QUEUE_BLOCK_TIMEOUT: ${REDIS_QUEUE_BLOCK_TIMEOUT:-5s}
       REDIS_QUEUE_VISIBILITY_TIMEOUT: ${REDIS_QUEUE_VISIBILITY_TIMEOUT:-2m}
     depends_on:
-      postgres:
-        condition: service_healthy
-      neo4j:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+      - postgres
+      - neo4j
+      - redis
     networks:
       - backend
     ports:
