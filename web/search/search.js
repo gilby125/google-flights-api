@@ -97,107 +97,14 @@ async function loadAirports() {
   }
 }
 
-// Add this function for price history
-async function loadPriceHistory(origin, destination) {
-  try {
-    const response = await fetch(
-      `${ENDPOINTS.PRICE_HISTORY}?origin=${origin}&destination=${destination}`,
-    );
-    if (!response.ok) {
-      throw new Error("Failed to load price history");
-    }
-
-    const priceHistory = await response.json();
-
-    // Show price graph card
-    elements.priceGraphCard.style.display = "block";
-
-    // Create price graph
-    const ctx = document.getElementById("priceGraph").getContext("2d");
-    new Chart(ctx, {
-      type: "line",
-      data: {
-        labels: priceHistory.map((item) => item.date),
-        datasets: [
-          {
-            label: "Price History",
-            data: priceHistory.map((item) => item.price),
-            borderColor: "rgb(75, 192, 192)",
-            tension: 0.1,
-          },
-        ],
-      },
-      options: {
-        responsive: true,
-        scales: {
-          y: {
-            beginAtZero: false,
-          },
-        },
-      },
-    });
-  } catch (error) {
-    console.error("Error loading price history:", error);
-    // Don't show the price graph card if there's an error
-    elements.priceGraphCard.style.display = "none";
-  }
+// Helper to toggle the loading indicator safely
+function setLoadingState(isLoading) {
+  if (!elements.loadingIndicator) return;
+  elements.loadingIndicator.style.display = isLoading ? "flex" : "none";
+  elements.loadingIndicator.setAttribute("aria-busy", isLoading ? "true" : "false");
+  elements.loadingIndicator.setAttribute("aria-hidden", isLoading ? "false" : "true");
 }
 
-// Add this function for creating flight cards
-function createFlightCard(offer) {
-  const card = document.createElement("div");
-  card.className = "flight-card";
-
-  // Get outbound segment (first segment)
-  const outbound = offer.segments[0];
-
-  // Format times
-  const departureTime = new Date(outbound.departure_time);
-  const arrivalTime = new Date(outbound.arrival_time);
-
-  // Format duration
-  const hours = Math.floor(offer.total_duration / 60);
-  const minutes = offer.total_duration % 60;
-  const durationText = `${hours}h ${minutes}m`;
-
-  // Create card content
-  card.innerHTML = `
-        <div class="row align-items-center">
-            <div class="col-md-2">
-                <div class="d-flex align-items-center">
-                    <img src="https://via.placeholder.com/32" class="airline-logo me-2" alt="${outbound.airline}">
-                    <div>
-                        <div>${outbound.airline}</div>
-                        <small>${outbound.flight_number}</small>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="flight-time">${departureTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>
-                <div>${outbound.departure_airport}</div>
-            </div>
-            <div class="col-md-2 text-center">
-                <div class="flight-duration">${durationText}</div>
-                <div class="flight-path">
-                    <i class="bi bi-arrow-right"></i>
-                </div>
-                <div>${offer.segments.length > 1 ? "Round Trip" : "One Way"}</div>
-            </div>
-            <div class="col-md-3">
-                <div class="flight-time">${arrivalTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>
-                <div>${outbound.arrival_airport}</div>
-            </div>
-            <div class="col-md-2 text-end">
-                <div class="flight-price">${offer.currency} ${offer.price.toFixed(2)}</div>
-                <button class="btn btn-sm btn-outline-primary mt-2">Select</button>
-            </div>
-        </div>
-    `;
-
-  return card;
-}
-
-// Add this function for showing alerts
 function showAlert(message, type = "info") {
   const alertDiv = document.createElement("div");
   alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
@@ -207,11 +114,13 @@ function showAlert(message, type = "info") {
         <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
     `;
 
-  // Insert at the top of the container
   const container = document.querySelector(".container");
-  container.insertBefore(alertDiv, container.firstChild);
+  if (container) {
+    container.insertBefore(alertDiv, container.firstChild);
+  } else {
+    document.body.appendChild(alertDiv);
+  }
 
-  // Auto dismiss after 5 seconds
   setTimeout(() => {
     alertDiv.classList.remove("show");
     setTimeout(() => alertDiv.remove(), 150);
@@ -222,73 +131,78 @@ function showAlert(message, type = "info") {
 async function handleSearch(event) {
   event.preventDefault();
 
-  // Show loading indicator
-  elements.loadingIndicator.style.display = "block";
-  elements.priceGraphCard.style.display = "none";
-  elements.resultsCard.style.display = "none";
-
-  // Get form values
-  const origin = document.getElementById("origin").value.split(" - ")[0].trim();
-  const destination = document
-    .getElementById("destination")
-    .value.split(" - ")[0]
-    .trim();
-  const departureDate = document.getElementById("departure_date").value;
-  const returnDate = document.getElementById("return_date").value;
-  const tripType = document.getElementById("trip_type").value;
-  const travelClass = document.getElementById("class")
-    ? document.getElementById("class").value
-    : "economy";
-  const stops = document.getElementById("stops")
-    ? document.getElementById("stops").value
-    : "any";
-
-  // Get advanced options if visible
-  let adults = 1;
-  let children = 0;
-  let infantsLap = 0;
-  let infantsSeat = 0;
-  let currency = "USD";
-
-  if (
-    elements.advancedOptions &&
-    elements.advancedOptions.style.display === "block"
-  ) {
-    adults = parseInt(document.getElementById("adults").value);
-    children = parseInt(document.getElementById("children").value || "0");
-    infantsLap = parseInt(document.getElementById("infantsLap").value || "0");
-    infantsSeat = parseInt(document.getElementById("infantsSeat").value || "0");
-    currency = document.getElementById("currency")
-      ? document.getElementById("currency").value
-      : "USD";
-  } else {
-    // Use the simple passengers field
-    adults = parseInt(document.getElementById("adults").value);
-  }
-
-  // Create search request
-  const searchData = {
-    origin: origin,
-    destination: destination,
-    departure_date: departureDate,
-    trip_type: tripType,
-    class: travelClass,
-    stops: stops,
-    adults: adults,
-    children: children,
-    infants_lap: infantsLap,
-    infants_seat: infantsSeat,
-    currency: currency,
-  };
-
-  // Add return date if round trip
-  if (tripType === "round_trip" && returnDate) {
-    searchData.return_date = returnDate;
-  }
-
-  console.log("Sending search request:", searchData);
+  setLoadingState(true);
+  if (elements.priceGraphCard) elements.priceGraphCard.style.display = "none";
+  if (elements.resultsCard) elements.resultsCard.style.display = "none";
 
   try {
+    const originInput = document.getElementById("origin");
+    const destinationInput = document.getElementById("destination");
+    const departureInput = document.getElementById("departure_date");
+    const returnInput = document.getElementById("return_date");
+    const tripTypeInput = document.getElementById("trip_type");
+    const classInput = document.getElementById("class");
+    const stopsInput = document.getElementById("stops");
+    const adultsInput = document.getElementById("adults");
+    const childrenInput = document.getElementById("children");
+    const infantsLapInput = document.getElementById("infantsLap");
+    const infantsSeatInput = document.getElementById("infantsSeat");
+    const currencyInput = document.getElementById("currency");
+
+    if (!originInput || !destinationInput || !departureInput) {
+      throw new Error("Please fill in origin, destination, and departure date.");
+    }
+
+    const origin = originInput.value.split(" - ")[0].trim().toUpperCase();
+    const destination = destinationInput.value
+      .split(" - ")[0]
+      .trim()
+      .toUpperCase();
+    const departureDate = departureInput.value;
+    const returnDate = returnInput ? returnInput.value : "";
+    const tripType = tripTypeInput ? tripTypeInput.value : "round_trip";
+    const travelClass = classInput ? classInput.value : "economy";
+    const stops = stopsInput ? stopsInput.value : "any";
+
+    let adults = 1;
+    let children = 0;
+    let infantsLap = 0;
+    let infantsSeat = 0;
+    let currency = "USD";
+
+    if (
+      elements.advancedOptions &&
+      getComputedStyle(elements.advancedOptions).display === "block"
+    ) {
+      adults = parseInt(adultsInput?.value || "1", 10);
+      children = parseInt(childrenInput?.value || "0", 10);
+      infantsLap = parseInt(infantsLapInput?.value || "0", 10);
+      infantsSeat = parseInt(infantsSeatInput?.value || "0", 10);
+      currency = (currencyInput?.value || "USD").toUpperCase();
+    } else if (adultsInput) {
+      adults = parseInt(adultsInput.value || "1", 10);
+    }
+
+    const searchData = {
+      origin,
+      destination,
+      departure_date: departureDate,
+      trip_type: tripType,
+      class: travelClass,
+      stops,
+      adults,
+      children,
+      infants_lap: infantsLap,
+      infants_seat: infantsSeat,
+      currency,
+    };
+
+    if (tripType === "round_trip" && returnDate) {
+      searchData.return_date = returnDate;
+    }
+
+    console.log("Sending search request:", searchData);
+
     // Send search request
     const response = await fetch(ENDPOINTS.SEARCH, {
       method: "POST",
@@ -317,8 +231,7 @@ async function handleSearch(event) {
     console.error("Error searching flights:", error);
     showAlert(`Error searching flights: ${error.message}`, "danger");
   } finally {
-    // Hide loading indicator
-    elements.loadingIndicator.style.display = "none";
+    setLoadingState(false);
   }
 }
 
