@@ -1,5 +1,6 @@
 services:
   api:
+    image: gilby125/google-flights-api:latest
     build:
       context: .
     environment:
