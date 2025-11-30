@@ -321,12 +321,23 @@ async function loadPriceHistory(origin, destination) {
 
 // Display price graph
 function displayPriceGraph(priceHistory) {
-  // Show price graph card
+  if (!elements.priceGraphCard || !priceHistory) return;
+
+  const history = Array.isArray(priceHistory.history)
+    ? priceHistory.history
+    : Array.isArray(priceHistory)
+      ? priceHistory
+      : null;
+  if (!history || history.length === 0) {
+    elements.priceGraphCard.style.display = "none";
+    return;
+  }
+
   elements.priceGraphCard.style.display = "block";
 
   // Prepare data for chart
-  const dates = priceHistory.history.map((item) => item.date);
-  const prices = priceHistory.history.map((item) => item.price);
+  const dates = history.map((item) => item.date);
+  const prices = history.map((item) => item.price);
 
   // Destroy existing chart if it exists
   if (priceChart) {
@@ -477,13 +488,18 @@ function createFlightCard(offer) {
     );
   }
 
+  const airlineCode = departureSegment.airline_code || "";
+  const airlineLogo = airlineCode
+    ? `https://www.gstatic.com/flights/airline_logos/70px/${airlineCode}.png`
+    : "https://via.placeholder.com/70x40?text=Air";
+
   // Create card content
   card.innerHTML = `
         <div class="row align-items-center">
             <div class="col-md-2">
-                <img src="https://www.gstatic.com/flights/airline_logos/70px/${departureSegment.airline_code}.png" 
-                     alt="${departureSegment.airline_code}" class="airline-logo">
-                <div>${departureSegment.airline_code} ${departureSegment.flight_number}</div>
+                <img src="${airlineLogo}" 
+                     alt="${airlineCode || "Airline"}" class="airline-logo">
+                <div>${airlineCode || "Unknown"} ${departureSegment.flight_number || ""}</div>
             </div>
             <div class="col-md-3">
                 <div class="flight-time">${formattedDepartureTime} - ${formattedArrivalTime}</div>
