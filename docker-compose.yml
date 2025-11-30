@@ -1,6 +1,6 @@
 services:
   api:
-    image: gilby125/google-flights-api:latest
+    image: ghcr.io/gilby125/flight-api:price-graph-sweep
     build:
       context: .
     environment:

@@ -1,7 +1,7 @@
 name: CI/CD Pipeline
 on:
   push:
-    branches: [ main ]
+    branches: [ main, price-graph-sweep, develop ]
   pull_request:
     branches: [ main ]
   schedule:
@@ -130,14 +130,28 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
 
+    - name: Compute Docker image tags
+      id: meta
+      run: |
+        BRANCH="${GITHUB_REF_NAME}"
+        TAGS="${DOCKER_IMAGE}:${BRANCH}
+${DOCKER_IMAGE}:${GITHUB_SHA}"
+        if [ "${BRANCH}" = "main" ]; then
+          TAGS="${TAGS}
+${DOCKER_IMAGE}:latest"
+        fi
+        {
+          echo "tags<<EOF"
+          echo "${TAGS}"
+          echo "EOF"
+        } >> "${GITHUB_OUTPUT}"
+
     - name: Build and push Docker image
       uses: docker/build-push-action@v4
       with:
         context: .
         push: ${{ github.event_name != 'pull_request' }}
-        tags: |
-          ${{ env.DOCKER_IMAGE }}:latest
-          ${{ env.DOCKER_IMAGE }}:${{ github.sha }}
+        tags: ${{ steps.meta.outputs.tags }}
         # No build args needed for pre-generated certs
         cache-from: type=gha
         cache-to: type=gha,mode=max
@@ -145,7 +159,7 @@ jobs:
   deploy-kubernetes-staging:
     runs-on: ubuntu-latest
     needs: [docker-build]
-    if: ${{ github.event_name == 'push' && (vars.ENABLE_K8S_DEPLOY || '0') == '1' }}
+    if: ${{ github.event_name == 'push' && github.ref_name == 'main' && (vars.ENABLE_K8S_DEPLOY || '0') == '1' }}
     permissions:
       contents: read
       deployments: write
@@ -209,7 +223,7 @@ jobs:
   deploy-swarm:
     runs-on: ubuntu-latest
     needs: [deploy-kubernetes-staging, performance-test]
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && github.ref_name == 'main'
     steps:
     - name: Deploy to Docker Swarm
       uses: appleboy/ssh-action@v1
