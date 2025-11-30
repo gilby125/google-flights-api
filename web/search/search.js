@@ -4,11 +4,12 @@
 const API_BASE = "/api";
 const ENDPOINTS = {
   SEARCH: `${API_BASE}/search`,
-  BULK_SEARCH: `${API_BASE}/bulk-search`,
   PRICE_HISTORY: `${API_BASE}/price-history`,
   AIRPORTS: `${API_BASE}/airports`,
-  AIRLINES: `${API_BASE}/airlines`,
 };
+
+const AIRPORT_CACHE_KEY = "flight-search-airports-cache";
+const AIRPORT_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 // DOM elements
 const elements = {
@@ -21,37 +22,58 @@ const elements = {
   resultsCard: document.getElementById("resultsCard"),
   flightResults: document.getElementById("flightResults"),
   sortResults: document.getElementById("sortResults"),
+  submitButton: document.querySelector("#searchForm button[type='submit']"),
+};
+
+const inputs = {
+  origin: document.getElementById("origin"),
+  destination: document.getElementById("destination"),
+  departureDate: document.getElementById("departure_date"),
+  returnDate: document.getElementById("return_date"),
+  tripType: document.getElementById("trip_type"),
+  travelClass: document.getElementById("class"),
+  stops: document.getElementById("stops"),
+  adults: document.getElementById("adults"),
+  children: document.getElementById("children"),
+  infantsLap: document.getElementById("infantsLap"),
+  infantsSeat: document.getElementById("infantsSeat"),
+  currency: document.getElementById("currency"),
 };
 
 // Chart instance
 let priceChart = null;
+let currentOffers = [];
+let advancedOptionsVisible =
+  !!elements.advancedOptions &&
+  getComputedStyle(elements.advancedOptions).display !== "none";
 
 // Initialize the search page
 function initSearchPage() {
-  // Initialize date pickers
-  flatpickr("#departure_date", {
-    minDate: "today",
-    dateFormat: "Y-m-d",
-  });
+  const today = new Date().toISOString().split("T")[0];
+  if (inputs.departureDate) {
+    inputs.departureDate.min = today;
+  }
+  if (inputs.returnDate) {
+    inputs.returnDate.min = today;
+  }
 
-  flatpickr("#return_date", {
-    minDate: "today",
-    dateFormat: "Y-m-d",
-  });
+  if (elements.advancedBtn && elements.advancedOptions) {
+    elements.advancedBtn.addEventListener("click", () => {
+      advancedOptionsVisible = !advancedOptionsVisible;
+      elements.advancedOptions.style.display = advancedOptionsVisible
+        ? "block"
+        : "none";
+    });
+  }
 
-  // Toggle advanced options
-  elements.advancedBtn.addEventListener("click", () => {
-    elements.advancedOptions.style.display =
-      elements.advancedOptions.style.display === "none" ? "block" : "none";
-  });
+  if (elements.searchForm) {
+    elements.searchForm.addEventListener("submit", handleSearch);
+  }
 
-  // Handle form submission
-  elements.searchForm.addEventListener("submit", handleSearch);
+  if (elements.sortResults) {
+    elements.sortResults.addEventListener("change", sortFlightResults);
+  }
 
-  // Handle sort change
-  elements.sortResults.addEventListener("change", sortFlightResults);
-
-  // Load airports for autocomplete
   loadAirports();
 }
 
@@ -59,42 +81,86 @@ function initSearchPage() {
 // Add this function after initSearchPage
 async function loadAirports() {
   try {
+    const cached = getCachedAirports();
+    if (cached) {
+      populateAirportDatalists(cached);
+      return;
+    }
+
     const response = await fetch(ENDPOINTS.AIRPORTS);
     if (!response.ok) {
       throw new Error("Failed to load airports");
     }
 
     const airports = await response.json();
-
-    // Create datalist for airports
-    const originDatalist = document.createElement("datalist");
-    originDatalist.id = "originList";
-
-    const destDatalist = document.createElement("datalist");
-    destDatalist.id = "destinationList";
-
-    // Add options to datalists
-    airports.forEach((airport) => {
-      const option = document.createElement("option");
-      option.value = `${airport.code} - ${airport.name}, ${airport.city}`;
-
-      originDatalist.appendChild(option.cloneNode(true));
-      destDatalist.appendChild(option);
-    });
-
-    // Add datalists to the document
-    document.body.appendChild(originDatalist);
-    document.body.appendChild(destDatalist);
-
-    // Connect inputs to datalists
-    document.getElementById("origin").setAttribute("list", "originList");
-    document
-      .getElementById("destination")
-      .setAttribute("list", "destinationList");
+    cacheAirports(airports);
+    populateAirportDatalists(airports);
   } catch (error) {
     console.error("Error loading airports:", error);
     showAlert("Failed to load airport data", "warning");
   }
+}
+
+function getCachedAirports() {
+  try {
+    const raw = localStorage.getItem(AIRPORT_CACHE_KEY);
+    if (!raw) return null;
+    const cached = JSON.parse(raw);
+    if (!cached?.data || !cached?.cachedAt) return null;
+    if (Date.now() - cached.cachedAt > AIRPORT_CACHE_TTL_MS) {
+      localStorage.removeItem(AIRPORT_CACHE_KEY);
+      return null;
+    }
+    return cached.data;
+  } catch {
+    return null;
+  }
+}
+
+function cacheAirports(airports) {
+  try {
+    localStorage.setItem(
+      AIRPORT_CACHE_KEY,
+      JSON.stringify({ cachedAt: Date.now(), data: airports }),
+    );
+  } catch (error) {
+    console.warn("Failed to cache airports:", error);
+  }
+}
+
+function populateAirportDatalists(airports) {
+  if (!inputs.origin || !inputs.destination || !Array.isArray(airports)) {
+    return;
+  }
+
+  const ensureList = (id) => {
+    let list = document.getElementById(id);
+    if (!list) {
+      list = document.createElement("datalist");
+      list.id = id;
+      document.body.appendChild(list);
+    } else {
+      list.innerHTML = "";
+    }
+    return list;
+  };
+
+  const originDatalist = ensureList("originList");
+  const destDatalist = ensureList("destinationList");
+
+  airports.forEach((airport) => {
+    const label = `${airport.code} - ${airport.name}, ${airport.city}`;
+    const originOption = document.createElement("option");
+    originOption.value = label;
+    originDatalist.appendChild(originOption);
+
+    const destOption = document.createElement("option");
+    destOption.value = label;
+    destDatalist.appendChild(destOption);
+  });
+
+  inputs.origin.setAttribute("list", "originList");
+  inputs.destination.setAttribute("list", "destinationList");
 }
 
 // Helper to toggle the loading indicator safely
@@ -103,6 +169,9 @@ function setLoadingState(isLoading) {
   elements.loadingIndicator.style.display = isLoading ? "flex" : "none";
   elements.loadingIndicator.setAttribute("aria-busy", isLoading ? "true" : "false");
   elements.loadingIndicator.setAttribute("aria-hidden", isLoading ? "false" : "true");
+  if (elements.submitButton) {
+    elements.submitButton.disabled = isLoading;
+  }
 }
 
 function showAlert(message, type = "info") {
@@ -136,18 +205,18 @@ async function handleSearch(event) {
   if (elements.resultsCard) elements.resultsCard.style.display = "none";
 
   try {
-    const originInput = document.getElementById("origin");
-    const destinationInput = document.getElementById("destination");
-    const departureInput = document.getElementById("departure_date");
-    const returnInput = document.getElementById("return_date");
-    const tripTypeInput = document.getElementById("trip_type");
-    const classInput = document.getElementById("class");
-    const stopsInput = document.getElementById("stops");
-    const adultsInput = document.getElementById("adults");
-    const childrenInput = document.getElementById("children");
-    const infantsLapInput = document.getElementById("infantsLap");
-    const infantsSeatInput = document.getElementById("infantsSeat");
-    const currencyInput = document.getElementById("currency");
+    const originInput = inputs.origin;
+    const destinationInput = inputs.destination;
+    const departureInput = inputs.departureDate;
+    const returnInput = inputs.returnDate;
+    const tripTypeInput = inputs.tripType;
+    const classInput = inputs.travelClass;
+    const stopsInput = inputs.stops;
+    const adultsInput = inputs.adults;
+    const childrenInput = inputs.children;
+    const infantsLapInput = inputs.infantsLap;
+    const infantsSeatInput = inputs.infantsSeat;
+    const currencyInput = inputs.currency;
 
     if (!originInput || !destinationInput || !departureInput) {
       throw new Error("Please fill in origin, destination, and departure date.");
@@ -170,10 +239,7 @@ async function handleSearch(event) {
     let infantsSeat = 0;
     let currency = "USD";
 
-    if (
-      elements.advancedOptions &&
-      getComputedStyle(elements.advancedOptions).display === "block"
-    ) {
+    if (advancedOptionsVisible) {
       adults = parseInt(adultsInput?.value || "1", 10);
       children = parseInt(childrenInput?.value || "0", 10);
       infantsLap = parseInt(infantsLapInput?.value || "0", 10);
@@ -309,20 +375,29 @@ function displayPriceGraph(priceHistory) {
 // Display search results
 function displaySearchResults(searchResult) {
   // Show results card
-  elements.resultsCard.style.display = "block";
+  if (elements.resultsCard) {
+    elements.resultsCard.style.display = "block";
+  }
 
   // Clear previous results
-  elements.flightResults.innerHTML = "";
+  if (elements.flightResults) {
+    elements.flightResults.innerHTML = "";
+  }
 
   // Check if we have results
-  if (!searchResult.offers || searchResult.offers.length === 0) {
-    elements.flightResults.innerHTML =
-      '<div class="alert alert-info">No flights found matching your criteria.</div>';
+  if (
+    !elements.flightResults ||
+    !searchResult.offers ||
+    searchResult.offers.length === 0
+  ) {
+    if (elements.flightResults) {
+      elements.flightResults.innerHTML =
+        '<div class="alert alert-info">No flights found matching your criteria.</div>';
+    }
     return;
   }
 
-  // Store the offers globally for sorting
-  window.flightOffers = searchResult.offers;
+  currentOffers = searchResult.offers.slice();
 
   // Sort and display results
   sortFlightResults();
@@ -330,8 +405,9 @@ function displaySearchResults(searchResult) {
 
 // Sort flight results based on selected criteria
 function sortFlightResults() {
-  const sortBy = elements.sortResults.value;
-  const offers = window.flightOffers;
+  if (!elements.flightResults) return;
+  const sortBy = elements.sortResults ? elements.sortResults.value : "price";
+  const offers = currentOffers.slice();
 
   if (!offers || offers.length === 0) return;
 
