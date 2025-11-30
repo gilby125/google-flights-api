@@ -30,8 +30,8 @@ import (
 type SearchRequest struct {
 	Origin        string    `json:"origin" binding:"required"`
 	Destination   string    `json:"destination" binding:"required"`
-	DepartureDate time.Time `json:"departure_date" binding:"required"`
-	ReturnDate    time.Time `json:"return_date,omitempty"`
+	DepartureDate time.Time `json:"departure_date" binding:"required" time_format:"2006-01-02" time_utc:"true"`
+	ReturnDate    time.Time `json:"return_date,omitempty" time_format:"2006-01-02" time_utc:"true"`
 	Adults        int       `json:"adults" binding:"required,min=1"`
 	Children      int       `json:"children" binding:"min=0"`
 	InfantsLap    int       `json:"infants_lap" binding:"min=0"`
@@ -46,10 +46,10 @@ type SearchRequest struct {
 type BulkSearchRequest struct {
 	Origins           []string  `json:"origins" binding:"required,min=1"`
 	Destinations      []string  `json:"destinations" binding:"required,min=1"`
-	DepartureDateFrom time.Time `json:"departure_date_from" binding:"required"`
-	DepartureDateTo   time.Time `json:"departure_date_to" binding:"required"`
-	ReturnDateFrom    time.Time `json:"return_date_from,omitempty"`
-	ReturnDateTo      time.Time `json:"return_date_to,omitempty"`
+	DepartureDateFrom time.Time `json:"departure_date_from" binding:"required" time_format:"2006-01-02" time_utc:"true"`
+	DepartureDateTo   time.Time `json:"departure_date_to" binding:"required" time_format:"2006-01-02" time_utc:"true"`
+	ReturnDateFrom    time.Time `json:"return_date_from,omitempty" time_format:"2006-01-02" time_utc:"true"`
+	ReturnDateTo      time.Time `json:"return_date_to,omitempty" time_format:"2006-01-02" time_utc:"true"`
 	TripLength        int       `json:"trip_length,omitempty" binding:"min=0"`
 	Adults            int       `json:"adults" binding:"required,min=1"`
 	Children          int       `json:"children" binding:"min=0"`
