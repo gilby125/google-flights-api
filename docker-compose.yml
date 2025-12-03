@@ -1,6 +1,6 @@
 services:
   api:
-    image: ghcr.io/gilby125/flight-api:price-graph-sweep
+    image: ghcr.io/gilby125/flight-api:price-graph-sweep-arm64
     build:
       context: .
     environment:
@@ -28,10 +28,6 @@ services:
       - neo4j
       - redis
     # Remove port mapping - let Dockploy handle routing
-    deploy:
-      placement:
-        constraints:
-          - node.role == manager
     restart: unless-stopped
 
   postgres:
