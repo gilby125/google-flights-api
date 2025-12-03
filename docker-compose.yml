@@ -13,7 +13,7 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:-changeme}
       DB_NAME: flights
       DB_SSLMODE: disable
-      DB_REQUIRE_SSL: false
+      DB_REQUIRE_SSL: "false"
       DB_SSL_CERT:
       DB_SSL_KEY:
       DB_SSL_ROOT_CERT:
