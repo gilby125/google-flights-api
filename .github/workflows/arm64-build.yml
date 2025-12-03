@@ -1,7 +1,5 @@
 name: ARM64 Build
 on:
-  push:
-    branches: [ price-graph-sweep ]
   workflow_dispatch:
 
 jobs:
