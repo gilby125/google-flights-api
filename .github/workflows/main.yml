@@ -150,12 +150,12 @@ jobs:
         context: .
         push: ${{ github.event_name != 'pull_request' }}
         tags: ${{ steps.meta.outputs.tags }}
-        platforms: linux/arm64
         # No build args needed for pre-generated certs
         cache-from: type=gha
         cache-to: type=gha,mode=max
         args: |
           GOVULN_DISABLE=1
+          CGO_ENABLED=0
 
   deploy-kubernetes-staging:
     runs-on: ubuntu-latest
