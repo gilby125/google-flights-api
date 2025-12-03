@@ -35,3 +35,8 @@ Document changes in a way reviewers can trust quickly.
 - Store secrets in `.env` or a secret manager, aligning defaults with `config/config.go`.
 - Rotate `DB_PASSWORD`, `NEO4J_PASSWORD`, and `REDIS_PASSWORD` when sharing environments and keep artifacts from `scripts/generate-tls-certs.sh` out of Git.
 - Review Traefik and Kubernetes settings before exposing routes to confirm HTTPS, auth, and rate limits stay enforced.
+
+## Notes for AI Assistants
+- You only see the files in this repo and can run local build/test commands, but you cannot see the user’s actual browser, Docker daemon, or other host processes.
+- When debugging runtime issues (for example, network errors from the browser), assume the code here is correct unless logs or config suggest otherwise, and give the user explicit commands to run (`PORT=8081 go run ./main`, `docker compose up -d`, `curl` health checks).
+- Treat these guidelines as context, not hard limits; you should still freely inspect the repo and use typical Go and Node tooling within the workspace.

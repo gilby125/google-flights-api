@@ -27,8 +27,7 @@ services:
       - postgres
       - neo4j
       - redis
-    ports:
-      - "8081:8080"
+    # Remove port mapping - let Dockploy/Traefik handle routing
     restart: unless-stopped
 
   postgres:
@@ -42,8 +41,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    ports:
-      - "5432:5432"
+    # Remove external port mapping for security
     volumes:
       - pgdata:/var/lib/postgresql/data
     restart: unless-stopped
@@ -56,8 +54,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    ports:
-      - "6379:6379"
+    # Remove external port mapping for security
     volumes:
       - redisdata:/data
     restart: unless-stopped
@@ -73,9 +70,7 @@ services:
       timeout: 10s
       retries: 10
       start_period: 40s
-    ports:
-      - "7474:7474"
-      - "7687:7687"
+    # Remove external port mapping for security
     volumes:
       - neo4jdata:/data
     restart: unless-stopped
