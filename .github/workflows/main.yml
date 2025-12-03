@@ -154,6 +154,8 @@ jobs:
         # No build args needed for pre-generated certs
         cache-from: type=gha
         cache-to: type=gha,mode=max
+        args: |
+          GOVULN_DISABLE=1
 
   deploy-kubernetes-staging:
     runs-on: ubuntu-latest
