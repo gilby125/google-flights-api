@@ -28,6 +28,10 @@ services:
       - neo4j
       - redis
     # Remove port mapping - let Dockploy handle routing
+    deploy:
+      placement:
+        constraints:
+          - node.role == worker
     restart: unless-stopped
 
   postgres:
