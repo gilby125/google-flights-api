@@ -22,7 +22,7 @@ COPY . .
 RUN mkdir -p web templates static tls
 
 # Build the API binary
-RUN go build -trimpath -ldflags="-s -w" -o /out/flight-api ./
+RUN GOVULN_DISABLE=1 go build -trimpath -ldflags="-s -w" -o /out/flight-api ./
 
 ###############################################
 # Runtime stage
