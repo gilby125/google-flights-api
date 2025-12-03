@@ -134,10 +134,10 @@ jobs:
         BRANCH="${GITHUB_REF_NAME}"
         {
           echo "tags<<EOF"
-          echo "${DOCKER_IMAGE}:${BRANCH}"
-          echo "${DOCKER_IMAGE}:${GITHUB_SHA}"
+          echo "${DOCKER_IMAGE}:${BRANCH}-arm64"
+          echo "${DOCKER_IMAGE}:${GITHUB_SHA}-arm64"
           if [ "${BRANCH}" = "main" ]; then
-            echo "${DOCKER_IMAGE}:latest"
+            echo "${DOCKER_IMAGE}:latest-arm64"
           fi
           echo "EOF"
         } >> "${GITHUB_OUTPUT}"
