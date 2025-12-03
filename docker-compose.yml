@@ -27,8 +27,7 @@ services:
       - postgres
       - neo4j
       - redis
-    ports:
-      - "8083:8080"  # Temporary access for testing
+    # Remove port mapping - let Dockploy handle routing
     restart: unless-stopped
 
   postgres:
