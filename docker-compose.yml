@@ -1,6 +1,6 @@
 services:
   api:
-    image: ghcr.io/gilby125/flight-api:price-graph-sweep
+    image: ghcr.io/gilby125/flight-api:price-graph-sweep-arm64
     build:
       context: .
     environment:
