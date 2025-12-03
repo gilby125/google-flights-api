@@ -1,6 +1,6 @@
 services:
   api:
-    image: ghcr.io/gilby125/flight-api:price-graph-sweep-arm64
+    image: ghcr.io/gilby125/flight-api:price-graph-sweep
     build:
       context: .
     environment:
@@ -31,7 +31,7 @@ services:
     deploy:
       placement:
         constraints:
-          - node.role == worker
+          - node.role == manager
     restart: unless-stopped
 
   postgres:
