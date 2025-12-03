@@ -30,7 +30,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    # Remove port mapping - let Dockploy/Traefik handle routing
+    ports:
+      - "8083:8080"  # Temporary access for testing
     restart: unless-stopped
 
   postgres:
