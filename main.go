@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -17,36 +16,6 @@ import (
 	"github.com/gilby125/google-flights-api/worker"
 	"github.com/gin-gonic/gin"
 )
-
-// connectWithRetry attempts to connect with exponential backoff retry logic
-func connectWithRetry[T any](connectFunc func() (T, error), serviceName, address string, maxRetries int, baseDelay time.Duration) (T, error) {
-	var zero T
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		result, err := connectFunc()
-		if err == nil {
-			logger.Info(fmt.Sprintf("Successfully connected to %s", serviceName),
-				"service", serviceName,
-				"address", address,
-				"attempt", attempt)
-			return result, nil
-		}
-
-		if attempt == maxRetries {
-			return zero, fmt.Errorf("failed to connect to %s after %d attempts: %w", serviceName, maxRetries, err)
-		}
-
-		delay := baseDelay * time.Duration(attempt) // Exponential backoff
-		logger.Warn(fmt.Sprintf("Failed to connect to %s, retrying in %v", serviceName, delay),
-			"service", serviceName,
-			"address", address,
-			"attempt", attempt,
-			"maxRetries", maxRetries,
-			"error", err)
-
-		time.Sleep(delay)
-	}
-	return zero, fmt.Errorf("unexpected error in connectWithRetry")
-}
 
 func main() {
 	// Load configuration first
@@ -68,21 +37,17 @@ func main() {
 
 	logger.Info("Configuration loaded successfully")
 
-	// Initialize database connections with retry logic
+	// Initialize database connections
 	logger.Info("Connecting to databases...")
-	postgresDB, err := connectWithRetry(func() (db.PostgresDB, error) {
-		return db.NewPostgresDB(cfg.PostgresConfig)
-	}, "PostgreSQL", cfg.PostgresConfig.Host, 10, 10*time.Second)
+	postgresDB, err := db.NewPostgresDB(cfg.PostgresConfig)
 	if err != nil {
-		logger.Fatal(err, "Failed to connect to PostgreSQL after retries", "host", cfg.PostgresConfig.Host)
+		logger.Fatal(err, "Failed to connect to PostgreSQL", "host", cfg.PostgresConfig.Host)
 	}
 	defer postgresDB.Close()
 
-	neo4jDB, err := connectWithRetry(func() (*db.Neo4jDB, error) {
-		return db.NewNeo4jDB(cfg.Neo4jConfig)
-	}, "Neo4j", cfg.Neo4jConfig.URI, 15, 10*time.Second)
+	neo4jDB, err := db.NewNeo4jDB(cfg.Neo4jConfig)
 	if err != nil {
-		logger.Fatal(err, "Failed to connect to Neo4j after retries", "uri", cfg.Neo4jConfig.URI)
+		logger.Fatal(err, "Failed to connect to Neo4j", "uri", cfg.Neo4jConfig.URI)
 	}
 	defer neo4jDB.Close()
 
