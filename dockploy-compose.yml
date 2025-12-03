@@ -1,0 +1,31 @@
+services:
+  api:
+    image: ghcr.io/gilby125/flight-api:price-graph-sweep
+    build:
+      context: .
+    environment:
+      PORT: 8080
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      WORKER_ENABLED: ${WORKER_ENABLED:-true}
+      # External PostgreSQL
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+      DB_SSLMODE: ${DB_SSLMODE:-require}
+      # External Neo4j
+      NEO4J_URI: ${NEO4J_URI}
+      NEO4J_USER: ${NEO4J_USER}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD}
+      # External Redis
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_QUEUE_GROUP: ${REDIS_QUEUE_GROUP:-flights_workers}
+      REDIS_QUEUE_STREAM_PREFIX: ${REDIS_QUEUE_STREAM_PREFIX:-flights}
+      REDIS_QUEUE_BLOCK_TIMEOUT: ${REDIS_QUEUE_BLOCK_TIMEOUT:-5s}
+      REDIS_QUEUE_VISIBILITY_TIMEOUT: ${REDIS_QUEUE_VISIBILITY_TIMEOUT:-2m}
+    ports:
+      - "8080:8080"
+    restart: unless-stopped

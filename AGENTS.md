@@ -1,42 +1,31 @@
-# Repository Guidelines
+# Repository Guidelines for AI Agents
 
-## Project Structure & Module Organization
-Core Go logic lives in purpose-built modules, while assets and infrastructure files stay isolated for easy discovery.
-- `flights/` provides the reusable Go client—keep it dependency-light and reusable.
-- `api/`, `main/`, and `pkg/` deliver HTTP handlers, CLI entry points, and shared utilities; `worker/` and `queue/` orchestrate background jobs.
-- Frontend assets live in `web/`, `static/`, and `templates/`; automated tests in `test/`.
-- Configuration, data fixtures, and tooling are under `config/`, `db/`, and `scripts/`; deployment manifests sit at the root and in `kubernetes/`.
+## Build & Test Commands
+- `go run ./main` - Start API server (use `--help` for flags)
+- `go test ./... -v` - Run all Go tests (or `./run_tests.sh`)
+- `go test -v ./path/to/file_test.go` - Run single test file
+- `go test ./... -coverprofile=coverage.out` - Generate coverage report
+- `npm test` - Run Playwright E2E tests (requires `npm install`)
+- `npm run test:headed` - Run Playwright with visible browser
+- `docker compose up -d --build` - Start full stack for integration testing
 
-## Build, Test, and Development Commands
-- `go run ./main` boots the API server (`--help` shows flags).
-- `go test ./...` or `./run_tests.sh` exercises all Go unit and integration suites.
-- `npm install` (once) then `npm test` runs the Playwright browser checks; `npm run test:report` opens the report UI.
-- `docker-compose up -d --build` starts the full stack (API, Postgres, Neo4j, Redis, Traefik) for end-to-end validation.
+## Code Style & Conventions
+- Run `gofmt` or `goimports` on all Go sources before committing
+- Use standard Go error handling: `if err != nil { return fmt.Errorf("context: %w", err) }`
+- Name directories with `lower_snake_case`, files with `snake_case.go`
+- Co-locate tests as `<name>_test.go` using standard `testing` package
+- Use `testify` for assertions in tests, follow mock patterns in `test/mocks/`
+- Import groups: stdlib, third-party, local (separated by blank lines)
+- Read config from `config/config.go`; never hardcode secrets
 
-## Coding Style & Naming Conventions
-- Run `gofmt` or `goimports` on Go sources and prefer concise receiver names.
-- Name new folders using lower_snake_case to align with current layout.
-- Playwright specs should follow Prettier defaults (2 spaces, single quotes) and use filenames like `search_flow.spec.ts`.
-- Read configuration keys from `config/config.go`; never hardcode secrets or credentials.
+## Architecture Notes
+- `flights/` is the standalone client library (keep dependency-light)
+- HTTP handlers in `api/` use Gin framework, routes in `routes.go`
+- Background jobs: Redis queue (`queue/`) → workers (`worker/`) → databases
+- Dual storage: PostgreSQL for results, Neo4j for route graphs
+- All endpoints documented in `docs/API_CONTRACT.md`
 
-## Testing Guidelines
-- Co-locate Go tests as `<name>_test.go` using the standard `testing` package.
-- Seed integration data through `db/seed.go` or shared fixtures so CI remains stable.
-- Reset state inside each Playwright test and avoid parallel mode unless selectors are isolated.
-
-## Commit & Pull Request Guidelines
-Document changes in a way reviewers can trust quickly.
-- Write imperative commit subjects (`Add fare caching`, `Fix retry handling`) with optional scopes like `fix:`.
-- Keep commits focused on one logical change and note migrations, env vars, or API tweaks in the body.
-- Pull requests should describe the change, link related issues, and attach evidence (`go test`, `npm test`, screenshots for UI) before requesting review.
-- Flag breaking changes, new ports, or credential updates so release prep stays smooth.
-
-## Security & Configuration Tips
-- Store secrets in `.env` or a secret manager, aligning defaults with `config/config.go`.
-- Rotate `DB_PASSWORD`, `NEO4J_PASSWORD`, and `REDIS_PASSWORD` when sharing environments and keep artifacts from `scripts/generate-tls-certs.sh` out of Git.
-- Review Traefik and Kubernetes settings before exposing routes to confirm HTTPS, auth, and rate limits stay enforced.
-
-## Notes for AI Assistants
-- You only see the files in this repo and can run local build/test commands, but you cannot see the user’s actual browser, Docker daemon, or other host processes.
-- When debugging runtime issues (for example, network errors from the browser), assume the code here is correct unless logs or config suggest otherwise, and give the user explicit commands to run (`PORT=8081 go run ./main`, `docker compose up -d`, `curl` health checks).
-- Treat these guidelines as context, not hard limits; you should still freely inspect the repo and use typical Go and Node tooling within the workspace.
+## Testing Strategy
+- Unit tests in `test/unit/`, integration in `test/integration/`, E2E in `test/e2e/`
+- Use `skipUnlessIntegration(t)` for tests requiring external services
+- Reset Playwright state between tests, avoid parallel mode unless isolated
