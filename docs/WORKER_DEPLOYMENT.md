@@ -5,6 +5,7 @@ Deploy workers to any cloud provider to distribute flight search load.
 This repo supports two worker deployment patterns:
 - Recommended: **remote workers over Tailscale + systemd** (no Docker on worker)
 - Alternative: **Docker worker with Tailscale sidecar**
+- Alternative: **Docker worker managed by systemd** (no scripts / no binary copy)
 
 If you run your “main” stack under **Komodo**, redeploy via **Komodo** (do not use Docker CLI deploys).
 
@@ -91,6 +92,34 @@ Set at minimum:
 ```bash
 sudo ./deploy/systemd/install.sh --instances 1
 journalctl -u google-flights-worker@1 -f
+```
+
+## Option B: Docker worker managed by systemd (no scripts / no binary copy)
+
+Use this if you want the worker VM to just run a container image (pulled from GHCR) and have `systemd` keep it running.
+
+On the worker VM:
+
+1) Create env file:
+
+```bash
+sudo mkdir -p /etc/google-flights
+sudo cp deploy/systemd/worker.docker.env.example /etc/google-flights/worker.docker.env
+sudo nano /etc/google-flights/worker.docker.env
+```
+
+Set:
+- `WORKER_IMAGE=ghcr.io/gilby125/flight-api:latest` (or a pinned SHA tag)
+- `DB_HOST`, `REDIS_HOST`, `NEO4J_URI` to your main server’s Tailscale IP
+- `DB_PASSWORD`, `REDIS_PASSWORD`, `NEO4J_PASSWORD`
+
+2) Install + start unit:
+
+```bash
+sudo cp deploy/systemd/google-flights-worker-docker@.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now google-flights-worker-docker@1
+journalctl -u google-flights-worker-docker@1 -f
 ```
 
 ## Option A: systemd (no Docker)
