@@ -7,13 +7,13 @@ services:
       PORT: 8080
       ENVIRONMENT: ${ENVIRONMENT:-production}
       WORKER_ENABLED: ${WORKER_ENABLED:-true}
-      # External PostgreSQL
-      DB_HOST: ${DB_HOST}
-      DB_PORT: ${DB_PORT:-5432}
-      DB_USER: ${DB_USER}
+      # PostgreSQL (Internal Service)
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: flights
       DB_PASSWORD: ${DB_PASSWORD}
-      DB_NAME: ${DB_NAME}
-      DB_SSLMODE: ${DB_SSLMODE:-require}
+      DB_NAME: flights
+      DB_SSLMODE: disable # Internal network, SSL optional
       # Neo4j (Internal Service)
       NEO4J_URI: bolt://neo4j:7687
       NEO4J_USER: neo4j
@@ -27,6 +27,7 @@ services:
       REDIS_QUEUE_BLOCK_TIMEOUT: ${REDIS_QUEUE_BLOCK_TIMEOUT:-5s}
       REDIS_QUEUE_VISIBILITY_TIMEOUT: ${REDIS_QUEUE_VISIBILITY_TIMEOUT:-2m}
     depends_on:
+      - postgres
       - neo4j
     # Removed host port mapping - Dokploy handles routing
     # ports:
@@ -54,6 +55,21 @@ services:
         delay: 5s
         max_attempts: 3
 
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: flights
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: flights
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flights"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
   neo4j:
     image: neo4j:5
     environment:
@@ -70,4 +86,5 @@ services:
     restart: unless-stopped
 
 volumes:
+  pgdata:
   neo4jdata:
