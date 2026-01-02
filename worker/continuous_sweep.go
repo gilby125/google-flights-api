@@ -89,6 +89,10 @@ type ContinuousSweepRunner struct {
 	// Error tracking for spike detection
 	recentErrors []time.Time
 
+	// Auto-resume tracking (e.g. pause for on-demand sweeps, then resume).
+	autoResumeMu     sync.Mutex
+	autoResumeActive bool
+
 	// Control channels
 	stopCh   chan struct{}
 	resumeCh chan struct{}
@@ -204,6 +208,73 @@ func (r *ContinuousSweepRunner) Resume() {
 		default:
 		}
 	}
+}
+
+func (r *ContinuousSweepRunner) PauseAndAutoResumeAfterQueueDrain(queueName string) {
+	r.mu.RLock()
+	running := r.isRunning
+	paused := r.isPaused
+	r.mu.RUnlock()
+
+	if !running || paused {
+		return
+	}
+
+	r.Pause()
+
+	r.autoResumeMu.Lock()
+	if r.autoResumeActive {
+		r.autoResumeMu.Unlock()
+		return
+	}
+	r.autoResumeActive = true
+	r.autoResumeMu.Unlock()
+
+	go func() {
+		defer func() {
+			r.autoResumeMu.Lock()
+			r.autoResumeActive = false
+			r.autoResumeMu.Unlock()
+		}()
+
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			r.mu.RLock()
+			running := r.isRunning
+			paused := r.isPaused
+			r.mu.RUnlock()
+
+			if !running {
+				return
+			}
+			if !paused {
+				// User manually resumed; don't fight it.
+				return
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			stats, err := r.queue.GetQueueStats(ctx, queueName)
+			cancel()
+			if err == nil {
+				pending := stats["pending"]
+				processing := stats["processing"]
+				if pending == 0 && processing == 0 {
+					r.Resume()
+					return
+				}
+			}
+
+			select {
+			case <-ticker.C:
+			case <-r.stopCh:
+				return
+			case <-r.ctx.Done():
+				return
+			}
+		}
+	}()
 }
 
 // SetConfig updates the configuration (safe to call while running)

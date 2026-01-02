@@ -1142,12 +1142,22 @@ func listBulkSearches(pgDB db.PostgresDB) gin.HandlerFunc {
 	}
 }
 
-// enqueuePriceGraphSweep enqueues a price graph sweep job for execution
-func enqueuePriceGraphSweep(pgDB db.PostgresDB, scheduler *worker.Scheduler) gin.HandlerFunc {
+// enqueuePriceGraphSweep enqueues a price graph sweep job for execution.
+// To avoid competing for rate-limited Google endpoints, it refuses to start when the continuous sweep is running.
+func enqueuePriceGraphSweep(pgDB db.PostgresDB, workerManager *worker.Manager) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if scheduler == nil {
+		if workerManager == nil || workerManager.GetScheduler() == nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Price graph scheduler unavailable"})
 			return
+		}
+
+		if runner := workerManager.GetSweepRunner(); runner != nil {
+			status := runner.GetStatus()
+			if status.IsRunning && !status.IsPaused {
+				// Continuous sweeps are often 24/7; pause it temporarily so on-demand sweeps can run,
+				// then auto-resume when the sweep queue drains.
+				runner.PauseAndAutoResumeAfterQueueDrain("price_graph_sweep")
+			}
 		}
 
 		var req PriceGraphSweepRequest
@@ -1183,7 +1193,7 @@ func enqueuePriceGraphSweep(pgDB db.PostgresDB, scheduler *worker.Scheduler) gin
 		}
 
 		ctx := c.Request.Context()
-		sweepID, err := scheduler.EnqueuePriceGraphSweep(ctx, payload)
+		sweepID, err := workerManager.GetScheduler().EnqueuePriceGraphSweep(ctx, payload)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to enqueue price graph sweep: " + err.Error()})
 			return

@@ -15,14 +15,15 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 
+	"github.com/gilby125/google-flights-api/config"
 	"github.com/gilby125/google-flights-api/db"
 	"github.com/gilby125/google-flights-api/test/mocks"
 	"github.com/gilby125/google-flights-api/worker"
 )
 
-func newSchedulerForTests(queue *mocks.MockQueue, postgres *mocks.MockPostgresDB) *worker.Scheduler {
-	mockCron := new(mocks.MockCronner)
-	return worker.NewScheduler(queue, postgres, mockCron)
+func newWorkerManagerForTests(queue *mocks.MockQueue, postgres *mocks.MockPostgresDB) *worker.Manager {
+	cfg := config.WorkerConfig{Concurrency: 1}
+	return worker.NewManager(queue, nil, postgres, nil, cfg, config.FlightConfig{})
 }
 
 func TestEnqueuePriceGraphSweepHandler_Success(t *testing.T) {
@@ -30,10 +31,10 @@ func TestEnqueuePriceGraphSweepHandler_Success(t *testing.T) {
 
 	mockDB := new(mocks.MockPostgresDB)
 	mockQueue := new(mocks.MockQueue)
-	scheduler := newSchedulerForTests(mockQueue, mockDB)
+	workerManager := newWorkerManagerForTests(mockQueue, mockDB)
 
 	router := gin.New()
-	router.POST("/admin/price-graph-sweeps", enqueuePriceGraphSweep(mockDB, scheduler))
+	router.POST("/admin/price-graph-sweeps", enqueuePriceGraphSweep(mockDB, workerManager))
 
 	reqBody := PriceGraphSweepRequest{
 		Origins:           []string{"JFK"},
@@ -102,10 +103,10 @@ func TestEnqueuePriceGraphSweepHandler_InvalidDates(t *testing.T) {
 
 	mockDB := new(mocks.MockPostgresDB)
 	mockQueue := new(mocks.MockQueue)
-	scheduler := newSchedulerForTests(mockQueue, mockDB)
+	workerManager := newWorkerManagerForTests(mockQueue, mockDB)
 
 	router := gin.New()
-	router.POST("/admin/price-graph-sweeps", enqueuePriceGraphSweep(mockDB, scheduler))
+	router.POST("/admin/price-graph-sweeps", enqueuePriceGraphSweep(mockDB, workerManager))
 
 	reqBody := PriceGraphSweepRequest{
 		Origins:           []string{"JFK"},
@@ -138,10 +139,10 @@ func TestEnqueuePriceGraphSweepHandler_SchedulerError(t *testing.T) {
 
 	mockDB := new(mocks.MockPostgresDB)
 	mockQueue := new(mocks.MockQueue)
-	scheduler := newSchedulerForTests(mockQueue, mockDB)
+	workerManager := newWorkerManagerForTests(mockQueue, mockDB)
 
 	router := gin.New()
-	router.POST("/admin/price-graph-sweeps", enqueuePriceGraphSweep(mockDB, scheduler))
+	router.POST("/admin/price-graph-sweeps", enqueuePriceGraphSweep(mockDB, workerManager))
 
 	reqBody := PriceGraphSweepRequest{
 		Origins:           []string{"JFK"},

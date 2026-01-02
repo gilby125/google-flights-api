@@ -132,7 +132,7 @@ func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Ne
 			admin.GET("/bulk-jobs/:id", getBulkSearchResults(postgresDB))
 			admin.POST("/bulk-jobs", createBulkJob(postgresDB, workerManager))
 			admin.GET("/bulk-jobs/:id/offers", getBulkSearchOffers(postgresDB))
-			admin.POST("/price-graph-sweeps", enqueuePriceGraphSweep(postgresDB, workerManager.GetScheduler()))
+			admin.POST("/price-graph-sweeps", enqueuePriceGraphSweep(postgresDB, workerManager))
 			admin.GET("/price-graph-sweeps", listPriceGraphSweeps(postgresDB))
 			admin.GET("/price-graph-sweeps/:id", getPriceGraphSweepResults(postgresDB))
 			admin.GET("/jobs/:id", getJobById(postgresDB))
