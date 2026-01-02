@@ -127,11 +127,11 @@ func Load() (*Config, error) {
 	apiEnabled, _ := strconv.ParseBool(getEnv("API_ENABLED", "true"))
 	workerEnabled, _ := strconv.ParseBool(getEnv("WORKER_ENABLED", "true"))
 
-	// NOTE: InitSchema is destructive (drops tables). Default to false in production to avoid data loss.
+	// InitSchema is safe and idempotent (CREATE TABLE IF NOT EXISTS, etc).
+	// Default to true so fresh deployments "just work"; set INIT_SCHEMA=false if you really want to manage schema externally.
 	initSchemaDefault := "true"
 	seedNeo4jDefault := "true"
 	if strings.ToLower(environment) == "production" {
-		initSchemaDefault = "false"
 		seedNeo4jDefault = "false"
 	}
 	initSchema, _ := strconv.ParseBool(getEnv("INIT_SCHEMA", initSchemaDefault))
