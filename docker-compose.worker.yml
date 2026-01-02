@@ -6,6 +6,9 @@
 #   2. Configure .env.worker with your central Redis/Postgres connection details
 #   3. Run: docker compose -f docker-compose.worker.yml up -d
 #
+# Required env vars (set in Dokploy or .env):
+#   DB_HOST, DB_PASSWORD, REDIS_HOST, REDIS_PASSWORD
+#
 # Each server will:
 #   - Connect to your central Redis queue
 #   - Pull jobs and process them

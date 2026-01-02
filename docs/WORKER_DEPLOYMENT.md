@@ -172,10 +172,25 @@ docker compose -f docker-compose.worker.tailscale.yml up -d
 ## Dokploy / Compose on OCI (Tailscale already installed on the VM)
 
 If the OCI VM already has Tailscale installed/running, you can deploy a single `worker` service using `docker-compose.worker.yml` and set:
+- The “core flags” alone are not enough. The worker must be able to connect to your **main server Postgres + Redis**, so you must provide DB/Redis credentials too.
+
+Required env vars:
 - `DB_HOST=<main-ts-ip>`
+- `DB_PASSWORD=<same as main>`
 - `REDIS_HOST=<main-ts-ip>`
-- Optional (only if you need Neo4j features): set `NEO4J_ENABLED=true` and `NEO4J_URI=bolt://<main-ts-ip>:7687`
+- `REDIS_PASSWORD=<same as main>`
+
+Recommended env vars:
+- `WORKER_ID=worker-oci-1`
+- `ENVIRONMENT=production`
+- `API_ENABLED=false`
+- `WORKER_ENABLED=true`
+- `INIT_SCHEMA=false`
+- `SEED_NEO4J=false`
 - `DB_SSLMODE=disable` and `DB_REQUIRE_SSL=false` (Tailscale encrypts the transport)
+
+Optional (Neo4j):
+- If you need Neo4j-backed features on the worker, set `NEO4J_ENABLED=true` and `NEO4J_URI=bolt://<main-ts-ip>:7687` and `NEO4J_PASSWORD=<same as main>`.
 
 Then start it as your platform expects (Dokploy UI or `docker compose -f docker-compose.worker.yml up -d`).
 
