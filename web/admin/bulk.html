@@ -59,6 +59,9 @@
                 <div class="d-flex justify-content-between align-items-center flex-wrap mb-4">
                     <h1 class="h3 mb-0">Bulk Search Results</h1>
                     <div>
+                        <button type="button" class="btn btn-primary btn-sm me-2" data-bs-toggle="modal" data-bs-target="#newBulkJobModal">
+                            <i class="bi bi-calendar-plus me-1"></i>Schedule Bulk Job
+                        </button>
                         <button id="refreshBulkBtn" class="btn btn-outline-secondary btn-sm">
                             <i class="bi bi-arrow-clockwise me-1"></i>Refresh
                         </button>
@@ -190,6 +193,148 @@
                     </div>
                 </div>
             </main>
+        </div>
+    </div>
+
+    <div class="modal fade" id="newBulkJobModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Schedule Bulk Job</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="newBulkJobForm" novalidate>
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-6">
+                                <label for="bulkJobName" class="form-label">Job Name</label>
+                                <input type="text" class="form-control" id="bulkJobName" placeholder="e.g. US->EU Deals" required>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Schedule</label>
+                                <div class="row g-2">
+                                    <div class="col-sm-6">
+                                        <label for="bulkInterval" class="form-label">Interval</label>
+                                        <select class="form-select" id="bulkInterval" required>
+                                            <option value="daily">Daily</option>
+                                            <option value="weekly">Weekly</option>
+                                            <option value="monthly">Monthly</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-sm-6">
+                                        <label for="bulkTime" class="form-label">Time</label>
+                                        <input type="time" class="form-control" id="bulkTime" value="12:00" required>
+                                    </div>
+                                </div>
+                                <small class="text-muted">Cron Expression: <code id="bulkCronPreview">0 12 * * *</code></small>
+                            </div>
+                        </div>
+
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-6">
+                                <label for="bulkOrigins" class="form-label">Origins</label>
+                                <textarea class="form-control" id="bulkOrigins" rows="2" placeholder="e.g. JFK, BOS, EWR" required></textarea>
+                                <div class="form-text">Comma-separated airport codes.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="bulkDestinations" class="form-label">Destinations</label>
+                                <textarea class="form-control" id="bulkDestinations" rows="2" placeholder="e.g. LHR, CDG, AMS" required></textarea>
+                                <div class="form-text">Comma-separated airport codes.</div>
+                            </div>
+                        </div>
+
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-6">
+                                <label for="bulkDateStart" class="form-label">Departure Date Start</label>
+                                <input type="date" class="form-control" id="bulkDateStart" required>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="bulkDateEnd" class="form-label">Departure Date End</label>
+                                <input type="date" class="form-control" id="bulkDateEnd" required>
+                            </div>
+                        </div>
+
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-6">
+                                <label for="bulkReturnDateStart" class="form-label">Return Date Start (optional)</label>
+                                <input type="date" class="form-control" id="bulkReturnDateStart">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="bulkReturnDateEnd" class="form-label">Return Date End (optional)</label>
+                                <input type="date" class="form-control" id="bulkReturnDateEnd">
+                            </div>
+                        </div>
+
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-4">
+                                <label for="bulkTripType" class="form-label">Trip Type</label>
+                                <select class="form-select" id="bulkTripType" required>
+                                    <option value="one_way">One-way</option>
+                                    <option value="round_trip" selected>Round trip</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label for="bulkClass" class="form-label">Cabin Class</label>
+                                <select class="form-select" id="bulkClass" required>
+                                    <option value="economy" selected>Economy</option>
+                                    <option value="premium_economy">Premium Economy</option>
+                                    <option value="business">Business</option>
+                                    <option value="first">First</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label for="bulkStops" class="form-label">Stops</label>
+                                <select class="form-select" id="bulkStops" required>
+                                    <option value="nonstop">Nonstop</option>
+                                    <option value="one_stop">One stop</option>
+                                    <option value="two_stops">Two stops</option>
+                                    <option value="any" selected>Any</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-3">
+                                <label for="bulkAdults" class="form-label">Adults</label>
+                                <input type="number" class="form-control" id="bulkAdults" min="1" value="1" required>
+                            </div>
+                            <div class="col-md-3">
+                                <label for="bulkChildren" class="form-label">Children</label>
+                                <input type="number" class="form-control" id="bulkChildren" min="0" value="0">
+                            </div>
+                            <div class="col-md-3">
+                                <label for="bulkInfantsLap" class="form-label">Infants (lap)</label>
+                                <input type="number" class="form-control" id="bulkInfantsLap" min="0" value="0">
+                            </div>
+                            <div class="col-md-3">
+                                <label for="bulkInfantsSeat" class="form-label">Infants (seat)</label>
+                                <input type="number" class="form-control" id="bulkInfantsSeat" min="0" value="0">
+                            </div>
+                        </div>
+
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-6">
+                                <label for="bulkTripLength" class="form-label">Trip Length (days, optional)</label>
+                                <input type="number" class="form-control" id="bulkTripLength" min="0" value="0">
+                                <div class="form-text">For round-trip only. Set 0 to use return date range (if provided).</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="bulkCurrency" class="form-label">Currency</label>
+                                <select class="form-select" id="bulkCurrency" required>
+                                    <option value="USD" selected>USD</option>
+                                    <option value="EUR">EUR</option>
+                                    <option value="GBP">GBP</option>
+                                    <option value="JPY">JPY</option>
+                                </select>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="saveBulkJobBtn">Save Bulk Job</button>
+                </div>
+            </div>
         </div>
     </div>
 
