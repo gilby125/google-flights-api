@@ -327,6 +327,11 @@ func (m *MockPostgresDB) ListBulkSearches(ctx context.Context, limit, offset int
 	return rows, args.Error(1)
 }
 
+func (m *MockPostgresDB) InsertBulkSearchResultsBatch(ctx context.Context, results []db.BulkSearchResultRecord) error {
+	args := m.Called(ctx, results)
+	return args.Error(0)
+}
+
 func (m *MockPostgresDB) ListBulkSearchOffers(ctx context.Context, searchID int) ([]db.BulkSearchOffer, error) {
 	args := m.Called(ctx, searchID)
 	var offers []db.BulkSearchOffer

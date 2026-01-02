@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/gilby125/google-flights-api/config"
@@ -53,6 +54,7 @@ type PostgresDB interface {
 	UpdateBulkSearchStatus(ctx context.Context, bulkSearchID int, status string) error
 	CompleteBulkSearch(ctx context.Context, summary BulkSearchSummary) error
 	InsertBulkSearchResult(ctx context.Context, result BulkSearchResultRecord) error
+	InsertBulkSearchResultsBatch(ctx context.Context, results []BulkSearchResultRecord) error
 	ListBulkSearches(ctx context.Context, limit, offset int) (Rows, error)
 	CreatePriceGraphSweep(ctx context.Context, jobID sql.NullInt32, originCount, destinationCount int, tripLengthMin, tripLengthMax sql.NullInt32, currency string) (int, error)
 	UpdatePriceGraphSweepStatus(ctx context.Context, sweepID int, status string, startedAt, completedAt sql.NullTime, errorCount int) error
@@ -774,6 +776,89 @@ func (p *PostgresDBImpl) InsertBulkSearchResult(ctx context.Context, result Bulk
 	if err != nil {
 		return fmt.Errorf("failed to insert bulk search result: %w", err)
 	}
+	return nil
+}
+
+// InsertBulkSearchResultsBatch inserts multiple bulk search results in a single transaction
+// using multi-row INSERT for better performance. This reduces round-trips to the database.
+func (p *PostgresDBImpl) InsertBulkSearchResultsBatch(ctx context.Context, results []BulkSearchResultRecord) error {
+	if len(results) == 0 {
+		return nil
+	}
+
+	// Start a transaction
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction for batch insert: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Build multi-row INSERT statement
+	// 18 fields per row
+	const numFields = 18
+	valueStrings := make([]string, 0, len(results))
+	valueArgs := make([]interface{}, 0, len(results)*numFields)
+
+	for i, result := range results {
+		base := i * numFields
+
+		outboundJSON := result.OutboundFlightsJSON
+		if len(outboundJSON) == 0 {
+			outboundJSON = []byte("[]")
+		}
+		returnJSON := result.ReturnFlightsJSON
+		if len(returnJSON) == 0 {
+			returnJSON = []byte("[]")
+		}
+		offerJSON := result.OfferJSON
+		if len(offerJSON) == 0 {
+			offerJSON = []byte("{}")
+		}
+
+		valueStrings = append(valueStrings, fmt.Sprintf(
+			"($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
+			base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8, base+9,
+			base+10, base+11, base+12, base+13, base+14, base+15, base+16, base+17, base+18,
+		))
+		valueArgs = append(valueArgs,
+			result.BulkSearchID,
+			result.Origin,
+			result.Destination,
+			result.DepartureDate,
+			result.ReturnDate,
+			result.Price,
+			result.Currency,
+			result.AirlineCode,
+			result.Duration,
+			result.SrcAirportCode,
+			result.DstAirportCode,
+			result.SrcCity,
+			result.DstCity,
+			result.FlightDuration,
+			result.ReturnFlightDuration,
+			outboundJSON,
+			returnJSON,
+			offerJSON,
+		)
+	}
+
+	query := `INSERT INTO bulk_search_results
+		(bulk_search_id, origin, destination, departure_date, return_date,
+		 price, currency, airline_code, duration,
+		 src_airport_code, dst_airport_code, src_city, dst_city,
+		 flight_duration, return_flight_duration,
+		 outbound_flights, return_flights, offer_json)
+	VALUES ` + strings.Join(valueStrings, ",")
+
+	_, err = tx.ExecContext(ctx, query, valueArgs...)
+	if err != nil {
+		return fmt.Errorf("failed to execute batch insert: %w", err)
+	}
+
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit batch insert: %w", err)
+	}
+
 	return nil
 }
 
