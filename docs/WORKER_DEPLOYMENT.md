@@ -194,6 +194,9 @@ Optional (Neo4j):
 
 Then start it as your platform expects (Dokploy UI or `docker compose -f docker-compose.worker.yml up -d`).
 
+If your worker VM only has 1 vCPU and you see an error like “range of CPUs is from 0.01 to 1.00”, set:
+- `WORKER_CPU_LIMIT=1.0` (or lower, e.g. `0.9`)
+
 ---
 
 ## Required Values
