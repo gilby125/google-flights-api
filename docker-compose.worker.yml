@@ -14,7 +14,12 @@
 
 services:
   worker:
+    # Dokploy/Compose can build directly from the repo (no waiting on GHCR/GitHub runners).
+    # If you prefer pulling a prebuilt image, remove the `build:` block.
     image: ghcr.io/gilby125/flight-api:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
     environment:
       # Worker identification (change per server for debugging)
       WORKER_ID: ${WORKER_ID:-worker-1}
