@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"net/http"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"github.com/gilby125/google-flights-api/queue"
 	"github.com/gilby125/google-flights-api/worker"
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 )
 
 func main() {
@@ -26,6 +28,55 @@ func main() {
 			if err != nil || resp.StatusCode != http.StatusOK {
 				os.Exit(1)
 			}
+			os.Exit(0)
+		}
+
+		if arg == "-health-check-worker" {
+			cfg, err := config.Load()
+			if err != nil {
+				os.Exit(1)
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+
+			// Postgres auth + connectivity check
+			connStr := fmt.Sprintf(
+				"host=%s port=%s user=%s password=%s dbname=%s sslmode=%s sslcert=%s sslkey=%s sslrootcert=%s",
+				cfg.PostgresConfig.Host, cfg.PostgresConfig.Port, cfg.PostgresConfig.User, cfg.PostgresConfig.Password,
+				cfg.PostgresConfig.DBName, cfg.PostgresConfig.SSLMode, cfg.PostgresConfig.SSLCert, cfg.PostgresConfig.SSLKey, cfg.PostgresConfig.SSLRootCert)
+
+			postgresDB, err := sql.Open("postgres", connStr)
+			if err != nil {
+				os.Exit(1)
+			}
+			defer postgresDB.Close()
+
+			if err := postgresDB.PingContext(ctx); err != nil {
+				os.Exit(1)
+			}
+
+			// Redis auth + connectivity check
+			redisClient := redis.NewClient(&redis.Options{
+				Addr:     cfg.RedisConfig.Host + ":" + cfg.RedisConfig.Port,
+				Password: cfg.RedisConfig.Password,
+				DB:       cfg.RedisConfig.DB,
+			})
+			defer redisClient.Close()
+
+			if _, err := redisClient.Ping(ctx).Result(); err != nil {
+				os.Exit(1)
+			}
+
+			// Optional Neo4j connectivity check
+			if cfg.Neo4jEnabled {
+				neo4jDB, err := db.NewNeo4jDB(cfg.Neo4jConfig)
+				if err != nil {
+					os.Exit(1)
+				}
+				_ = neo4jDB.Close()
+			}
+
 			os.Exit(0)
 		}
 	}

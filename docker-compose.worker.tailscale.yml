@@ -109,8 +109,9 @@ services:
           memory: ${WORKER_MEM_LIMIT:-1G}
 
     healthcheck:
-      # Worker deployments often run with API_ENABLED=false, so HTTP health may not exist.
-      test: [ "CMD-SHELL", "pgrep -f '/app/flight-api' >/dev/null 2>&1" ]
+      # Distroless images don't include /bin/sh, so avoid CMD-SHELL.
+      # This checks DB/Redis connectivity (and Neo4j if NEO4J_ENABLED=true).
+      test: [ "CMD", "/app/flight-api", "-health-check-worker" ]
       interval: 30s
       timeout: 10s
       retries: 3
