@@ -6,6 +6,11 @@ Deploy workers to any cloud provider to distribute flight search load.
 
 Use this if you want the simplest reliable setup on a VPS (compiled Go binary + `systemd`).
 
+Important:
+- Remote workers must be able to reach **Postgres (5432)**, **Redis (6379)**, and **Neo4j Bolt (7687)** on your main server.
+- If your main stack runs in Docker (Komodo), you must publish those ports on the main server **to the Tailscale interface only** (not public internet).
+  - In `komodo-compose.yml`, set `TAILSCALE_BIND_IP` to your main server's Tailscale IP (e.g. `100.x.y.z`) and redeploy via Komodo.
+
 1. Build the binary (recommended: in CI) and copy it to the VPS as `/opt/google-flights/google-flights-api`
 2. Copy `deploy/systemd/worker.env.example` to `/etc/google-flights/worker.env` and fill in required values
 3. Copy `deploy/systemd/google-flights-worker.service` (or `google-flights-worker@.service`) to `/etc/systemd/system/`
