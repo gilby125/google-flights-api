@@ -27,9 +27,12 @@ services:
       REDIS_QUEUE_BLOCK_TIMEOUT: ${REDIS_QUEUE_BLOCK_TIMEOUT:-5s}
       REDIS_QUEUE_VISIBILITY_TIMEOUT: ${REDIS_QUEUE_VISIBILITY_TIMEOUT:-2m}
     depends_on:
-      - postgres
-      - neo4j
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      neo4j-init:
+        condition: service_completed_successfully
     # Removed host port mapping - Dokploy handles routing
     # ports:
     #   - "8080:8080"
@@ -89,7 +92,8 @@ services:
       NEO4J_AUTH: neo4j/${NEO4J_PASSWORD}
       NEO4J_ACCEPT_LICENSE_AGREEMENT: "yes"
     healthcheck:
-      test: ["CMD-SHELL", "cypher-shell -u neo4j -p ${NEO4J_PASSWORD} \"RETURN 1\""]
+      # Simple healthcheck for the process
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:7474 || exit 1"]
       interval: 15s
       timeout: 10s
       retries: 10
@@ -97,6 +101,28 @@ services:
     volumes:
       - neo4jdata:/data
     restart: unless-stopped
+
+  # Automated Neo4j Init Helper
+  # This ensures the password matches NEO4J_PASSWORD even on existing volumes
+  neo4j-init:
+    image: neo4j:5
+    depends_on:
+      - neo4j
+    command: >
+      bash -c "
+        echo 'Waiting for Neo4j Bolt to be ready...'
+        until cypher-shell -u neo4j -p neo4j 'RETURN 1' >/dev/null 2>&1 || cypher-shell -u neo4j -p ${NEO4J_PASSWORD} 'RETURN 1' >/dev/null 2>&1; do
+          sleep 5
+        done
+        echo 'Neo4j is up. Checking if password needs update...'
+        if cypher-shell -u neo4j -p neo4j 'RETURN 1' >/dev/null 2>&1; then
+          echo 'Default password detected. Updating to matches ${NEO4J_PASSWORD}...'
+          cypher-shell -u neo4j -p neo4j \"ALTER CURRENT USER SET PASSWORD FROM 'neo4j' TO '${NEO4J_PASSWORD}'\"
+          echo 'Password updated successfully.'
+        else
+          echo 'Password already updated or matches env var. All good.'
+        fi
+      "
 
 volumes:
   pgdata:
