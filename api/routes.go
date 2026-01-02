@@ -7,6 +7,7 @@ import (
 	"github.com/gilby125/google-flights-api/db"
 	"github.com/gilby125/google-flights-api/pkg/cache"
 	"github.com/gilby125/google-flights-api/pkg/health"
+	"github.com/gilby125/google-flights-api/pkg/macros"
 	"github.com/gilby125/google-flights-api/pkg/middleware"
 	"github.com/gilby125/google-flights-api/queue"
 	"github.com/gilby125/google-flights-api/worker"
@@ -108,6 +109,14 @@ func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Ne
 
 		// Airline routes
 		v1.GET("/airlines", GetAirlines(postgresDB))
+
+		// Macro/metadata endpoints (region and airline group tokens)
+		v1.GET("/regions", func(c *gin.Context) {
+			c.JSON(http.StatusOK, macros.GetAllRegionInfo())
+		})
+		v1.GET("/airline-groups", func(c *gin.Context) {
+			c.JSON(http.StatusOK, macros.GetAllAirlineGroupInfo())
+		})
 
 		// Flight search routes (queued searches)
 		v1.POST("/search", CreateSearch(queue))

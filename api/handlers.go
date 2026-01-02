@@ -18,6 +18,7 @@ import (
 	"github.com/gilby125/google-flights-api/flights"
 	"github.com/gilby125/google-flights-api/pkg/cache"
 	"github.com/gilby125/google-flights-api/pkg/logger"
+	"github.com/gilby125/google-flights-api/pkg/macros"
 	"github.com/gilby125/google-flights-api/pkg/notify"
 	"github.com/gilby125/google-flights-api/pkg/worker_registry"
 	"github.com/gilby125/google-flights-api/queue"
@@ -1175,9 +1176,46 @@ func enqueuePriceGraphSweep(pgDB db.PostgresDB, workerManager *worker.Manager) g
 			stops = "any"
 		}
 
+		// Expand region tokens in origins and destinations
+		expandedOrigins, originWarnings, err := macros.ExpandAirportTokens(req.Origins)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid origin: " + err.Error()})
+			return
+		}
+		expandedDestinations, destinationWarnings, err := macros.ExpandAirportTokens(req.Destinations)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid destination: " + err.Error()})
+			return
+		}
+
+		warnings := append([]string{}, originWarnings...)
+		warnings = append(warnings, destinationWarnings...)
+
+		// Guard against accidental workload explosion from region tokens
+		totalRoutes := len(expandedOrigins) * len(expandedDestinations)
+		if totalRoutes == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":    "At least one origin and one destination are required (after REGION:* expansion)",
+				"warnings": warnings,
+			})
+			return
+		}
+		const maxSweepRoutes = 10000
+		if totalRoutes > maxSweepRoutes {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":        fmt.Sprintf("Too many routes: %d (max %d). Region tokens can expand to many airports; consider narrowing your search.", totalRoutes, maxSweepRoutes),
+				"total_routes": totalRoutes,
+				"max_routes":   maxSweepRoutes,
+				"origins":      len(expandedOrigins),
+				"destinations": len(expandedDestinations),
+				"warnings":     warnings,
+			})
+			return
+		}
+
 		payload := worker.PriceGraphSweepPayload{
-			Origins:           req.Origins,
-			Destinations:      req.Destinations,
+			Origins:           expandedOrigins,
+			Destinations:      expandedDestinations,
 			DepartureDateFrom: req.DepartureDateFrom.Time,
 			DepartureDateTo:   req.DepartureDateTo.Time,
 			TripLengths:       req.TripLengths,
@@ -1208,6 +1246,7 @@ func enqueuePriceGraphSweep(pgDB db.PostgresDB, workerManager *worker.Manager) g
 		c.JSON(http.StatusAccepted, gin.H{
 			"message":  "Price graph sweep enqueued",
 			"sweep_id": sweepID,
+			"warnings": warnings,
 			"sweep": map[string]interface{}{
 				"id":                sweep.ID,
 				"status":            sweep.Status,
@@ -1890,9 +1929,41 @@ func CreateBulkSearch(q queue.Queue, pgDB db.PostgresDB) gin.HandlerFunc {
 			return
 		}
 
-		totalRoutes := len(req.Origins) * len(req.Destinations)
+		// Expand region tokens in origins and destinations
+		expandedOrigins, originWarnings, err := macros.ExpandAirportTokens(req.Origins)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid origin: " + err.Error()})
+			return
+		}
+		expandedDestinations, destinationWarnings, err := macros.ExpandAirportTokens(req.Destinations)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid destination: " + err.Error()})
+			return
+		}
+
+		warnings := append([]string{}, originWarnings...)
+		warnings = append(warnings, destinationWarnings...)
+
+		totalRoutes := len(expandedOrigins) * len(expandedDestinations)
 		if totalRoutes == 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "At least one origin and one destination are required"})
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":    "At least one origin and one destination are required (after REGION:* expansion)",
+				"warnings": warnings,
+			})
+			return
+		}
+
+		// Guard against accidental workload explosion from region tokens
+		const maxBulkSearchRoutes = 10000
+		if totalRoutes > maxBulkSearchRoutes {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":        fmt.Sprintf("Too many routes: %d (max %d). Region tokens can expand to many airports; consider narrowing your search.", totalRoutes, maxBulkSearchRoutes),
+				"total_routes": totalRoutes,
+				"max_routes":   maxBulkSearchRoutes,
+				"origins":      len(expandedOrigins),
+				"destinations": len(expandedDestinations),
+				"warnings":     warnings,
+			})
 			return
 		}
 
@@ -1913,8 +1984,8 @@ func CreateBulkSearch(q queue.Queue, pgDB db.PostgresDB) gin.HandlerFunc {
 
 		// Create a worker payload
 		payload := worker.BulkSearchPayload{
-			Origins:           req.Origins,
-			Destinations:      req.Destinations,
+			Origins:           expandedOrigins,
+			Destinations:      expandedDestinations,
 			DepartureDateFrom: req.DepartureDateFrom.Time,
 			DepartureDateTo:   req.DepartureDateTo.Time,
 			ReturnDateFrom:    req.ReturnDateFrom.Time,
@@ -1943,6 +2014,7 @@ func CreateBulkSearch(q queue.Queue, pgDB db.PostgresDB) gin.HandlerFunc {
 			"job_id":         jobID,
 			"bulk_search_id": bulkSearchID,
 			"message":        "Bulk flight search job created successfully",
+			"warnings":       warnings,
 		})
 	}
 }
@@ -2328,8 +2400,9 @@ func DirectFlightSearch() gin.HandlerFunc {
 		// Convert offers to response format
 		responseOffers := make([]map[string]interface{}, 0, len(offers))
 		for i, offer := range offers {
-			// Create segments from flights
+			// Create segments from flights and collect airline codes
 			segments := make([]map[string]interface{}, 0, len(offer.Flight))
+			airlineCodes := make([]string, 0, len(offer.Flight))
 			for _, flight := range offer.Flight {
 				segment := map[string]interface{}{
 					"departure_airport": flight.DepAirportCode,
@@ -2343,7 +2416,15 @@ func DirectFlightSearch() gin.HandlerFunc {
 					"legroom":           flight.Legroom,
 				}
 				segments = append(segments, segment)
+
+				// Extract airline code from flight number for tagging
+				if code := macros.ExtractAirlineCodeFromFlightNumber(flight.FlightNumber); code != "" {
+					airlineCodes = append(airlineCodes, code)
+				}
 			}
+
+			// Compute airline groups for this offer
+			airlineGroups := macros.AirlineGroupsForCodes(airlineCodes)
 
 			// Generate Google Flights URL
 			googleFlightsUrl, err := session.SerializeURL(
@@ -2382,6 +2463,7 @@ func DirectFlightSearch() gin.HandlerFunc {
 				"departure_date":     offer.StartDate.Format("2006-01-02"),
 				"return_date":        offer.ReturnDate.Format("2006-01-02"),
 				"google_flights_url": googleFlightsUrl,
+				"airline_groups":     airlineGroups,
 			}
 
 			responseOffers = append(responseOffers, responseOffer)
@@ -2526,11 +2608,49 @@ func createBulkJob(pgDB db.PostgresDB, workerManager *worker.Manager) gin.Handle
 			returnDateEnd = sql.NullTime{Time: parsedDate, Valid: true}
 		}
 
+		// Expand region tokens in origins and destinations
+		expandedOrigins, originWarnings, err := macros.ExpandAirportTokens(req.Origins)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid origin: " + err.Error()})
+			return
+		}
+		expandedDestinations, destinationWarnings, err := macros.ExpandAirportTokens(req.Destinations)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid destination: " + err.Error()})
+			return
+		}
+
+		warnings := append([]string{}, originWarnings...)
+		warnings = append(warnings, destinationWarnings...)
+
+		// Guard against accidental explosion of scheduled jobs from region tokens
+		// This is stricter than bulk search since each job persists to DB and runs repeatedly
+		totalJobs := len(expandedOrigins) * len(expandedDestinations)
+		if totalJobs == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":    "At least one origin and one destination are required (after REGION:* expansion)",
+				"warnings": warnings,
+			})
+			return
+		}
+		const maxScheduledJobs = 500
+		if totalJobs > maxScheduledJobs {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":        fmt.Sprintf("Too many scheduled jobs to create: %d (max %d). Region tokens can expand to many airports; consider narrowing your search or using bulk-search for one-off runs.", totalJobs, maxScheduledJobs),
+				"total_jobs":   totalJobs,
+				"max_jobs":     maxScheduledJobs,
+				"origins":      len(expandedOrigins),
+				"destinations": len(expandedDestinations),
+				"warnings":     warnings,
+			})
+			return
+		}
+
 		// Create multiple scheduled jobs - one for each origin/destination combination
 		createdJobs := []map[string]interface{}{}
 
-		for _, origin := range req.Origins {
-			for _, destination := range req.Destinations {
+		for _, origin := range expandedOrigins {
+			for _, destination := range expandedDestinations {
 				// Create job name
 				jobName := fmt.Sprintf("%s: %s→%s", req.Name, origin, destination)
 
@@ -2622,8 +2742,9 @@ func createBulkJob(pgDB db.PostgresDB, workerManager *worker.Manager) gin.Handle
 		}
 
 		c.JSON(http.StatusCreated, gin.H{
-			"message": fmt.Sprintf("Created %d scheduled bulk search jobs", len(createdJobs)),
-			"jobs":    createdJobs,
+			"message":  fmt.Sprintf("Created %d scheduled bulk search jobs", len(createdJobs)),
+			"jobs":     createdJobs,
+			"warnings": warnings,
 		})
 	}
 }
