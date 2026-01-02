@@ -18,6 +18,7 @@ type Config struct {
 	LoggingConfig     LoggingConfig
 	PostgresConfig    PostgresConfig
 	Neo4jConfig       Neo4jConfig
+	Neo4jEnabled      bool
 	RedisConfig       RedisConfig
 	WorkerConfig      WorkerConfig
 	FlightConfig      FlightConfig
@@ -160,6 +161,7 @@ func Load() (*Config, error) {
 		User:     getEnv("NEO4J_USER", "neo4j"),
 		Password: getEnv("NEO4J_PASSWORD", ""),
 	}
+	neo4jEnabled, _ := strconv.ParseBool(getEnv("NEO4J_ENABLED", "true"))
 
 	queueBlockTimeout, err := time.ParseDuration(getEnv("REDIS_QUEUE_BLOCK_TIMEOUT", "5s"))
 	if err != nil {
@@ -256,6 +258,7 @@ func Load() (*Config, error) {
 		LoggingConfig:   loggingConfig,
 		PostgresConfig:  postgresConfig,
 		Neo4jConfig:     neo4jConfig,
+		Neo4jEnabled:    neo4jEnabled,
 		RedisConfig:     redisConfig,
 		WorkerConfig:    workerConfig,
 		FlightConfig:    flightConfig,

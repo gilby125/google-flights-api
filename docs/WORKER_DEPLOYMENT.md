@@ -174,7 +174,7 @@ docker compose -f docker-compose.worker.tailscale.yml up -d
 If the OCI VM already has Tailscale installed/running, you can deploy a single `worker` service using `docker-compose.worker.yml` and set:
 - `DB_HOST=<main-ts-ip>`
 - `REDIS_HOST=<main-ts-ip>`
-- `NEO4J_URI=bolt://<main-ts-ip>:7687`
+- Optional (only if you need Neo4j features): set `NEO4J_ENABLED=true` and `NEO4J_URI=bolt://<main-ts-ip>:7687`
 - `DB_SSLMODE=disable` and `DB_REQUIRE_SSL=false` (Tailscale encrypts the transport)
 
 Then start it as your platform expects (Dokploy UI or `docker compose -f docker-compose.worker.yml up -d`).

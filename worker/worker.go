@@ -348,6 +348,10 @@ func (w *Worker) StoreFlightOffers(ctx context.Context, payload FlightSearchPayl
 
 // StoreFlightInNeo4j stores flight data in Neo4j for graph analysis (Exported for testing)
 func (w *Worker) StoreFlightInNeo4j(ctx context.Context, offer flights.FullOffer) error {
+	if w.neo4jDB == nil {
+		return nil
+	}
+
 	// Create airports in Neo4j
 	for _, flight := range offer.Flight {
 		// Create departure airport

@@ -48,7 +48,8 @@ func main() {
 		"port", cfg.Port,
 		"api_enabled", cfg.APIEnabled,
 		"http_bind_addr", cfg.HTTPBindAddr,
-		"worker_enabled", cfg.WorkerEnabled)
+		"worker_enabled", cfg.WorkerEnabled,
+		"neo4j_enabled", cfg.Neo4jEnabled)
 
 	logger.Info("Configuration loaded successfully")
 
@@ -76,7 +77,7 @@ func main() {
 			}
 		}
 
-		if neo4jDB == nil {
+		if cfg.Neo4jEnabled && neo4jDB == nil {
 			neo4jDB, nErr = db.NewNeo4jDB(cfg.Neo4jConfig)
 			if nErr != nil {
 				logger.Warn("Failed to connect to Neo4j, retrying...", "error", nErr, "attempt", i+1)
@@ -90,7 +91,7 @@ func main() {
 			}
 		}
 
-		if pErr == nil && nErr == nil && rErr == nil {
+		if pErr == nil && rErr == nil && (!cfg.Neo4jEnabled || nErr == nil) {
 			logger.Info("All database connections established successfully")
 			break
 		}
@@ -102,7 +103,9 @@ func main() {
 		time.Sleep(retryDelay)
 	}
 	defer postgresDB.Close()
-	defer neo4jDB.Close()
+	if neo4jDB != nil {
+		defer neo4jDB.Close()
+	}
 
 	// Initialize database schemas
 	if cfg.InitSchema {
@@ -111,8 +114,10 @@ func main() {
 			logger.Fatal(err, "Failed to initialize PostgreSQL schema")
 		}
 
-		if err := neo4jDB.InitSchema(); err != nil {
-			logger.Fatal(err, "Failed to initialize Neo4j schema")
+		if neo4jDB != nil {
+			if err := neo4jDB.InitSchema(); err != nil {
+				logger.Fatal(err, "Failed to initialize Neo4j schema")
+			}
 		}
 	} else {
 		logger.Info("Skipping schema initialization", "init_schema", cfg.InitSchema)
@@ -120,6 +125,9 @@ func main() {
 
 	// Seed Neo4j with data from PostgreSQL
 	if cfg.SeedNeo4j {
+		if neo4jDB == nil {
+			logger.Fatal(fmt.Errorf("neo4j is disabled"), "SEED_NEO4J=true requires Neo4jEnabled=true")
+		}
 		logger.Info("Seeding Neo4j database...")
 		if err := neo4jDB.SeedNeo4jData(context.Background(), postgresDB); err != nil {
 			logger.Fatal(err, "Failed to seed Neo4j database")

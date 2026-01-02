@@ -26,6 +26,7 @@ services:
       WORKER_ENABLED: "true"
       INIT_SCHEMA: "false"
       SEED_NEO4J: "false"
+      NEO4J_ENABLED: ${NEO4J_ENABLED:-false}
 
       # Worker pool settings
       WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-4}
@@ -60,9 +61,9 @@ services:
       # Neo4j (optional - for route graph storage)
       # NOTE: The process currently connects to Neo4j on startup.
       # For remote workers over Tailscale, point this at your main server's Tailscale IP.
-      NEO4J_URI: ${NEO4J_URI:?NEO4J_URI is required}
+      NEO4J_URI: ${NEO4J_URI:-}
       NEO4J_USER: ${NEO4J_USER:-neo4j}
-      NEO4J_PASSWORD: ${NEO4J_PASSWORD:?NEO4J_PASSWORD is required}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-}
 
       # Push notifications (optional)
       NTFY_ENABLED: ${NTFY_ENABLED:-false}
