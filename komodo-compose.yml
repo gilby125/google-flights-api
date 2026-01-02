@@ -46,7 +46,9 @@ services:
     labels:
       - "traefik.enable=true"
       - 'traefik.http.routers.flights-api.rule=Host(`${DOMAIN:-flights.local}`)'
-      - "traefik.http.routers.flights-api.entrypoints=web"
+      # For Komodo/Traefik: set TRAEFIK_ENTRYPOINTS=websecure and TRAEFIK_TLS=true for HTTPS.
+      - "traefik.http.routers.flights-api.entrypoints=${TRAEFIK_ENTRYPOINTS:-web}"
+      - "traefik.http.routers.flights-api.tls=${TRAEFIK_TLS:-false}"
       - "traefik.http.services.flights-api.loadbalancer.server.port=8080"
       - "traefik.docker.network=komodo_default"
     restart: unless-stopped
@@ -57,6 +59,8 @@ services:
       POSTGRES_USER: flights
       POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
       POSTGRES_DB: flights
+    # NOTE: If pgdata already exists with a different password, update it in-place:
+    #   docker compose -f komodo-compose.yml exec postgres psql -U flights -d postgres -c "ALTER USER flights WITH PASSWORD '<new>';"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U flights"]
       interval: 10s
