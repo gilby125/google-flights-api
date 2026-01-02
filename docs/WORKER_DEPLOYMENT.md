@@ -2,6 +2,9 @@
 
 Deploy workers to any cloud provider to distribute flight search load.
 
+For remote workers over Tailscale (Komodo main server + OCI worker), see:
+- `docs/TAILSCALE_REMOTE_WORKERS.md`
+
 ## Option A: systemd (no Docker)
 
 Use this if you want the simplest reliable setup on a VPS (compiled Go binary + `systemd`).
