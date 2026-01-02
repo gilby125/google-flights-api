@@ -35,7 +35,7 @@ services:
     expose:
       - 8080
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
+      test: ["CMD", "/app/flight-api", "-health-check"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -86,11 +86,16 @@ services:
       - neo4j
     command: >
       bash -c "
-        until cypher-shell -u neo4j -p neo4j 'RETURN 1' >/dev/null 2>&1 || cypher-shell -u neo4j -p ${NEO4J_PASSWORD} 'RETURN 1' >/dev/null 2>&1; do
+        echo 'Waiting for Neo4j Bolt to be ready...'
+        until cypher-shell -a bolt://neo4j:7687 -u neo4j -p neo4j 'RETURN 1' >/dev/null 2>&1 || cypher-shell -a bolt://neo4j:7687 -u neo4j -p ${NEO4J_PASSWORD} 'RETURN 1' >/dev/null 2>&1; do
           sleep 5
         done
-        if cypher-shell -u neo4j -p neo4j 'RETURN 1' >/dev/null 2>&1; then
-          cypher-shell -u neo4j -p neo4j \"ALTER CURRENT USER SET PASSWORD FROM 'neo4j' TO '${NEO4J_PASSWORD}'\"
+        echo 'Neo4j is up. Checking if password needs update...'
+        if cypher-shell -a bolt://neo4j:7687 -u neo4j -p neo4j 'RETURN 1' >/dev/null 2>&1; then
+          echo 'Default password detected. Updating...'
+          cypher-shell -a bolt://neo4j:7687 -u neo4j -p neo4j \"ALTER CURRENT USER SET PASSWORD FROM 'neo4j' TO '${NEO4J_PASSWORD}'\"
+        else
+          echo 'Password already set. All good.'
         fi
       "
 

@@ -18,6 +18,17 @@ import (
 )
 
 func main() {
+	// Handle health check flag before loading full config/logger
+	for _, arg := range os.Args[1:] {
+		if arg == "-health-check" {
+			resp, err := http.Get("http://localhost:8080/health")
+			if err != nil || resp.StatusCode != http.StatusOK {
+				os.Exit(1)
+			}
+			os.Exit(0)
+		}
+	}
+
 	// Load configuration first
 	cfg, err := config.Load()
 	if err != nil {
