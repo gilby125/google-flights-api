@@ -81,6 +81,7 @@ func New() (*Session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("new session: err sending request to www.google.com: %v", err)
 	}
+	defer res.Body.Close()
 
 	cookies, err := getCookies(res)
 	if err != nil {

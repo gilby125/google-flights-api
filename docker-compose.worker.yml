@@ -1,0 +1,89 @@
+# Worker-only deployment for distributed flight scraping
+# Deploy this to multiple servers to spread the load
+#
+# Usage:
+#   1. Copy this file and .env.worker.example to your remote server
+#   2. Configure .env.worker with your central Redis/Postgres connection details
+#   3. Run: docker compose -f docker-compose.worker.yml up -d
+#
+# Each server will:
+#   - Connect to your central Redis queue
+#   - Pull jobs and process them
+#   - Write results to your central PostgreSQL
+#   - NOT run the scheduler (leader election ensures only one instance does)
+
+services:
+  worker:
+    image: ghcr.io/gilby125/flight-api:price-graph-sweep-arm64
+    environment:
+      # Worker identification (change per server for debugging)
+      WORKER_ID: ${WORKER_ID:-worker-1}
+
+      # Core settings
+      PORT: 8080
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      WORKER_ENABLED: "true"
+
+      # Worker pool settings
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-4}
+      WORKER_JOB_TIMEOUT: ${WORKER_JOB_TIMEOUT:-10m}
+      WORKER_MAX_RETRIES: ${WORKER_MAX_RETRIES:-3}
+      WORKER_RETRY_DELAY: ${WORKER_RETRY_DELAY:-30s}
+      WORKER_SHUTDOWN_TIMEOUT: ${WORKER_SHUTDOWN_TIMEOUT:-30s}
+
+      # Scheduler leader election (ensures only ONE worker runs scheduler)
+      SCHEDULER_LOCK_KEY: ${SCHEDULER_LOCK_KEY:-scheduler:leader}
+      SCHEDULER_LOCK_TTL: ${SCHEDULER_LOCK_TTL:-30s}
+      SCHEDULER_LOCK_RENEW: ${SCHEDULER_LOCK_RENEW:-10s}
+
+      # Central PostgreSQL (REQUIRED - your main database)
+      DB_HOST: ${DB_HOST:?DB_HOST is required}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_USER: ${DB_USER:-flights}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      DB_NAME: ${DB_NAME:-flights}
+      DB_SSLMODE: ${DB_SSLMODE:-require}
+      DB_REQUIRE_SSL: ${DB_REQUIRE_SSL:-true}
+
+      # Central Redis (REQUIRED - shared job queue)
+      REDIS_HOST: ${REDIS_HOST:?REDIS_HOST is required}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      REDIS_QUEUE_GROUP: ${REDIS_QUEUE_GROUP:-flights_workers}
+      REDIS_QUEUE_STREAM_PREFIX: ${REDIS_QUEUE_STREAM_PREFIX:-flights}
+      REDIS_QUEUE_BLOCK_TIMEOUT: ${REDIS_QUEUE_BLOCK_TIMEOUT:-5s}
+      REDIS_QUEUE_VISIBILITY_TIMEOUT: ${REDIS_QUEUE_VISIBILITY_TIMEOUT:-2m}
+
+      # Neo4j (optional - for route graph storage)
+      NEO4J_URI: ${NEO4J_URI:-}
+      NEO4J_USER: ${NEO4J_USER:-neo4j}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-}
+
+      # Push notifications (optional)
+      NTFY_ENABLED: ${NTFY_ENABLED:-false}
+      NTFY_SERVER_URL: ${NTFY_SERVER_URL:-https://ntfy.sh}
+      NTFY_TOPIC: ${NTFY_TOPIC:-}
+
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+
+    # Health check - verifies worker is running and connected
+    healthcheck:
+      test: [ "CMD", "wget", "-q", "--spider", "http://localhost:8080/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+    restart: unless-stopped
+
+    # Resource limits (adjust based on your server)
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 256M

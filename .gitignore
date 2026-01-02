@@ -12,7 +12,9 @@ coverage.out
 # Dependency directories
 vendor/
 /node_modules/
-
+.gocache/
+.gomodcache/
+.gopath/
 # Environment files
 *.env
 .env.local

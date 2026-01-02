@@ -113,7 +113,7 @@ func (s *Session) AbbrCity(ctx context.Context, city string, lang language.Tag) 
 }
 
 func (s *Session) abbrCities(ctx context.Context, cities []string, lang language.Tag) ([]string, error) {
-	abbrCities := []string{}
+	abbrCities := make([]string, 0, len(cities))
 	for _, c := range cities {
 		sc, err := s.AbbrCity(ctx, c, lang)
 		if err != nil {
