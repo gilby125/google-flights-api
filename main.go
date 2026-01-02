@@ -24,7 +24,9 @@ func main() {
 	// Handle health check flag before loading full config/logger
 	for _, arg := range os.Args[1:] {
 		if arg == "-health-check" {
-			resp, err := http.Get("http://localhost:8080/health")
+			// Container orchestrators should check readiness (core deps) rather than full health.
+			// Full /health includes optional dependencies like Neo4j and can flap the container.
+			resp, err := http.Get("http://localhost:8080/health/ready")
 			if err != nil || resp.StatusCode != http.StatusOK {
 				os.Exit(1)
 			}
