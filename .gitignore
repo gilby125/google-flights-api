@@ -8,6 +8,9 @@
 # Test artifacts
 coverage.out
 *.test
+playwright-report/
+test-results/
+coverage/
 
 # Dependency directories
 vendor/
@@ -39,6 +42,7 @@ log.txt
 
 # Local development files
 docker-compose.override.yml
+opencodetmp/
 
 # TLS certificates
 tls/*.key

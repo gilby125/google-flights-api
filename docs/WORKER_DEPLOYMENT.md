@@ -238,8 +238,13 @@ aws ec2 run-instances --instance-type t4g.micro --image-id ami-ubuntu-arm64
 ### Hetzner Cloud
 
 ```bash
+```bash
 hcloud server create --type cax11 --image ubuntu-22.04 --name worker-1
 ```
+
+### Google Cloud Platform (Free Tier)
+
+See the dedicated guide: [GCP Free Tier Worker Setup](GCP_FREE_TIER_WORKER.md)
 
 ---
 
