@@ -22,7 +22,10 @@ services:
       # Core settings
       PORT: 8080
       ENVIRONMENT: ${ENVIRONMENT:-production}
+      API_ENABLED: "false"
       WORKER_ENABLED: "true"
+      INIT_SCHEMA: "false"
+      SEED_NEO4J: "false"
 
       # Worker pool settings
       WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-4}
@@ -55,9 +58,11 @@ services:
       REDIS_QUEUE_VISIBILITY_TIMEOUT: ${REDIS_QUEUE_VISIBILITY_TIMEOUT:-2m}
 
       # Neo4j (optional - for route graph storage)
-      NEO4J_URI: ${NEO4J_URI:-}
+      # NOTE: The process currently connects to Neo4j on startup.
+      # For remote workers over Tailscale, point this at your main server's Tailscale IP.
+      NEO4J_URI: ${NEO4J_URI:?NEO4J_URI is required}
       NEO4J_USER: ${NEO4J_USER:-neo4j}
-      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:?NEO4J_PASSWORD is required}
 
       # Push notifications (optional)
       NTFY_ENABLED: ${NTFY_ENABLED:-false}

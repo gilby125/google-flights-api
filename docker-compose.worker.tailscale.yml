@@ -41,7 +41,10 @@ services:
       # Core settings
       PORT: 8080
       ENVIRONMENT: ${ENVIRONMENT:-production}
+      API_ENABLED: "false"
       WORKER_ENABLED: "true"
+      INIT_SCHEMA: "false"
+      SEED_NEO4J: "false"
 
       # Worker pool settings
       WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-4}
@@ -73,7 +76,7 @@ services:
       # Neo4j via Tailscale (optional)
       NEO4J_URI: bolt://${TS_MAIN_SERVER_IP}:7687
       NEO4J_USER: ${NEO4J_USER:-neo4j}
-      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:?NEO4J_PASSWORD is required}
 
       # Scheduler leader election
       SCHEDULER_LOCK_KEY: ${SCHEDULER_LOCK_KEY:-scheduler:leader}

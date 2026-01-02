@@ -7,6 +7,8 @@ This repo supports two worker deployment patterns:
 - Alternative: **Docker worker with Tailscale sidecar**
 - Alternative: **Docker worker managed by systemd** (no scripts / no binary copy)
 
+If you already have Tailscale installed on the **worker VM itself**, you can use plain Docker Compose on the worker (Dokploy/Compose/etc.) and point `DB_HOST`/`REDIS_HOST`/`NEO4J_URI` at the main server’s Tailscale IP. You do not need a Tailscale sidecar container in that case.
+
 If you run your “main” stack under **Komodo**, redeploy via **Komodo** (do not use Docker CLI deploys).
 
 ## Remote Workers over Tailscale (Komodo main + OCI worker)
@@ -166,6 +168,16 @@ nano .env  # Set: TS_AUTHKEY, TS_MAIN_SERVER_IP, DB_PASSWORD, REDIS_PASSWORD
 # 3. Start worker
 docker compose -f docker-compose.worker.tailscale.yml up -d
 ```
+
+## Dokploy / Compose on OCI (Tailscale already installed on the VM)
+
+If the OCI VM already has Tailscale installed/running, you can deploy a single `worker` service using `docker-compose.worker.yml` and set:
+- `DB_HOST=<main-ts-ip>`
+- `REDIS_HOST=<main-ts-ip>`
+- `NEO4J_URI=bolt://<main-ts-ip>:7687`
+- `DB_SSLMODE=disable` and `DB_REQUIRE_SSL=false` (Tailscale encrypts the transport)
+
+Then start it as your platform expects (Dokploy UI or `docker compose -f docker-compose.worker.yml up -d`).
 
 ---
 
