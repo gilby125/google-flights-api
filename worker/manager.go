@@ -363,6 +363,13 @@ func (m *Manager) Start() {
 	}
 }
 
+func (m *Manager) GetQueue() queue.Queue {
+	if m == nil {
+		return nil
+	}
+	return m.queue
+}
+
 func (m *Manager) startRegistryHeartbeat() {
 	if m == nil || m.redisClient == nil || m.config.WorkerID == "" {
 		return
@@ -554,6 +561,10 @@ func (m *Manager) runWorker(id int, worker *Worker) {
 				log.Printf("Worker %d error processing price_graph_sweep queue: %v", displayID, err)
 			}
 
+			if err := m.processQueue(id, worker, "continuous_price_graph"); err != nil {
+				log.Printf("Worker %d error processing continuous_price_graph queue: %v", displayID, err)
+			}
+
 			// Sleep briefly to avoid hammering the queue
 			time.Sleep(100 * time.Millisecond)
 		}
@@ -707,10 +718,99 @@ func (m *Manager) processJob(ctx context.Context, worker *Worker, queueName stri
 		}
 
 		return m.processPriceGraphSweep(ctx, worker, session, payload)
+	case "continuous_price_graph":
+		session, err := m.getFlightSession("price_graph")
+		if err != nil {
+			return fmt.Errorf("failed to get flight session: %w", err)
+		}
+
+		var payload ContinuousPriceGraphPayload
+		if err := json.Unmarshal(job.Payload, &payload); err != nil {
+			return fmt.Errorf("failed to unmarshal continuous price graph payload: %w", err)
+		}
+
+		return m.processContinuousPriceGraph(ctx, worker, session, payload)
 
 	default:
 		return fmt.Errorf("unknown job type: %s", queueName)
 	}
+}
+
+func (m *Manager) processContinuousPriceGraph(ctx context.Context, worker *Worker, session *flights.Session, payload ContinuousPriceGraphPayload) error {
+	if payload.Origin == "" || payload.Destination == "" {
+		return fmt.Errorf("continuous price graph payload requires origin and destination")
+	}
+	if payload.RangeStartDate.IsZero() || payload.RangeEndDate.IsZero() {
+		return fmt.Errorf("continuous price graph payload requires a date range")
+	}
+	if payload.RangeEndDate.Before(payload.RangeStartDate) {
+		return fmt.Errorf("continuous price graph payload has invalid date range")
+	}
+
+	args := flights.PriceGraphArgs{
+		RangeStartDate: payload.RangeStartDate,
+		RangeEndDate:   payload.RangeEndDate,
+		TripLength:     payload.TripLength,
+		SrcAirports:    []string{payload.Origin},
+		DstAirports:    []string{payload.Destination},
+	}
+
+	cur, err := currency.ParseISO(strings.ToUpper(payload.Currency))
+	if err != nil {
+		cur = currency.USD
+	}
+
+	adults := payload.Adults
+	if adults <= 0 {
+		adults = 1
+	}
+
+	args.Options = flights.Options{
+		Travelers: flights.Travelers{Adults: adults},
+		Currency:  cur,
+		Stops:     parseStops(payload.Stops),
+		Class:     parseClass(payload.Class),
+		TripType:  flights.RoundTrip,
+		Lang:      language.English,
+	}
+
+	offers, err := session.GetPriceGraph(ctx, args)
+	if err != nil {
+		return fmt.Errorf("price graph query failed for %s->%s (trip length %d): %w", payload.Origin, payload.Destination, payload.TripLength, err)
+	}
+
+	if len(offers) == 0 {
+		return nil
+	}
+
+	var cheapest *flights.Offer
+	for i := range offers {
+		price := offers[i].Price
+		if cheapest == nil || price < cheapest.Price {
+			cheapest = &offers[i]
+		}
+	}
+	if cheapest == nil {
+		return nil
+	}
+
+	record := db.PriceGraphResultRecord{
+		SweepID:       0,
+		Origin:        payload.Origin,
+		Destination:   payload.Destination,
+		DepartureDate: cheapest.StartDate,
+		ReturnDate:    sql.NullTime{Time: cheapest.ReturnDate, Valid: payload.TripLength > 0},
+		TripLength:    sql.NullInt32{Int32: int32(payload.TripLength), Valid: true},
+		Price:         cheapest.Price,
+		Currency:      strings.ToUpper(payload.Currency),
+		QueriedAt:     time.Now(),
+	}
+
+	if err := worker.postgresDB.InsertPriceGraphResult(ctx, record); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // getFlightSession gets or creates a flight session based on session type

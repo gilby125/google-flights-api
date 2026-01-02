@@ -460,10 +460,14 @@ func TestGetQueueStatus_Success(t *testing.T) {
 
 	expectedStatsFS := map[string]int64{"pending": 10, "active": 2}
 	expectedStatsBS := map[string]int64{"pending": 5, "active": 1}
+	expectedStatsPGS := map[string]int64{"pending": 0, "active": 0}
+	expectedStatsCPG := map[string]int64{"pending": 0, "active": 0}
 
 	// Configure mock
 	mockQueue.On("GetQueueStats", mock.Anything, "flight_search").Return(expectedStatsFS, nil)
 	mockQueue.On("GetQueueStats", mock.Anything, "bulk_search").Return(expectedStatsBS, nil)
+	mockQueue.On("GetQueueStats", mock.Anything, "price_graph_sweep").Return(expectedStatsPGS, nil)
+	mockQueue.On("GetQueueStats", mock.Anything, "continuous_price_graph").Return(expectedStatsCPG, nil)
 
 	// Act
 	req, _ := http.NewRequest(http.MethodGet, "/queue/status", nil)
@@ -477,6 +481,8 @@ func TestGetQueueStatus_Success(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, expectedStatsFS, response["flight_search"])
 	assert.Equal(t, expectedStatsBS, response["bulk_search"])
+	assert.Equal(t, expectedStatsPGS, response["price_graph_sweep"])
+	assert.Equal(t, expectedStatsCPG, response["continuous_price_graph"])
 	mockQueue.AssertExpectations(t)
 }
 

@@ -2056,7 +2056,7 @@ func updateJob(pgDB db.PostgresDB, workerManager *worker.Manager) gin.HandlerFun
 func GetQueueStatus(q queue.Queue) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Get stats for all queue types
-		queueTypes := []string{"flight_search", "bulk_search"}
+		queueTypes := []string{"flight_search", "bulk_search", "price_graph_sweep", "continuous_price_graph"}
 		allStats := make(map[string]map[string]int64)
 
 		for _, queueType := range queueTypes {
@@ -2656,13 +2656,6 @@ func startContinuousSweep(workerManager *worker.Manager, pgDB db.PostgresDB, cfg
 
 		// If no runner exists, create one with default config
 		if runner == nil {
-			// Get a flight session from the manager's cache
-			session, err := getOrCreateSession(workerManager)
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create flight session: " + err.Error()})
-				return
-			}
-
 			// Create NTFY client for notifications
 			var notifier *notify.NTFYClient
 			if cfg.NTFYConfig.Enabled && cfg.NTFYConfig.Topic != "" {
@@ -2680,7 +2673,7 @@ func startContinuousSweep(workerManager *worker.Manager, pgDB db.PostgresDB, cfg
 			}
 
 			sweepConfig := worker.DefaultContinuousSweepConfig()
-			runner = worker.NewContinuousSweepRunner(pgDB, session, notifier, sweepConfig)
+			runner = worker.NewContinuousSweepRunner(pgDB, workerManager.GetQueue(), notifier, sweepConfig)
 			workerManager.SetSweepRunner(runner)
 		}
 

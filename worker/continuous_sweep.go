@@ -5,14 +5,12 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/gilby125/google-flights-api/db"
-	"github.com/gilby125/google-flights-api/flights"
 	"github.com/gilby125/google-flights-api/pkg/notify"
-	"golang.org/x/text/currency"
+	"github.com/gilby125/google-flights-api/queue"
 )
 
 // PacingMode defines how delays between queries are calculated
@@ -59,7 +57,7 @@ type ContinuousSweepRunner struct {
 
 	// Dependencies
 	postgresDB db.PostgresDB
-	session    *flights.Session
+	queue      queue.Queue
 	notifier   *notify.NTFYClient
 
 	// Configuration
@@ -96,10 +94,22 @@ type ContinuousSweepRunner struct {
 	resumeCh chan struct{}
 }
 
+type ContinuousPriceGraphPayload struct {
+	Origin         string    `json:"origin"`
+	Destination    string    `json:"destination"`
+	RangeStartDate time.Time `json:"range_start_date"`
+	RangeEndDate   time.Time `json:"range_end_date"`
+	TripLength     int       `json:"trip_length"`
+	Class          string    `json:"class"`
+	Stops          string    `json:"stops"`
+	Adults         int       `json:"adults"`
+	Currency       string    `json:"currency"`
+}
+
 // NewContinuousSweepRunner creates a new continuous sweep runner
 func NewContinuousSweepRunner(
 	postgresDB db.PostgresDB,
-	session *flights.Session,
+	queue queue.Queue,
 	notifier *notify.NTFYClient,
 	config ContinuousSweepConfig,
 ) *ContinuousSweepRunner {
@@ -113,7 +123,7 @@ func NewContinuousSweepRunner(
 
 	return &ContinuousSweepRunner{
 		postgresDB:   postgresDB,
-		session:      session,
+		queue:        queue,
 		notifier:     notifier,
 		config:       config,
 		routes:       routes,
@@ -267,8 +277,6 @@ func (r *ContinuousSweepRunner) RestartSweep() {
 	r.recentErrors = make([]time.Time, 0)
 	r.lastError = ""
 	r.lastErrorTime = time.Time{}
-	r.minPriceFound = 0
-	r.maxPriceFound = 0
 	r.totalDelayMs = 0
 	r.startTime = time.Now()
 	r.mu.Unlock()
@@ -389,7 +397,6 @@ func (r *ContinuousSweepRunner) processRoute(ctx context.Context, route db.Route
 	r.mu.RLock()
 	tripLengths := r.config.TripLengths
 	config := r.config
-	sweepNum := r.sweepNumber
 	r.mu.RUnlock()
 
 	// Calculate date range
@@ -397,108 +404,24 @@ func (r *ContinuousSweepRunner) processRoute(ctx context.Context, route db.Route
 	endDate := startDate.AddDate(0, 0, config.DepartureWindowDays)
 
 	for _, tripLength := range tripLengths {
-		// Build price graph arguments
-		args := flights.PriceGraphArgs{
+		if r.queue == nil {
+			return fmt.Errorf("queue is not configured")
+		}
+
+		payload := ContinuousPriceGraphPayload{
+			Origin:         route.Origin,
+			Destination:    route.Destination,
 			RangeStartDate: startDate,
 			RangeEndDate:   endDate,
 			TripLength:     tripLength,
-			SrcAirports:    []string{route.Origin},
-			DstAirports:    []string{route.Destination},
+			Class:          config.Class,
+			Stops:          config.Stops,
+			Adults:         config.Adults,
+			Currency:       config.Currency,
 		}
 
-		// Set travelers (adults)
-		args.Travelers = flights.Travelers{Adults: config.Adults}
-
-		// Map class
-		switch config.Class {
-		case "economy":
-			args.Class = flights.Economy
-		case "premium_economy":
-			args.Class = flights.PremiumEconomy
-		case "business":
-			args.Class = flights.Business
-		case "first":
-			args.Class = flights.First
-		default:
-			args.Class = flights.Economy
-		}
-
-		// Map stops
-		switch config.Stops {
-		case "nonstop":
-			args.Stops = flights.Nonstop
-		case "one_stop":
-			args.Stops = flights.Stop1
-		case "two_stops":
-			args.Stops = flights.Stop2
-		default:
-			args.Stops = flights.AnyStops
-		}
-
-		args.TripType = flights.RoundTrip
-
-		// Parse currency from string
-		cur, err := currency.ParseISO(config.Currency)
-		if err != nil {
-			cur = currency.USD // Default to USD if parsing fails
-		}
-		args.Currency = cur
-
-		// Execute the price graph query
-		offers, err := r.session.GetPriceGraph(ctx, args)
-		if err != nil {
-			// Check for rate limiting (429)
-			if r.notifier != nil && r.notifier.IsEnabled() {
-				// Simple heuristic: if error contains "429" or "rate"
-				errStr := err.Error()
-				if strings.Contains(errStr, "429") || strings.Contains(errStr, "rate") {
-					r.notifier.AlertRateLimited(sweepNum, fmt.Sprintf("%s->%s", route.Origin, route.Destination))
-				}
-			}
-			return fmt.Errorf("price graph query failed for %s->%s (trip length %d): %w",
-				route.Origin, route.Destination, tripLength, err)
-		}
-
-		// Store results
-		if len(offers) > 0 {
-			// Find cheapest offer and track min/max prices
-			var cheapest *flights.Offer
-			for i := range offers {
-				price := offers[i].Price
-				if cheapest == nil || price < cheapest.Price {
-					cheapest = &offers[i]
-				}
-
-				// Update min/max price tracking
-				r.mu.Lock()
-				if r.minPriceFound == 0 || price < r.minPriceFound {
-					r.minPriceFound = price
-				}
-				if price > r.maxPriceFound {
-					r.maxPriceFound = price
-				}
-				r.mu.Unlock()
-			}
-
-			if cheapest != nil {
-				// Store in database (reuse existing price graph results infrastructure)
-				record := db.PriceGraphResultRecord{
-					SweepID:       0, // We're not using sweep IDs for continuous sweep
-					Origin:        route.Origin,
-					Destination:   route.Destination,
-					DepartureDate: cheapest.StartDate,
-					ReturnDate:    sql.NullTime{Time: cheapest.ReturnDate, Valid: tripLength > 0},
-					TripLength:    sql.NullInt32{Int32: int32(tripLength), Valid: true},
-					Price:         cheapest.Price,
-					Currency:      config.Currency,
-					QueriedAt:     time.Now(),
-				}
-
-				// Try to store (ignore errors for now, just log them)
-				if err := r.postgresDB.InsertPriceGraphResult(ctx, record); err != nil {
-					log.Printf("Failed to store price graph result: %v", err)
-				}
-			}
+		if _, err := r.queue.Enqueue(ctx, "continuous_price_graph", payload); err != nil {
+			return fmt.Errorf("failed to enqueue continuous price graph job for %s->%s: %w", route.Origin, route.Destination, err)
 		}
 
 		// Track delay for avg calculation
