@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -185,6 +187,7 @@ type Manager struct {
 	postgresDB    db.PostgresDB    // Changed type from pointer to interface
 	neo4jDB       db.Neo4jDatabase // Use the interface type
 	config        config.WorkerConfig
+	flightConfig  config.FlightConfig
 	workers       []*Worker
 	stopChan      chan struct{}
 	workerWg      sync.WaitGroup
@@ -1077,20 +1080,47 @@ func (m *Manager) processBulkSearch(ctx context.Context, worker *Worker, session
 }
 
 // excludedAirlines is a set of airline codes to filter out from deal results.
-// These are often ultra-low-cost carriers with poor service quality.
-var excludedAirlines = map[string]bool{
-	"NK": true, // Spirit Airlines
-	"G4": true, // Allegiant Air
-	"F9": true, // Frontier Airlines
+// Initialized from EXCLUDED_AIRLINES env var (comma-separated list of IATA codes).
+// Default: NK (Spirit), G4 (Allegiant), F9 (Frontier), SY (Sun Country), XP (Avelo), MX (Breeze)
+var (
+	excludedAirlines     map[string]bool
+	excludedAirlinesOnce sync.Once
+)
+
+// getExcludedAirlines returns the set of excluded airline codes, initializing from env on first call
+func getExcludedAirlines() map[string]bool {
+	excludedAirlinesOnce.Do(func() {
+		excludedAirlines = make(map[string]bool)
+		envVal := os.Getenv("EXCLUDED_AIRLINES")
+		if envVal == "" {
+			// Default exclusions: ultra-low-cost carriers
+			envVal = "NK,G4,F9,SY,XP,MX"
+		}
+		for _, code := range strings.Split(envVal, ",") {
+			code = strings.TrimSpace(strings.ToUpper(code))
+			if code != "" {
+				excludedAirlines[code] = true
+			}
+		}
+		if len(excludedAirlines) > 0 {
+			codes := make([]string, 0, len(excludedAirlines))
+			for code := range excludedAirlines {
+				codes = append(codes, code)
+			}
+			log.Printf("[CheapFirst] Excluded airlines: %v", codes)
+		}
+	})
+	return excludedAirlines
 }
 
 // isExcludedAirline checks if any flight in the offer uses an excluded airline
 func isExcludedAirline(offer flights.FullOffer) bool {
+	excluded := getExcludedAirlines()
 	// Check outbound flights
 	for _, flight := range offer.Flight {
 		if len(flight.FlightNumber) >= 2 {
 			airlineCode := flight.FlightNumber[:2]
-			if excludedAirlines[airlineCode] {
+			if excluded[airlineCode] {
 				return true
 			}
 		}
@@ -1099,7 +1129,7 @@ func isExcludedAirline(offer flights.FullOffer) bool {
 	for _, flight := range offer.ReturnFlight {
 		if len(flight.FlightNumber) >= 2 {
 			airlineCode := flight.FlightNumber[:2]
-			if excludedAirlines[airlineCode] {
+			if excluded[airlineCode] {
 				return true
 			}
 		}
@@ -1151,7 +1181,13 @@ func scoreDeal(offer flights.FullOffer, distanceMiles float64) float64 {
 // This reduces API calls from O(routes × dates) to O(routes + routes × N)
 // Example: 100 routes × 30 dates → 3000 calls becomes 100 + 300 = 400 calls
 func (m *Manager) processBulkSearchCheapFirst(ctx context.Context, worker *Worker, session *flights.Session, payload BulkSearchPayload) (err error) {
-	const topN = 3 // Only fetch full details for top 3 cheapest dates per route
+	// Number of top deals to fetch full itineraries for (configurable via TOP_N_DEALS env var)
+	topN := 3
+	if envVal := os.Getenv("TOP_N_DEALS"); envVal != "" {
+		if n, err := strconv.Atoi(envVal); err == nil && n > 0 {
+			topN = n
+		}
+	}
 
 	// Validate origins and destinations
 	if len(payload.Origins) == 0 {

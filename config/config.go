@@ -18,10 +18,17 @@ type Config struct {
 	Neo4jConfig       Neo4jConfig
 	RedisConfig       RedisConfig
 	WorkerConfig      WorkerConfig
+	FlightConfig      FlightConfig
 	LetsEncryptConfig LetsEncryptConfig
 	NTFYConfig        NTFYConfig
 	AdminAuthConfig   AdminAuthConfig
 	WorkerEnabled     bool
+}
+
+// FlightConfig holds flight search configuration
+type FlightConfig struct {
+	ExcludedAirlines []string // Airline codes to exclude from results (e.g., NK, G4, F9)
+	TopNDeals        int      // Number of top deals to fetch full itineraries for
 }
 
 // LoggingConfig holds logging configuration
@@ -87,14 +94,14 @@ type WorkerConfig struct {
 
 // NTFYConfig holds NTFY push notification configuration
 type NTFYConfig struct {
-	ServerURL       string
-	Topic           string
-	Username        string
-	Password        string
-	Enabled         bool
-	StallThreshold  time.Duration
-	ErrorThreshold  int
-	ErrorWindow     time.Duration
+	ServerURL      string
+	Topic          string
+	Username       string
+	Password       string
+	Enabled        bool
+	StallThreshold time.Duration
+	ErrorThreshold int
+	ErrorWindow    time.Duration
 }
 
 // AdminAuthConfig holds admin authentication configuration
@@ -204,6 +211,27 @@ func Load() (*Config, error) {
 		Token:    getEnv("ADMIN_AUTH_TOKEN", ""),
 	}
 
+	// Flight search config
+	// Default excluded airlines: Spirit, Allegiant, Frontier, Sun Country, Avelo, Breeze
+	excludedAirlinesStr := getEnv("EXCLUDED_AIRLINES", "NK,G4,F9,SY,XP,MX")
+	excludedAirlines := []string{}
+	if excludedAirlinesStr != "" {
+		for _, code := range strings.Split(excludedAirlinesStr, ",") {
+			code = strings.TrimSpace(strings.ToUpper(code))
+			if code != "" {
+				excludedAirlines = append(excludedAirlines, code)
+			}
+		}
+	}
+	topNDeals, _ := strconv.Atoi(getEnv("TOP_N_DEALS", "3"))
+	if topNDeals < 1 {
+		topNDeals = 3
+	}
+	flightConfig := FlightConfig{
+		ExcludedAirlines: excludedAirlines,
+		TopNDeals:        topNDeals,
+	}
+
 	return &Config{
 		Port:            port,
 		Environment:     environment,
@@ -212,6 +240,7 @@ func Load() (*Config, error) {
 		Neo4jConfig:     neo4jConfig,
 		RedisConfig:     redisConfig,
 		WorkerConfig:    workerConfig,
+		FlightConfig:    flightConfig,
 		NTFYConfig:      ntfyConfig,
 		AdminAuthConfig: adminAuthConfig,
 		WorkerEnabled:   workerEnabled,
