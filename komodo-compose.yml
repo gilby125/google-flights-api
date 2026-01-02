@@ -15,40 +15,47 @@ services:
       DB_HOST: postgres
       DB_PORT: 5432
       DB_USER: flights
-      DB_PASSWORD: ${DB_PASSWORD}
+      # IMPORTANT: If you already have an initialized pgdata volume, changing DB_PASSWORD here
+      # will NOT change the existing database user's password. Either keep DB_PASSWORD the same
+      # as when pgdata was first created, ALTER USER in Postgres, or wipe the volume.
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
       DB_NAME: flights
       DB_SSLMODE: disable
       # Redis Connectivity (Internal)
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
       # Neo4j Connectivity (Internal)
       NEO4J_URI: bolt://neo4j:7687
       NEO4J_USER: neo4j
-      NEO4J_PASSWORD: ${NEO4J_PASSWORD}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:?NEO4J_PASSWORD is required}
     depends_on:
       - postgres
       - redis
       - neo4j
     ports:
-      - "8080:8080"
+      - "8088:8080"
     healthcheck:
       test: ["CMD", "/app/flight-api", "-health-check"]
       interval: 30s
       timeout: 10s
       retries: 3
+    networks:
+      - default
+      - komodo_default
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.flights-api.rule=Host(`${DOMAIN:-flights.local}`)"
+      - 'traefik.http.routers.flights-api.rule=Host(`${DOMAIN:-flights.local}`)'
       - "traefik.http.routers.flights-api.entrypoints=web"
       - "traefik.http.services.flights-api.loadbalancer.server.port=8080"
+      - "traefik.docker.network=komodo_default"
     restart: unless-stopped
 
   postgres:
     image: postgres:15-alpine
     environment:
       POSTGRES_USER: flights
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
       POSTGRES_DB: flights
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U flights"]
@@ -56,18 +63,22 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     restart: unless-stopped
+    networks:
+      - default
 
   redis:
     image: redis:7-alpine
-    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}", "--save", "60", "1"]
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD is required}", "--save", "60", "1"]
     volumes:
       - redisdata:/data
     restart: unless-stopped
+    networks:
+      - default
 
   neo4j:
     image: neo4j:5
     environment:
-      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD}
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?NEO4J_PASSWORD is required}
       NEO4J_ACCEPT_LICENSE_AGREEMENT: "yes"
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://localhost:7474 || exit 1"]
@@ -75,6 +86,13 @@ services:
     volumes:
       - neo4jdata:/data
     restart: unless-stopped
+    networks:
+      - default
+
+networks:
+  default:
+  komodo_default:
+    external: true
 
 volumes:
   pgdata:
