@@ -2,8 +2,96 @@
 
 Deploy workers to any cloud provider to distribute flight search load.
 
-For remote workers over Tailscale (Komodo main server + OCI worker), see:
-- `docs/TAILSCALE_REMOTE_WORKERS.md`
+This repo supports two worker deployment patterns:
+- Recommended: **remote workers over Tailscale + systemd** (no Docker on worker)
+- Alternative: **Docker worker with Tailscale sidecar**
+
+If you run your “main” stack under **Komodo**, redeploy via **Komodo** (do not use Docker CLI deploys).
+
+## Remote Workers over Tailscale (Komodo main + OCI worker)
+
+Goal: run remote worker nodes (example: Oracle OCI) that connect back to your main Komodo server over Tailscale, without exposing Postgres/Redis/Neo4j to the public internet.
+
+### You do NOT need an exit node
+
+You only need the machines in the same tailnet so the worker can reach the main server’s Tailscale IP (`100.x.y.z`).
+
+### Step 1 — Install Tailscale on the main server
+
+Install Tailscale on the **Komodo host VM** (the Proxmox guest), not inside an app container.
+
+After Tailscale is running, record the main server’s Tailscale IP:
+
+```bash
+tailscale ip -4
+```
+
+### Step 2 — Bind Postgres/Redis/Neo4j to the Tailscale IP (Komodo env)
+
+Remote workers must be able to reach your main server’s:
+- Postgres `5432`
+- Redis `6379`
+- Neo4j Bolt `7687`
+
+If your main stack runs under Komodo, publish these ports **only** on the Tailscale interface by setting, in **Komodo → Environment**:
+
+- `TAILSCALE_BIND_IP=<main-server-tailscale-ip>` (example: `100.x.y.z`)
+
+Then **redeploy via Komodo**.
+
+Notes:
+- Container-to-container connections on the Komodo host still use Docker DNS names (`postgres`, `redis`, `neo4j`). They do not require host `ports:` at all.
+- The host `ports:` bindings are only for *remote machines* (OCI workers) to connect over Tailscale.
+
+### Step 3 — Verify from the OCI worker (network check)
+
+From the OCI VM:
+
+```bash
+nc -vz <main-ts-ip> 5432
+nc -vz <main-ts-ip> 6379
+nc -vz <main-ts-ip> 7687
+```
+
+### Step 4 — Install the worker on OCI (systemd, no Docker)
+
+1) Build a Linux binary (on your dev box or CI) and copy to OCI as `/opt/google-flights/google-flights-api`:
+
+```bash
+# amd64 (most Intel/AMD VMs)
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o google-flights-api .
+
+# arm64 (OCI Ampere A1)
+GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o google-flights-api .
+```
+
+2) Create `/etc/google-flights/worker.env`:
+
+```bash
+sudo mkdir -p /etc/google-flights /opt/google-flights
+sudo cp deploy/systemd/worker.env.example /etc/google-flights/worker.env
+sudo nano /etc/google-flights/worker.env
+```
+
+Set at minimum:
+- `ENVIRONMENT=production`
+- `API_ENABLED=false`
+- `WORKER_ENABLED=true`
+- `INIT_SCHEMA=false`
+- `SEED_NEO4J=false`
+- `DB_HOST=<main-ts-ip>`
+- `REDIS_HOST=<main-ts-ip>`
+- `NEO4J_URI=bolt://<main-ts-ip>:7687`
+- `DB_PASSWORD=...` (same as main server)
+- `REDIS_PASSWORD=...` (same as main server)
+- `NEO4J_PASSWORD=...` (same as main server, if you use Neo4j features)
+
+3) Install + start systemd units:
+
+```bash
+sudo ./deploy/systemd/install.sh --instances 1
+journalctl -u google-flights-worker@1 -f
+```
 
 ## Option A: systemd (no Docker)
 
