@@ -40,5 +40,9 @@ COPY --from=builder /src/templates /app/templates
 COPY --from=builder /src/static /app/static
 COPY --from=builder /src/tls /app/tls
 
+# Health check for container orchestration
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD ["/app/flight-api", "-health-check"] || exit 1
+
 EXPOSE 8080
 ENTRYPOINT ["/app/flight-api"]

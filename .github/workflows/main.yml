@@ -4,6 +4,17 @@ on:
     branches: [ main, price-graph-sweep, develop ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      deploy_target:
+        description: 'Deployment target'
+        required: false
+        default: 'none'
+        type: choice
+        options:
+          - none
+          - staging
+          - production
   schedule:
     - cron: '6 0 * * 5'
 
@@ -121,7 +132,7 @@ jobs:
     - name: Set up QEMU
       uses: docker/setup-qemu-action@v3
       with:
-        platforms: linux/arm64
+        platforms: linux/arm64,linux/amd64
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v2
@@ -139,25 +150,24 @@ jobs:
         BRANCH="${GITHUB_REF_NAME}"
         {
           echo "tags<<EOF"
-          echo "${DOCKER_IMAGE}:${BRANCH}-arm64"
-          echo "${DOCKER_IMAGE}:${GITHUB_SHA}-arm64"
+          echo "${DOCKER_IMAGE}:${BRANCH}"
+          echo "${DOCKER_IMAGE}:${GITHUB_SHA}"
           if [ "${BRANCH}" = "main" ]; then
-            echo "${DOCKER_IMAGE}:latest-arm64"
+            echo "${DOCKER_IMAGE}:latest"
           fi
           echo "EOF"
         } >> "${GITHUB_OUTPUT}"
 
-    - name: Build and push Docker image
+    - name: Build and push Docker image (multi-arch)
       uses: docker/build-push-action@v4
       with:
         context: .
         push: ${{ github.event_name != 'pull_request' }}
         tags: ${{ steps.meta.outputs.tags }}
-        platforms: linux/arm64
-        # No build args needed for pre-generated certs
+        platforms: linux/arm64,linux/amd64
         cache-from: type=gha
         cache-to: type=gha,mode=max
-        args: |
+        build-args: |
           GOVULN_DISABLE=1
           CGO_ENABLED=0
 

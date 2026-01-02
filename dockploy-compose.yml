@@ -1,6 +1,6 @@
 services:
   api:
-    image: ghcr.io/gilby125/flight-api:price-graph-sweep
+    image: ghcr.io/gilby125/flight-api:${IMAGE_TAG:-latest}
     build:
       context: .
     environment:
@@ -28,4 +28,25 @@ services:
       REDIS_QUEUE_VISIBILITY_TIMEOUT: ${REDIS_QUEUE_VISIBILITY_TIMEOUT:-2m}
     ports:
       - "8080:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
     restart: unless-stopped
+    # Swarm rolling update config for zero-downtime deployments
+    deploy:
+      replicas: 2
+      update_config:
+        parallelism: 1
+        delay: 30s
+        order: start-first
+        failure_action: rollback
+      rollback_config:
+        parallelism: 1
+        delay: 30s
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3

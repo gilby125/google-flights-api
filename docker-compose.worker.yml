@@ -14,7 +14,7 @@
 
 services:
   worker:
-    image: ghcr.io/gilby125/flight-api:price-graph-sweep-arm64
+    image: ghcr.io/gilby125/flight-api:${IMAGE_TAG:-latest}
     environment:
       # Worker identification (change per server for debugging)
       WORKER_ID: ${WORKER_ID:-worker-1}

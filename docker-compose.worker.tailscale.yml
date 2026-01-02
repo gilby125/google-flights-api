@@ -30,7 +30,7 @@ services:
     restart: unless-stopped
 
   worker:
-    image: ghcr.io/gilby125/flight-api:price-graph-sweep-arm64
+    image: ghcr.io/gilby125/flight-api:${IMAGE_TAG:-latest}
     network_mode: "service:tailscale" # Share network namespace with Tailscale
     depends_on:
       - tailscale
