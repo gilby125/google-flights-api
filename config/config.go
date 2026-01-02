@@ -87,6 +87,8 @@ type RedisConfig struct {
 
 // WorkerConfig holds worker configuration
 type WorkerConfig struct {
+	WorkerID           string
+	RegistryNamespace  string
 	Concurrency        int
 	MaxRetries         int
 	RetryDelay         time.Duration
@@ -95,6 +97,8 @@ type WorkerConfig struct {
 	SchedulerLockTTL   time.Duration
 	SchedulerLockRenew time.Duration
 	SchedulerLockKey   string
+	HeartbeatInterval  time.Duration
+	HeartbeatTTL       time.Duration
 }
 
 // NTFYConfig holds NTFY push notification configuration
@@ -192,7 +196,29 @@ func Load() (*Config, error) {
 	schedulerLockRenew, _ := time.ParseDuration(getEnv("SCHEDULER_LOCK_RENEW", "10s"))
 	schedulerLockKey := getEnv("SCHEDULER_LOCK_KEY", "scheduler:leader")
 
+	workerID := getEnv("WORKER_ID", "")
+	if workerID == "" {
+		if hostname, err := os.Hostname(); err == nil {
+			workerID = hostname
+		}
+	}
+
+	heartbeatInterval, err := time.ParseDuration(getEnv("WORKER_HEARTBEAT_INTERVAL", "10s"))
+	if err != nil || heartbeatInterval <= 0 {
+		heartbeatInterval = 10 * time.Second
+	}
+	heartbeatTTL, err := time.ParseDuration(getEnv("WORKER_HEARTBEAT_TTL", "45s"))
+	if err != nil || heartbeatTTL <= 0 {
+		heartbeatTTL = 45 * time.Second
+	}
+	if heartbeatTTL < heartbeatInterval*3 {
+		heartbeatTTL = heartbeatInterval * 3
+	}
+	registryNamespace := getEnv("WORKER_REGISTRY_NAMESPACE", redisConfig.QueueStreamPrefix)
+
 	workerConfig := WorkerConfig{
+		WorkerID:           workerID,
+		RegistryNamespace:  registryNamespace,
 		Concurrency:        concurrency,
 		MaxRetries:         maxRetries,
 		RetryDelay:         retryDelay,
@@ -201,6 +227,8 @@ func Load() (*Config, error) {
 		SchedulerLockTTL:   schedulerLockTTL,
 		SchedulerLockRenew: schedulerLockRenew,
 		SchedulerLockKey:   schedulerLockKey,
+		HeartbeatInterval:  heartbeatInterval,
+		HeartbeatTTL:       heartbeatTTL,
 	}
 
 	// NTFY notification config

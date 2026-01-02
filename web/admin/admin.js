@@ -237,8 +237,8 @@ async function loadWorkers() {
         }
     }
     
-    // Update workers count
-    const activeWorkers = workers.filter(w => w.status === 'active').length;
+    // Update workers count (treat processing as active)
+    const activeWorkers = workers.filter(w => w.status === 'active' || w.status === 'processing').length;
     elements.workersCount.textContent = activeWorkers;
     
     // Clear table
@@ -251,10 +251,27 @@ async function loadWorkers() {
         const workerStatus = escapeHtml(worker.status);
         const currentJob = escapeHtml(worker.current_job || 'None');
         const processedJobs = Number.isInteger(worker.processed_jobs) ? worker.processed_jobs : 0;
+
+        const source = escapeHtml(worker.source || '');
+        const hostname = escapeHtml(worker.hostname || '');
+        const concurrency = Number.isInteger(worker.concurrency) ? worker.concurrency : null;
+        const heartbeatAgeSeconds = Number.isInteger(worker.heartbeat_age_seconds) ? worker.heartbeat_age_seconds : null;
+
+        let idCell = `${workerId}`;
+        if (source === 'remote') {
+            idCell += ' <span class="badge bg-info ms-1">remote</span>';
+        }
+        const metaParts = [];
+        if (hostname) metaParts.push(hostname);
+        if (concurrency != null) metaParts.push(`${concurrency}x`);
+        if (heartbeatAgeSeconds != null) metaParts.push(`${heartbeatAgeSeconds}s ago`);
+        if (metaParts.length) {
+            idCell += `<br><small class="text-muted">${metaParts.join(' • ')}</small>`;
+        }
         row.innerHTML = `
-            <td>${workerId}</td>
+            <td>${idCell}</td>
             <td>
-                <span class="badge ${worker.status === 'active' ? 'bg-success' : 'bg-secondary'}">
+                <span class="badge ${(worker.status === 'active' || worker.status === 'processing') ? 'bg-success' : 'bg-secondary'}">
                     ${workerStatus}
                 </span>
             </td>

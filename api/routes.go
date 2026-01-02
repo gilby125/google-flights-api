@@ -145,7 +145,7 @@ func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Ne
 			admin.POST("/jobs/:id/disable", disableJob(postgresDB, workerManager))
 
 			// Worker and queue status
-			admin.GET("/workers", GetWorkerStatus(workerManager))
+			admin.GET("/workers", GetWorkerStatus(workerManager, redisClient, cfg.WorkerConfig))
 			admin.GET("/queue", GetQueueStatus(queue))
 
 			// Continuous sweep endpoints

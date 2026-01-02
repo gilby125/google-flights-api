@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -17,6 +18,7 @@ import (
 	"github.com/gilby125/google-flights-api/flights"
 	"github.com/gilby125/google-flights-api/iata"
 	"github.com/gilby125/google-flights-api/pkg/geo"
+	"github.com/gilby125/google-flights-api/pkg/worker_registry"
 	"github.com/gilby125/google-flights-api/queue"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/text/currency"
@@ -333,6 +335,8 @@ func (m *Manager) Start() {
 	}
 	m.statsMutex.Unlock()
 
+	m.startRegistryHeartbeat()
+
 	// Create and start workers (ALL instances run workers)
 	for i := 0; i < m.config.Concurrency; i++ {
 		worker := &Worker{
@@ -357,6 +361,99 @@ func (m *Manager) Start() {
 			log.Println("Scheduler started successfully (no leader election)")
 		}
 	}
+}
+
+func (m *Manager) startRegistryHeartbeat() {
+	if m == nil || m.redisClient == nil || m.config.WorkerID == "" {
+		return
+	}
+	namespace := m.config.RegistryNamespace
+	if namespace == "" {
+		namespace = "flights"
+	}
+
+	reg := worker_registry.New(m.redisClient, namespace)
+	hostname, _ := os.Hostname()
+	startedAt := time.Now().UTC()
+	interval := m.config.HeartbeatInterval
+	if interval <= 0 {
+		interval = 10 * time.Second
+	}
+	ttl := m.config.HeartbeatTTL
+	if ttl <= 0 {
+		ttl = 45 * time.Second
+	}
+
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-m.stopChan:
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				_ = reg.Publish(ctx, m.buildRegistryHeartbeat(hostname, startedAt, time.Now().UTC(), "stopped"), ttl)
+				cancel()
+				return
+			case <-ticker.C:
+				now := time.Now().UTC()
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				if err := reg.Publish(ctx, m.buildRegistryHeartbeat(hostname, startedAt, now, ""), ttl); err != nil {
+					log.Printf("Failed to publish worker heartbeat: %v", err)
+				}
+				cancel()
+			}
+		}
+	}()
+}
+
+func (m *Manager) buildRegistryHeartbeat(hostname string, startedAt, now time.Time, forceStatus string) worker_registry.WorkerHeartbeat {
+	hb := worker_registry.WorkerHeartbeat{
+		ID:            m.config.WorkerID,
+		Hostname:      hostname,
+		Status:        "active",
+		CurrentJob:    "",
+		ProcessedJobs: 0,
+		Concurrency:   m.config.Concurrency,
+		StartedAt:     startedAt,
+		LastHeartbeat: now,
+		Version:       "1.0.0",
+	}
+
+	m.statsMutex.RLock()
+	defer m.statsMutex.RUnlock()
+
+	status := "active"
+	currentJob := ""
+	processedTotal := 0
+
+	for _, state := range m.workerStates {
+		if state == nil {
+			continue
+		}
+		processedTotal += state.ProcessedJobs
+		if currentJob == "" && state.CurrentJob != "" {
+			currentJob = state.CurrentJob
+		}
+		switch state.Status {
+		case "error":
+			status = "error"
+		case "processing":
+			if status != "error" {
+				status = "processing"
+			}
+		}
+	}
+
+	if forceStatus != "" {
+		status = forceStatus
+	}
+
+	hb.Status = status
+	hb.CurrentJob = currentJob
+	hb.ProcessedJobs = processedTotal
+
+	return hb
 }
 
 // Stop stops the worker pool and scheduler.

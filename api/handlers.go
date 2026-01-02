@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -18,10 +19,12 @@ import (
 	"github.com/gilby125/google-flights-api/pkg/cache"
 	"github.com/gilby125/google-flights-api/pkg/logger"
 	"github.com/gilby125/google-flights-api/pkg/notify"
+	"github.com/gilby125/google-flights-api/pkg/worker_registry"
 	"github.com/gilby125/google-flights-api/queue"
 	"github.com/gilby125/google-flights-api/worker"
 	"github.com/gin-gonic/gin"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"github.com/redis/go-redis/v9"
 	"golang.org/x/text/currency"
 	"golang.org/x/text/language"
 )
@@ -746,15 +749,87 @@ func disableJob(pgDB db.PostgresDB, workerManager *worker.Manager) gin.HandlerFu
 }
 
 // getWorkerStatus returns a handler for getting worker status
-func GetWorkerStatus(workerManager WorkerStatusProvider) gin.HandlerFunc {
+type workerStatusResponse struct {
+	ID                  any    `json:"id"`
+	Status              string `json:"status"`
+	CurrentJob          string `json:"current_job,omitempty"`
+	ProcessedJobs       int    `json:"processed_jobs"`
+	Uptime              int64  `json:"uptime"`
+	Source              string `json:"source,omitempty"`
+	Hostname            string `json:"hostname,omitempty"`
+	Concurrency         int    `json:"concurrency,omitempty"`
+	HeartbeatAgeSeconds int64  `json:"heartbeat_age_seconds,omitempty"`
+}
+
+// GetWorkerStatus returns a handler for getting worker status.
+// It combines local in-process worker goroutines with remote worker instances (via Redis heartbeats).
+func GetWorkerStatus(workerManager WorkerStatusProvider, redisClient *redis.Client, cfg config.WorkerConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if workerManager == nil {
-			c.JSON(http.StatusOK, []worker.WorkerStatus{})
-			return
+		out := make([]workerStatusResponse, 0)
+
+		// Local worker goroutines (in this process)
+		if workerManager != nil {
+			statuses := workerManager.WorkerStatuses()
+			for _, s := range statuses {
+				out = append(out, workerStatusResponse{
+					ID:            s.ID,
+					Status:        s.Status,
+					CurrentJob:    s.CurrentJob,
+					ProcessedJobs: s.ProcessedJobs,
+					Uptime:        s.Uptime,
+					Source:        "local",
+				})
+			}
 		}
 
-		statuses := workerManager.WorkerStatuses()
-		c.JSON(http.StatusOK, statuses)
+		// Remote worker instances (published by worker processes)
+		if redisClient != nil {
+			namespace := cfg.RegistryNamespace
+			if namespace == "" {
+				namespace = "flights"
+			}
+
+			reg := worker_registry.New(redisClient, namespace)
+
+			ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+			heartbeats, err := reg.ListActive(ctx, cfg.HeartbeatTTL, 200)
+			cancel()
+			if err != nil {
+				logger.Warn("Failed to list remote workers", "error", err)
+			} else {
+				now := time.Now().UTC()
+				for _, hb := range heartbeats {
+					uptime := int64(0)
+					if !hb.StartedAt.IsZero() {
+						uptime = int64(now.Sub(hb.StartedAt).Seconds())
+						if uptime < 0 {
+							uptime = 0
+						}
+					}
+					age := int64(0)
+					if !hb.LastHeartbeat.IsZero() {
+						age = int64(now.Sub(hb.LastHeartbeat).Seconds())
+						if age < 0 {
+							age = 0
+						}
+					}
+
+					out = append(out, workerStatusResponse{
+						ID:                  hb.ID,
+						Status:              hb.Status,
+						CurrentJob:          hb.CurrentJob,
+						ProcessedJobs:       hb.ProcessedJobs,
+						Uptime:              uptime,
+						Source:              "remote",
+						Hostname:            hb.Hostname,
+						Concurrency:         hb.Concurrency,
+						HeartbeatAgeSeconds: age,
+					})
+				}
+			}
+		}
+
+		c.JSON(http.StatusOK, out)
 	}
 }
 

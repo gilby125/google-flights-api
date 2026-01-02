@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/gilby125/google-flights-api/api"
+	"github.com/gilby125/google-flights-api/config"
 	"github.com/gilby125/google-flights-api/db" // Import db package
 	"github.com/gilby125/google-flights-api/flights"
 	"github.com/gilby125/google-flights-api/test/mocks" // Assuming mocks are here
@@ -513,7 +514,7 @@ func TestGetWorkerStatus(t *testing.T) {
 			},
 		},
 	}
-	router.GET("/worker/status", api.GetWorkerStatus(mockProvider))
+	router.GET("/worker/status", api.GetWorkerStatus(mockProvider, nil, config.WorkerConfig{}))
 
 	// Act
 	req, _ := http.NewRequest(http.MethodGet, "/worker/status", nil)
@@ -522,16 +523,21 @@ func TestGetWorkerStatus(t *testing.T) {
 
 	// Assert
 	assert.Equal(t, http.StatusOK, w.Code)
-	var response []worker.WorkerStatus
+	var response []map[string]any
 	err := json.Unmarshal(w.Body.Bytes(), &response)
 	assert.NoError(t, err)
-	assert.Equal(t, mockProvider.statuses, response)
+	assert.Len(t, response, 1)
+	assert.Equal(t, float64(1), response[0]["id"])
+	assert.Equal(t, "active", response[0]["status"])
+	assert.Equal(t, float64(3), response[0]["processed_jobs"])
+	assert.Equal(t, float64(42), response[0]["uptime"])
+	assert.Equal(t, "local", response[0]["source"])
 }
 
 func TestGetWorkerStatus_NilManager(t *testing.T) {
 	// Arrange
 	router := setupRouter()
-	router.GET("/worker/status", api.GetWorkerStatus(nil))
+	router.GET("/worker/status", api.GetWorkerStatus(nil, nil, config.WorkerConfig{}))
 
 	// Act
 	req, _ := http.NewRequest(http.MethodGet, "/worker/status", nil)
@@ -540,7 +546,7 @@ func TestGetWorkerStatus_NilManager(t *testing.T) {
 
 	// Assert
 	assert.Equal(t, http.StatusOK, w.Code)
-	var response []worker.WorkerStatus
+	var response []map[string]any
 	err := json.Unmarshal(w.Body.Bytes(), &response)
 	assert.NoError(t, err)
 	assert.Empty(t, response)
