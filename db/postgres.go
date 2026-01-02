@@ -1612,6 +1612,17 @@ func (p *PostgresDBImpl) InitSchema() error {
 		return fmt.Errorf("failed to create price_graph_sweeps table: %w", err)
 	}
 
+	// Ensure sweep_id=0 exists for continuous sweeps (older code uses sweep_id=0 sentinel).
+	// This avoids FK violations when continuous sweeps store results in price_graph_results.
+	_, err = p.db.Exec(`
+        INSERT INTO price_graph_sweeps (id, job_id, status, origin_count, destination_count, currency, error_count)
+        VALUES (0, NULL, 'continuous', 0, 0, 'USD', 0)
+        ON CONFLICT (id) DO NOTHING
+    `)
+	if err != nil {
+		return fmt.Errorf("failed to ensure continuous sweep row (id=0): %w", err)
+	}
+
 	// Create price_graph_results table
 	_, err = p.db.Exec(`
         CREATE TABLE IF NOT EXISTS price_graph_results (
