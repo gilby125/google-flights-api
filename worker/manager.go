@@ -7,9 +7,7 @@ import (
 	"fmt"
 	"log"
 	"math"
-	"os"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -188,6 +186,8 @@ type Manager struct {
 	neo4jDB       db.Neo4jDatabase // Use the interface type
 	config        config.WorkerConfig
 	flightConfig  config.FlightConfig
+	topNDeals     int
+	excludedSet   map[string]bool
 	workers       []*Worker
 	stopChan      chan struct{}
 	workerWg      sync.WaitGroup
@@ -205,18 +205,36 @@ type Manager struct {
 // NewManager creates a new worker manager.
 // If redisClient is provided, leader election is enabled for the scheduler.
 // If redisClient is nil, the scheduler runs on every instance (legacy behavior).
-func NewManager(queue queue.Queue, redisClient *redis.Client, postgresDB db.PostgresDB, neo4jDB db.Neo4jDatabase, config config.WorkerConfig) *Manager {
+func NewManager(queue queue.Queue, redisClient *redis.Client, postgresDB db.PostgresDB, neo4jDB db.Neo4jDatabase, workerConfig config.WorkerConfig, flightConfig config.FlightConfig) *Manager {
 	// Pass nil for Cronner to use the default cron instance
 	scheduler := NewScheduler(queue, postgresDB, nil)
+
+	topNDeals := flightConfig.TopNDeals
+	if topNDeals <= 0 {
+		topNDeals = 3
+	}
+
+	excludedSet := make(map[string]bool, len(flightConfig.ExcludedAirlines))
+	for _, code := range flightConfig.ExcludedAirlines {
+		code = strings.TrimSpace(strings.ToUpper(code))
+		if code == "" {
+			continue
+		}
+		excludedSet[code] = true
+	}
+
 	m := &Manager{
 		queue:        queue,
 		postgresDB:   postgresDB,
 		neo4jDB:      neo4jDB,
-		config:       config,
+		config:       workerConfig,
+		flightConfig: flightConfig,
+		topNDeals:    topNDeals,
+		excludedSet:  excludedSet,
 		stopChan:     make(chan struct{}),
 		flightCache:  make(map[string]*flights.Session),
 		scheduler:    scheduler,
-		workerStates: make([]*workerState, config.Concurrency),
+		workerStates: make([]*workerState, workerConfig.Concurrency),
 		redisClient:  redisClient,
 	}
 
@@ -224,9 +242,9 @@ func NewManager(queue queue.Queue, redisClient *redis.Client, postgresDB db.Post
 	if redisClient != nil {
 		m.leaderElector = NewLeaderElector(
 			redisClient,
-			config.SchedulerLockKey,
-			config.SchedulerLockTTL,
-			config.SchedulerLockRenew,
+			workerConfig.SchedulerLockKey,
+			workerConfig.SchedulerLockTTL,
+			workerConfig.SchedulerLockRenew,
 			m.onBecomeLeader,
 			m.onLoseLeader,
 		)
@@ -570,8 +588,15 @@ func (m *Manager) processJob(ctx context.Context, worker *Worker, queueName stri
 			return fmt.Errorf("failed to unmarshal bulk search payload: %w", err)
 		}
 
-		// Process the bulk search using 2-phase cheap-first strategy
-		// This reduces API calls from O(routes × dates) to O(routes + routes × 3)
+		// Cheap-first currently requires TripLength for round trips; fall back to the legacy
+		// implementation when TripLength isn't provided (return-window mode).
+		if payload.TripType == "round_trip" && payload.TripLength == 0 {
+			log.Printf("[BulkSearch] TripLength=0 for round_trip; falling back to legacy bulk search")
+			return m.processBulkSearch(ctx, worker, session, payload)
+		}
+
+		// Process the bulk search using 2-phase cheap-first strategy.
+		// This reduces API calls from O(routes × dates) to O(routes + routes × topNDeals)
 		return m.processBulkSearchCheapFirst(ctx, worker, session, payload)
 	case "price_graph_sweep":
 		session, err := m.getFlightSession("price_graph")
@@ -1079,48 +1104,16 @@ func (m *Manager) processBulkSearch(ctx context.Context, worker *Worker, session
 	return nil
 }
 
-// excludedAirlines is a set of airline codes to filter out from deal results.
-// Initialized from EXCLUDED_AIRLINES env var (comma-separated list of IATA codes).
-// Default: NK (Spirit), G4 (Allegiant), F9 (Frontier), SY (Sun Country), XP (Avelo), MX (Breeze)
-var (
-	excludedAirlines     map[string]bool
-	excludedAirlinesOnce sync.Once
-)
-
-// getExcludedAirlines returns the set of excluded airline codes, initializing from env on first call
-func getExcludedAirlines() map[string]bool {
-	excludedAirlinesOnce.Do(func() {
-		excludedAirlines = make(map[string]bool)
-		envVal := os.Getenv("EXCLUDED_AIRLINES")
-		if envVal == "" {
-			// Default exclusions: ultra-low-cost carriers
-			envVal = "NK,G4,F9,SY,XP,MX"
-		}
-		for _, code := range strings.Split(envVal, ",") {
-			code = strings.TrimSpace(strings.ToUpper(code))
-			if code != "" {
-				excludedAirlines[code] = true
-			}
-		}
-		if len(excludedAirlines) > 0 {
-			codes := make([]string, 0, len(excludedAirlines))
-			for code := range excludedAirlines {
-				codes = append(codes, code)
-			}
-			log.Printf("[CheapFirst] Excluded airlines: %v", codes)
-		}
-	})
-	return excludedAirlines
-}
-
-// isExcludedAirline checks if any flight in the offer uses an excluded airline
-func isExcludedAirline(offer flights.FullOffer) bool {
-	excluded := getExcludedAirlines()
+// isExcludedAirline checks if any flight in the offer uses an excluded airline.
+func (m *Manager) isExcludedAirline(offer flights.FullOffer) bool {
+	if len(m.excludedSet) == 0 {
+		return false
+	}
 	// Check outbound flights
 	for _, flight := range offer.Flight {
 		if len(flight.FlightNumber) >= 2 {
 			airlineCode := flight.FlightNumber[:2]
-			if excluded[airlineCode] {
+			if m.excludedSet[airlineCode] {
 				return true
 			}
 		}
@@ -1129,7 +1122,7 @@ func isExcludedAirline(offer flights.FullOffer) bool {
 	for _, flight := range offer.ReturnFlight {
 		if len(flight.FlightNumber) >= 2 {
 			airlineCode := flight.FlightNumber[:2]
-			if excluded[airlineCode] {
+			if m.excludedSet[airlineCode] {
 				return true
 			}
 		}
@@ -1145,6 +1138,9 @@ func scoreDeal(offer flights.FullOffer, distanceMiles float64) float64 {
 	// Penalize duration: each hour over baseline (500mph) adds $10 equivalent
 	if distanceMiles > 0 {
 		baselineHours := distanceMiles / 500.0
+		if offer.ReturnFlightDuration > 0 || len(offer.ReturnFlight) > 0 {
+			baselineHours *= 2
+		}
 		actualHours := offer.FlightDuration.Hours() + offer.ReturnFlightDuration.Hours()
 		extraHours := actualHours - baselineHours
 		if extraHours > 0 {
@@ -1181,13 +1177,7 @@ func scoreDeal(offer flights.FullOffer, distanceMiles float64) float64 {
 // This reduces API calls from O(routes × dates) to O(routes + routes × N)
 // Example: 100 routes × 30 dates → 3000 calls becomes 100 + 300 = 400 calls
 func (m *Manager) processBulkSearchCheapFirst(ctx context.Context, worker *Worker, session *flights.Session, payload BulkSearchPayload) (err error) {
-	// Number of top deals to fetch full itineraries for (configurable via TOP_N_DEALS env var)
-	topN := 3
-	if envVal := os.Getenv("TOP_N_DEALS"); envVal != "" {
-		if n, err := strconv.Atoi(envVal); err == nil && n > 0 {
-			topN = n
-		}
-	}
+	topN := m.topNDeals
 
 	// Validate origins and destinations
 	if len(payload.Origins) == 0 {
@@ -1373,7 +1363,7 @@ func (m *Manager) processBulkSearchCheapFirst(ctx context.Context, worker *Worke
 				// Find best offer by composite deal score (skip excluded airlines)
 				for i := range fullOffers {
 					// Skip offers from excluded airlines (Spirit, Allegiant, Frontier)
-					if isExcludedAirline(fullOffers[i]) {
+					if m.isExcludedAirline(fullOffers[i]) {
 						continue
 					}
 					score := scoreDeal(fullOffers[i], dist)
