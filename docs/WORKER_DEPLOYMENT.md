@@ -98,6 +98,10 @@ journalctl -u google-flights-worker@1 -f
 
 Use this if you want the worker VM to just run a container image (pulled from GHCR) and have `systemd` keep it running.
 
+Recommendation:
+- Use the **built image** directly (pull from GHCR) rather than trying to “run the binary from Docker”.
+- If you truly want a native binary on the VM, use **Option A** (copy a binary + systemd) instead of extracting it from an image.
+
 On the worker VM:
 
 1) Create env file:

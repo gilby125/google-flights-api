@@ -37,6 +37,10 @@ sudo ./deploy/systemd/install.sh --instances 1 2
 
 If you prefer to avoid copying a Go binary to the worker VM, run the worker as a container and let `systemd` keep it alive.
 
+Recommendation:
+- Use the **built image** directly rather than extracting a binary from it.
+- If you want a native binary on the VM, use the non-Docker units in this folder (`google-flights-worker@.service`).
+
 1) Copy env file template and fill it in:
 ```bash
 sudo mkdir -p /etc/google-flights
