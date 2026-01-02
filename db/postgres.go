@@ -1258,34 +1258,10 @@ func (p *PostgresDBImpl) ListContinuousSweepResults(ctx context.Context, filters
 
 // InitSchema initializes the database schema
 func (p *PostgresDBImpl) InitSchema() error {
-	// Ensure a clean slate by dropping tables first (in reverse dependency order)
-	// Note: This makes InitSchema destructive on existing data if tables exist.
-	// In a real application, migrations are preferred.
-	_, err := p.db.Exec(`
-		DROP TABLE IF EXISTS bulk_search_results CASCADE;
-		DROP TABLE IF EXISTS bulk_searches CASCADE;
-		DROP TABLE IF EXISTS flight_segments CASCADE;
-		DROP TABLE IF EXISTS flight_prices CASCADE;
-		DROP TABLE IF EXISTS flights CASCADE;
-		DROP TABLE IF EXISTS job_details CASCADE;
-		DROP TABLE IF EXISTS scheduled_jobs CASCADE;
-		DROP TABLE IF EXISTS search_results CASCADE;
-		DROP TABLE IF EXISTS flight_offers CASCADE;
-		DROP TABLE IF EXISTS search_queries CASCADE;
-		DROP TABLE IF EXISTS certificate_issuance CASCADE;
-		DROP TABLE IF EXISTS app_secrets CASCADE;
-		DROP TABLE IF EXISTS airports CASCADE;
-		DROP TABLE IF EXISTS airlines CASCADE;
-		-- Add other tables like users, sessions if they exist and have dependencies
-		DROP TABLE IF EXISTS sessions CASCADE;
-		DROP TABLE IF EXISTS users CASCADE;
-	`)
-	if err != nil {
-		// Log error during drop, but proceed as tables might not exist initially
-		fmt.Printf("Warning: Error dropping tables during InitSchema (might be first run): %v\n", err)
-	}
-
-	// Now create tables in the correct order
+	// Create/ensure tables in the correct order (non-destructive).
+	// NOTE: This function used to DROP tables; that was too dangerous for production.
+	// If you need a clean slate, wipe the DB/volume explicitly or introduce migrations.
+	var err error
 
 	// Create airports table first
 	_, err = p.db.Exec(`
