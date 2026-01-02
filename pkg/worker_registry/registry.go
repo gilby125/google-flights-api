@@ -3,6 +3,7 @@ package worker_registry
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"time"
 
@@ -68,18 +69,20 @@ func (r *Registry) Publish(ctx context.Context, hb WorkerHeartbeat, ttl time.Dur
 		Member: hb.ID,
 	})
 
-	meta := map[string]any{
-		"id":             hb.ID,
-		"hostname":       hb.Hostname,
-		"status":         hb.Status,
-		"current_job":    hb.CurrentJob,
-		"processed_jobs": hb.ProcessedJobs,
-		"concurrency":    hb.Concurrency,
-		"started_at":     hb.StartedAt.Unix(),
-		"last_heartbeat": hb.LastHeartbeat.Unix(),
-		"version":        hb.Version,
-	}
-	pipe.HSet(ctx, r.metaKey(hb.ID), meta)
+	// Store values as strings for portability across Redis setups/clients.
+	pipe.HSet(
+		ctx,
+		r.metaKey(hb.ID),
+		"id", hb.ID,
+		"hostname", hb.Hostname,
+		"status", hb.Status,
+		"current_job", hb.CurrentJob,
+		"processed_jobs", strconv.Itoa(hb.ProcessedJobs),
+		"concurrency", strconv.Itoa(hb.Concurrency),
+		"started_at", strconv.FormatInt(hb.StartedAt.Unix(), 10),
+		"last_heartbeat", strconv.FormatInt(hb.LastHeartbeat.Unix(), 10),
+		"version", hb.Version,
+	)
 	pipe.Expire(ctx, r.metaKey(hb.ID), ttl*3)
 	pipe.ZRemRangeByScore(ctx, r.heartbeatsKey(), "0", strconv.FormatInt(now.Add(-ttl*10).Unix(), 10))
 	_, err := pipe.Exec(ctx)
@@ -101,7 +104,7 @@ func (r *Registry) ListActive(ctx context.Context, within time.Duration, limit i
 	}
 
 	now := time.Now().UTC()
-	ids, err := r.redisClient.ZRevRangeByScore(ctx, r.heartbeatsKey(), &redis.ZRangeBy{
+	zs, err := r.redisClient.ZRevRangeByScoreWithScores(ctx, r.heartbeatsKey(), &redis.ZRangeBy{
 		Max:    strconv.FormatInt(now.Unix(), 10),
 		Min:    strconv.FormatInt(now.Add(-within).Unix(), 10),
 		Offset: 0,
@@ -110,24 +113,42 @@ func (r *Registry) ListActive(ctx context.Context, within time.Duration, limit i
 	if err != nil && err != redis.Nil {
 		return nil, err
 	}
-	if len(ids) == 0 {
+	if len(zs) == 0 {
 		return []WorkerHeartbeat{}, nil
 	}
 
+	type metaCmd struct {
+		id  string
+		cmd *redis.MapStringStringCmd
+		lh  time.Time
+	}
+
 	pipe := r.redisClient.Pipeline()
-	cmds := make([]*redis.MapStringStringCmd, 0, len(ids))
-	for _, id := range ids {
-		cmds = append(cmds, pipe.HGetAll(ctx, r.metaKey(id)))
+	cmds := make([]metaCmd, 0, len(zs))
+	for _, z := range zs {
+		id, ok := z.Member.(string)
+		if !ok || id == "" {
+			continue
+		}
+		lh := time.Time{}
+		if !math.IsNaN(z.Score) && !math.IsInf(z.Score, 0) {
+			lh = time.Unix(int64(z.Score), 0).UTC()
+		}
+		cmds = append(cmds, metaCmd{
+			id:  id,
+			cmd: pipe.HGetAll(ctx, r.metaKey(id)),
+			lh:  lh,
+		})
 	}
 	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
 		return nil, err
 	}
 
-	out := make([]WorkerHeartbeat, 0, len(ids))
-	for i, id := range ids {
-		m := cmds[i].Val()
+	out := make([]WorkerHeartbeat, 0, len(cmds))
+	for _, mc := range cmds {
+		m := mc.cmd.Val()
 		hb := WorkerHeartbeat{
-			ID:       id,
+			ID:       mc.id,
 			Hostname: m["hostname"],
 			Status:   m["status"],
 			Version:  m["version"],
@@ -145,6 +166,12 @@ func (r *Registry) ListActive(ctx context.Context, within time.Duration, limit i
 		}
 		if v, err := strconv.ParseInt(m["last_heartbeat"], 10, 64); err == nil {
 			hb.LastHeartbeat = time.Unix(v, 0).UTC()
+		} else if !mc.lh.IsZero() {
+			// Fallback: even if the meta hash is missing/empty, we can still use the ZSET score.
+			hb.LastHeartbeat = mc.lh
+		}
+		if hb.Status == "" {
+			hb.Status = "active"
 		}
 
 		out = append(out, hb)

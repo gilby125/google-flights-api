@@ -835,7 +835,8 @@ async function deleteJob(jobId) {
 
 // Helper function to format duration
 function formatDuration(seconds) {
-    if (!seconds) return 'N/A';
+    if (seconds == null) return 'N/A';
+    if (seconds < 0) seconds = 0;
     
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
