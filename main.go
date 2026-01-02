@@ -33,7 +33,10 @@ func main() {
 	logger.Info("Starting Google Flights API server",
 		"version", "1.0.0",
 		"environment", cfg.Environment,
-		"port", cfg.Port)
+		"port", cfg.Port,
+		"api_enabled", cfg.APIEnabled,
+		"http_bind_addr", cfg.HTTPBindAddr,
+		"worker_enabled", cfg.WorkerEnabled)
 
 	logger.Info("Configuration loaded successfully")
 
@@ -52,19 +55,27 @@ func main() {
 	defer neo4jDB.Close()
 
 	// Initialize database schemas
-	logger.Info("Initializing database schemas...")
-	if err := postgresDB.InitSchema(); err != nil {
-		logger.Fatal(err, "Failed to initialize PostgreSQL schema")
-	}
+	if cfg.InitSchema {
+		logger.Info("Initializing database schemas...")
+		if err := postgresDB.InitSchema(); err != nil {
+			logger.Fatal(err, "Failed to initialize PostgreSQL schema")
+		}
 
-	if err := neo4jDB.InitSchema(); err != nil {
-		logger.Fatal(err, "Failed to initialize Neo4j schema")
+		if err := neo4jDB.InitSchema(); err != nil {
+			logger.Fatal(err, "Failed to initialize Neo4j schema")
+		}
+	} else {
+		logger.Info("Skipping schema initialization", "init_schema", cfg.InitSchema)
 	}
 
 	// Seed Neo4j with data from PostgreSQL
-	logger.Info("Seeding Neo4j database...")
-	if err := neo4jDB.SeedNeo4jData(context.Background(), &postgresDB); err != nil {
-		logger.Fatal(err, "Failed to seed Neo4j database")
+	if cfg.SeedNeo4j {
+		logger.Info("Seeding Neo4j database...")
+		if err := neo4jDB.SeedNeo4jData(context.Background(), &postgresDB); err != nil {
+			logger.Fatal(err, "Failed to seed Neo4j database")
+		}
+	} else {
+		logger.Info("Skipping Neo4j seeding", "seed_neo4j", cfg.SeedNeo4j)
 	}
 
 	// Initialize queue
@@ -89,26 +100,36 @@ func main() {
 		logger.Info("Worker pool disabled")
 	}
 
-	// Initialize API router
-	router := gin.New() // Use gin.New() instead of gin.Default() to have full control over middleware
-	router.LoadHTMLGlob("templates/*html")
+	var srv *http.Server
+	if cfg.APIEnabled {
+		// Initialize API router
+		router := gin.New() // Use gin.New() instead of gin.Default() to have full control over middleware
+		router.LoadHTMLGlob("templates/*html")
 
-	// Register all API routes from the api package
-	api.RegisterRoutes(router, postgresDB, neo4jDB, redisQueue, workerManager, cfg)
+		// Register all API routes from the api package
+		api.RegisterRoutes(router, postgresDB, neo4jDB, redisQueue, workerManager, cfg)
 
-	// Start HTTP server
-	srv := &http.Server{
-		Addr:    ":" + cfg.Port,
-		Handler: router,
-	}
-
-	// Start server in a goroutine
-	go func() {
-		logger.Info("HTTP server starting", "port", cfg.Port, "addr", srv.Addr)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Fatal(err, "Failed to start HTTP server")
+		addr := ":" + cfg.Port
+		if cfg.HTTPBindAddr != "" {
+			addr = cfg.HTTPBindAddr + ":" + cfg.Port
 		}
-	}()
+
+		// Start HTTP server
+		srv = &http.Server{
+			Addr:    addr,
+			Handler: router,
+		}
+
+		// Start server in a goroutine
+		go func() {
+			logger.Info("HTTP server starting", "addr", srv.Addr)
+			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				logger.Fatal(err, "Failed to start HTTP server")
+			}
+		}()
+	} else {
+		logger.Info("API server disabled", "api_enabled", cfg.APIEnabled)
+	}
 
 	// Wait for interrupt signal to gracefully shut down the server
 	quit := make(chan os.Signal, 1)
@@ -121,9 +142,11 @@ func main() {
 	defer cancel()
 
 	// Attempt graceful shutdown
-	if err := srv.Shutdown(ctx); err != nil {
-		logger.Fatal(err, "Server forced to shutdown")
+	if srv != nil {
+		if err := srv.Shutdown(ctx); err != nil {
+			logger.Fatal(err, "Server forced to shutdown")
+		}
 	}
 
-	logger.Info("Server exited gracefully")
+	logger.Info("Process exited gracefully")
 }

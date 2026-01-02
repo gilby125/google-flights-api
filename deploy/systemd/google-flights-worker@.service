@@ -1,0 +1,23 @@
+[Unit]
+Description=Google Flights Worker (instance %i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=flights
+Group=flights
+WorkingDirectory=/opt/google-flights
+EnvironmentFile=/etc/google-flights/worker.env
+Environment=WORKER_ID=worker-%i
+ExecStart=/opt/google-flights/google-flights-api
+Restart=always
+RestartSec=2
+TimeoutStopSec=30
+KillSignal=SIGINT
+LimitNOFILE=1048576
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

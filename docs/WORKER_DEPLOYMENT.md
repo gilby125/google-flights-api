@@ -2,6 +2,27 @@
 
 Deploy workers to any cloud provider to distribute flight search load.
 
+## Option A: systemd (no Docker)
+
+Use this if you want the simplest reliable setup on a VPS (compiled Go binary + `systemd`).
+
+1. Build the binary (recommended: in CI) and copy it to the VPS as `/opt/google-flights/google-flights-api`
+2. Copy `deploy/systemd/worker.env.example` to `/etc/google-flights/worker.env` and fill in required values
+3. Copy `deploy/systemd/google-flights-worker.service` (or `google-flights-worker@.service`) to `/etc/systemd/system/`
+4. Enable + start:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now google-flights-worker
+journalctl -u google-flights-worker -f
+```
+
+Recommended worker env settings:
+- `API_ENABLED=false` (avoid port conflicts; run many workers per host)
+- `INIT_SCHEMA=false` and `SEED_NEO4J=false` (run schema/seed on your main server only)
+
+---
+
 ## Quick Start (3 Steps)
 
 ```bash

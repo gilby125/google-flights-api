@@ -12,6 +12,8 @@ import (
 // Config holds all application configuration
 type Config struct {
 	Port              string
+	HTTPBindAddr      string
+	APIEnabled        bool
 	Environment       string
 	LoggingConfig     LoggingConfig
 	PostgresConfig    PostgresConfig
@@ -23,6 +25,8 @@ type Config struct {
 	NTFYConfig        NTFYConfig
 	AdminAuthConfig   AdminAuthConfig
 	WorkerEnabled     bool
+	InitSchema        bool
+	SeedNeo4j         bool
 }
 
 // FlightConfig holds flight search configuration
@@ -118,8 +122,12 @@ func Load() (*Config, error) {
 	_ = godotenv.Load(".env")
 
 	port := getEnv("PORT", "8080")
+	httpBindAddr := getEnv("HTTP_BIND_ADDR", "")
 	environment := getEnv("ENVIRONMENT", "development")
+	apiEnabled, _ := strconv.ParseBool(getEnv("API_ENABLED", "true"))
 	workerEnabled, _ := strconv.ParseBool(getEnv("WORKER_ENABLED", "true"))
+	initSchema, _ := strconv.ParseBool(getEnv("INIT_SCHEMA", "true"))
+	seedNeo4j, _ := strconv.ParseBool(getEnv("SEED_NEO4J", "true"))
 
 	loggingConfig := LoggingConfig{
 		Level:  getEnv("LOG_LEVEL", "info"),
@@ -234,6 +242,8 @@ func Load() (*Config, error) {
 
 	return &Config{
 		Port:            port,
+		HTTPBindAddr:    httpBindAddr,
+		APIEnabled:      apiEnabled,
 		Environment:     environment,
 		LoggingConfig:   loggingConfig,
 		PostgresConfig:  postgresConfig,
@@ -244,6 +254,8 @@ func Load() (*Config, error) {
 		NTFYConfig:      ntfyConfig,
 		AdminAuthConfig: adminAuthConfig,
 		WorkerEnabled:   workerEnabled,
+		InitSchema:      initSchema,
+		SeedNeo4j:       seedNeo4j,
 	}, nil
 }
 
