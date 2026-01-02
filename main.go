@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -51,18 +52,52 @@ func main() {
 
 	logger.Info("Configuration loaded successfully")
 
-	// Initialize database connections
-	logger.Info("Connecting to databases...")
-	postgresDB, err := db.NewPostgresDB(cfg.PostgresConfig)
-	if err != nil {
-		logger.Fatal(err, "Failed to connect to PostgreSQL", "host", cfg.PostgresConfig.Host)
+	// Initialize database connections with retries
+	var postgresDB db.PostgresDB
+	var neo4jDB *db.Neo4jDB
+	var redisQueue *queue.RedisQueue
+
+	maxRetries := 10
+	retryDelay := 5 * time.Second
+
+	logger.Info("Connecting to databases (with retries)...")
+
+	for i := 0; i < maxRetries; i++ {
+		var pErr, nErr, rErr error
+
+		if postgresDB == nil {
+			postgresDB, pErr = db.NewPostgresDB(cfg.PostgresConfig)
+			if pErr != nil {
+				logger.Warn("Failed to connect to PostgreSQL, retrying...", "error", pErr, "attempt", i+1)
+			}
+		}
+
+		if neo4jDB == nil {
+			neo4jDB, nErr = db.NewNeo4jDB(cfg.Neo4jConfig)
+			if nErr != nil {
+				logger.Warn("Failed to connect to Neo4j, retrying...", "error", nErr, "attempt", i+1)
+			}
+		}
+
+		if redisQueue == nil {
+			redisQueue, rErr = queue.NewRedisQueue(cfg.RedisConfig)
+			if rErr != nil {
+				logger.Warn("Failed to connect to Redis, retrying...", "error", rErr, "attempt", i+1)
+			}
+		}
+
+		if pErr == nil && nErr == nil && rErr == nil {
+			logger.Info("All database connections established successfully")
+			break
+		}
+
+		if i == maxRetries-1 {
+			logger.Fatal(fmt.Errorf("db connection timeout"), "All database connection attempts failed")
+		}
+
+		time.Sleep(retryDelay)
 	}
 	defer postgresDB.Close()
-
-	neo4jDB, err := db.NewNeo4jDB(cfg.Neo4jConfig)
-	if err != nil {
-		logger.Fatal(err, "Failed to connect to Neo4j", "uri", cfg.Neo4jConfig.URI)
-	}
 	defer neo4jDB.Close()
 
 	// Initialize database schemas
@@ -82,7 +117,7 @@ func main() {
 	// Seed Neo4j with data from PostgreSQL
 	if cfg.SeedNeo4j {
 		logger.Info("Seeding Neo4j database...")
-		if err := neo4jDB.SeedNeo4jData(context.Background(), &postgresDB); err != nil {
+		if err := neo4jDB.SeedNeo4jData(context.Background(), postgresDB); err != nil {
 			logger.Fatal(err, "Failed to seed Neo4j database")
 		}
 	} else {
@@ -90,11 +125,7 @@ func main() {
 	}
 
 	// Initialize queue
-	logger.Info("Connecting to Redis queue...")
-	redisQueue, err := queue.NewRedisQueue(cfg.RedisConfig)
-	if err != nil {
-		logger.Fatal(err, "Failed to connect to Redis", "host", cfg.RedisConfig.Host)
-	}
+	// redisQueue already initialized in retry loop
 
 	// Get Redis client for leader election
 	redisClient := redisQueue.GetClient()

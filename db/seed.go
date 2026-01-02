@@ -55,7 +55,7 @@ func (p *PostgresDBImpl) seedAirlines() error {
 }
 
 // SeedNeo4jData seeds the Neo4j database with initial data and relationships
-func (n *Neo4jDB) SeedNeo4jData(ctx context.Context, postgresDB *PostgresDB) error {
+func (n *Neo4jDB) SeedNeo4jData(ctx context.Context, postgresDB PostgresDB) error {
 	// ... (keep existing neo4j implementation unchanged)
 	return nil // Added missing return
 }
