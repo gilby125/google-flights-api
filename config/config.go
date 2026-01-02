@@ -126,8 +126,16 @@ func Load() (*Config, error) {
 	environment := getEnv("ENVIRONMENT", "development")
 	apiEnabled, _ := strconv.ParseBool(getEnv("API_ENABLED", "true"))
 	workerEnabled, _ := strconv.ParseBool(getEnv("WORKER_ENABLED", "true"))
-	initSchema, _ := strconv.ParseBool(getEnv("INIT_SCHEMA", "true"))
-	seedNeo4j, _ := strconv.ParseBool(getEnv("SEED_NEO4J", "true"))
+
+	// NOTE: InitSchema is destructive (drops tables). Default to false in production to avoid data loss.
+	initSchemaDefault := "true"
+	seedNeo4jDefault := "true"
+	if strings.ToLower(environment) == "production" {
+		initSchemaDefault = "false"
+		seedNeo4jDefault = "false"
+	}
+	initSchema, _ := strconv.ParseBool(getEnv("INIT_SCHEMA", initSchemaDefault))
+	seedNeo4j, _ := strconv.ParseBool(getEnv("SEED_NEO4J", seedNeo4jDefault))
 
 	loggingConfig := LoggingConfig{
 		Level:  getEnv("LOG_LEVEL", "info"),

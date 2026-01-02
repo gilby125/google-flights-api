@@ -52,6 +52,10 @@ func main() {
 
 	logger.Info("Configuration loaded successfully")
 
+	if cfg.Environment == "production" && cfg.InitSchema {
+		logger.Warn("INIT_SCHEMA is enabled in production; InitSchema drops tables and will wipe data", "init_schema", cfg.InitSchema)
+	}
+
 	// Initialize database connections with retries
 	var postgresDB db.PostgresDB
 	var neo4jDB *db.Neo4jDB

@@ -7,10 +7,11 @@ services:
     environment:
       PORT: 8080
       ENVIRONMENT: production
-      API_ENABLED: "true"
-      WORKER_ENABLED: "true"
-      INIT_SCHEMA: "true"
-      SEED_NEO4J: "true"
+      API_ENABLED: ${API_ENABLED:-true}
+      WORKER_ENABLED: ${WORKER_ENABLED:-true}
+      # WARNING: INIT_SCHEMA drops tables (destructive). Use true only on first boot of a fresh DB.
+      INIT_SCHEMA: ${INIT_SCHEMA:-false}
+      SEED_NEO4J: ${SEED_NEO4J:-false}
       # DB Connectivity (Internal)
       DB_HOST: postgres
       DB_PORT: 5432
