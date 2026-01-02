@@ -11,6 +11,16 @@ If you already have Tailscale installed on the **worker VM itself**, you can use
 
 If you run your “main” stack under **Komodo**, redeploy via **Komodo** (do not use Docker CLI deploys).
 
+## Komodo: build-on-server (no waiting for GHCR)
+
+If you deploy from a git repo in Komodo, you can build the image on the Komodo server during deploy.
+
+In `komodo-compose.yml`, the `api` service is configured with `build:` and `pull_policy: build` so Komodo will build from source.
+
+Recommended Komodo env:
+- `IMAGE_TAG=local` (tags the locally-built image; no registry push required)
+- `INIT_SCHEMA=true` (safe/idempotent; ensures tables exist after volume wipes)
+
 ## Remote Workers over Tailscale (Komodo main + OCI worker)
 
 Goal: run remote worker nodes (example: Oracle OCI) that connect back to your main Komodo server over Tailscale, without exposing Postgres/Redis/Neo4j to the public internet.

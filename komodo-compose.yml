@@ -1,16 +1,19 @@
 services:
   api:
-    image: ghcr.io/gilby125/flight-api:${IMAGE_TAG:-latest}
+    # Build-on-server (Komodo): `pull_policy: build` ensures the image is built from this repo on deploy.
+    # `image:` is still used to name/tag the locally built image (no registry push required).
+    image: ghcr.io/gilby125/flight-api:${IMAGE_TAG:-local}
     build:
       context: .
       dockerfile: Dockerfile
+    pull_policy: build
     environment:
       PORT: 8080
       ENVIRONMENT: production
       API_ENABLED: ${API_ENABLED:-true}
       WORKER_ENABLED: ${WORKER_ENABLED:-true}
-      # WARNING: INIT_SCHEMA drops tables (destructive). Use true only on first boot of a fresh DB.
-      INIT_SCHEMA: ${INIT_SCHEMA:-false}
+      # Schema init is safe/idempotent (CREATE TABLE IF NOT EXISTS, etc). Keep this enabled so fresh DBs "just work".
+      INIT_SCHEMA: ${INIT_SCHEMA:-true}
       SEED_NEO4J: ${SEED_NEO4J:-false}
       # DB Connectivity (Internal)
       DB_HOST: postgres
