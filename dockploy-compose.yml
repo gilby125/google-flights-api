@@ -13,14 +13,14 @@ services:
       DB_USER: flights
       DB_PASSWORD: ${DB_PASSWORD}
       DB_NAME: flights
-      DB_SSLMODE: disable # Internal network, SSL optional
+      DB_SSLMODE: disable
       # Neo4j (Internal Service)
       NEO4J_URI: bolt://neo4j:7687
       NEO4J_USER: neo4j
       NEO4J_PASSWORD: ${NEO4J_PASSWORD}
-      # External Redis
-      REDIS_HOST: ${REDIS_HOST}
-      REDIS_PORT: ${REDIS_PORT:-6379}
+      # Redis (Internal Service)
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       REDIS_QUEUE_GROUP: ${REDIS_QUEUE_GROUP:-flights_workers}
       REDIS_QUEUE_STREAM_PREFIX: ${REDIS_QUEUE_STREAM_PREFIX:-flights}
@@ -29,6 +29,7 @@ services:
     depends_on:
       - postgres
       - neo4j
+      - redis
     # Removed host port mapping - Dokploy handles routing
     # ports:
     #   - "8080:8080"
@@ -70,6 +71,18 @@ services:
       - pgdata:/var/lib/postgresql/data
     restart: unless-stopped
 
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}", "--save", "60", "1", "--loglevel", "warning"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "PING"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - redisdata:/data
+    restart: unless-stopped
+
   neo4j:
     image: neo4j:5
     environment:
@@ -87,4 +100,5 @@ services:
 
 volumes:
   pgdata:
+  redisdata:
   neo4jdata:
