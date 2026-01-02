@@ -26,6 +26,10 @@ func skipUnlessWorkerTests(t *testing.T) {
 	}
 }
 
+func allowPriceGraphDequeues(mockQueue *mocks.MockQueue) {
+	mockQueue.On("Dequeue", mock.Anything, "price_graph_sweep").Return(nil, nil).Maybe()
+}
+
 // Helper to setup manager with mocks for testing
 func setupManagerTest(cfg config.WorkerConfig) (*worker.Manager, *mocks.MockQueue, *mocks.MockPostgresDB, *mocks.MockNeo4jDatabase, *mocks.MockScheduler) {
 	mockQueue := new(mocks.MockQueue)
@@ -52,8 +56,12 @@ func setupManagerTest(cfg config.WorkerConfig) (*worker.Manager, *mocks.MockQueu
 	// We will test Start/Stop behavior based on queue interactions and assume the internal scheduler is called.
 	// Create the manager using the real NewManager which internally creates a real scheduler (using default cron).
 	// This limits our ability to mock scheduler calls directly.
-	manager := worker.NewManager(mockQueue, mockPgDb, mockNeo4jDb, cfg)
+	// Pass nil for Redis client to disable leader election in tests
+	manager := worker.NewManager(mockQueue, nil, mockPgDb, mockNeo4jDb, cfg, config.FlightConfig{})
 	// --- End Simulation ---
+
+	// Allow price graph sweep dequeue calls by default in tests
+	allowPriceGraphDequeues(mockQueue)
 
 	// We still return the mockScheduler for potential future use if refactored.
 	return manager, mockQueue, mockPgDb, mockNeo4jDb, mockScheduler
@@ -74,8 +82,9 @@ func TestManager_Start(t *testing.T) {
 	// Mock Dequeue to simulate workers starting and looking for jobs
 	// Expect Dequeue to be called multiple times by the workers for both queues
 	// Use Eventually to handle the concurrent nature of workers starting
-	mockQueue.On("Dequeue", mock.Anything, "flight_search").Return(nil, nil) // Return no job initially
-	mockQueue.On("Dequeue", mock.Anything, "bulk_search").Return(nil, nil)   // Return no job initially
+	mockQueue.On("Dequeue", mock.Anything, "flight_search").Return(nil, nil)             // Return no job initially
+	mockQueue.On("Dequeue", mock.Anything, "bulk_search").Return(nil, nil)               // Return no job initially
+	mockQueue.On("Dequeue", mock.Anything, "price_graph_sweep").Return(nil, nil).Maybe() // Return no job initially
 
 	manager.Start()
 
@@ -86,6 +95,7 @@ func TestManager_Start(t *testing.T) {
 	// We can't easily assert scheduler.Start was called without refactoring NewManager.
 	mockQueue.AssertCalled(t, "Dequeue", mock.Anything, "flight_search")
 	mockQueue.AssertCalled(t, "Dequeue", mock.Anything, "bulk_search")
+	mockQueue.AssertCalled(t, "Dequeue", mock.Anything, "price_graph_sweep")
 
 	// Stop the manager to clean up goroutines
 	manager.Stop()
@@ -257,6 +267,8 @@ func TestManager_JobProcessingFlow(t *testing.T) {
 		mockTx.On("Rollback").Return(nil).Maybe()
 		// --- End Corrected Mocks ---
 
+		allowPriceGraphDequeues(mockQueue)
+
 		manager.Start()
 		select {
 		case <-processed:
@@ -276,7 +288,8 @@ func TestManager_JobProcessingFlow(t *testing.T) {
 		mockQueue := new(mocks.MockQueue)
 		mockPgDb := new(mocks.MockPostgresDB)
 		mockNeo4jDb := new(mocks.MockNeo4jDatabase)
-		manager := worker.NewManager(mockQueue, mockPgDb, mockNeo4jDb, cfg) // Recreate manager with fresh mocks
+		manager := worker.NewManager(mockQueue, nil, mockPgDb, mockNeo4jDb, cfg, config.FlightConfig{}) // Recreate manager with fresh mocks
+		allowPriceGraphDequeues(mockQueue)
 
 		// Mock the ListJobs call that the scheduler makes on startup
 		mockRowsFail := new(mocks.MockRows)
@@ -496,6 +509,8 @@ func TestManager_JobPrioritization(t *testing.T) {
 	mockTxBulk.On("Rollback").Return(nil).Maybe()
 	// --- End Corrected Mocks ---
 
+	allowPriceGraphDequeues(mockQueue)
+
 	manager.Start()
 
 	// Wait for both jobs to be processed
@@ -543,6 +558,8 @@ func TestManager_ConcurrencyConfig(t *testing.T) {
 
 	// Allow Dequeue for bulk_search without affecting the WaitGroup
 	mockQueue.On("Dequeue", mock.Anything, "bulk_search").Return(nil, nil).Maybe()
+
+	allowPriceGraphDequeues(mockQueue)
 
 	manager.Start()
 

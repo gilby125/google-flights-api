@@ -9,12 +9,12 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	_ "time/tzdata"
 
 	"github.com/hashicorp/go-retryablehttp"
-	"github.com/gilby125/google-flights-api/iata"
 	"golang.org/x/text/language"
 )
 
@@ -47,16 +47,31 @@ func (s *Session) serializeFlightLocations(ctx context.Context, cities []string,
 		return "", fmt.Errorf("could not get abbrivated city names: %v", err)
 	}
 
-	serialized := ""
+	var b strings.Builder
+	// Each element is roughly: [\"XXX\",0] plus separators.
+	b.Grow((len(airports) + len(abbrCities)) * 12)
 
-	for _, l := range airports {
-		serialized += fmt.Sprintf(`[\"%s\",%c],`, l, flightAirportConst)
-	}
-	for _, l := range abbrCities {
-		serialized += fmt.Sprintf(`[\"%s\",%c],`, l, flightCityConst)
+	first := true
+	write := func(code string, kind rune) {
+		if !first {
+			b.WriteByte(',')
+		}
+		first = false
+		b.WriteString(`[\"`)
+		b.WriteString(code)
+		b.WriteString(`\",`)
+		b.WriteRune(kind)
+		b.WriteByte(']')
 	}
 
-	return serialized[:len(serialized)-1], nil
+	for _, code := range airports {
+		write(code, flightAirportConst)
+	}
+	for _, code := range abbrCities {
+		write(code, flightCityConst)
+	}
+
+	return b.String(), nil
 }
 
 func serializeFlightTravelers(args Args) string {
@@ -193,17 +208,8 @@ func flightSchema(
 	}
 }
 
-func iataLocation(iataCode string) (string, *time.Location) {
-	iataLocation := iata.IATATimeZone(iataCode)
-	location, err := time.LoadLocation(iataLocation.Tz)
-	if err != nil {
-		return iataLocation.City, time.UTC
-	}
-	return iataLocation.City, location
-}
-
 func getFlights(rawFlights []json.RawMessage) ([]Flight, error) {
-	flights := []Flight{}
+	flights := make([]Flight, 0, len(rawFlights))
 	for _, rawFlight := range rawFlights {
 		flight := Flight{}
 		flight.Unknown = make([]interface{}, 20)
@@ -219,14 +225,15 @@ func getFlights(rawFlights []json.RawMessage) ([]Flight, error) {
 		)); err != nil {
 			return nil, err
 		}
-		depCity, depLocation := iataLocation(flight.DepAirportCode)
-		arrCity, arrLocation := iataLocation(flight.ArrAirportCode)
+
+		depCity, depLocation := iataLocationCached(flight.DepAirportCode)
+		arrCity, arrLocation := iataLocationCached(flight.ArrAirportCode)
+
 		flight.DepCity = depCity
 		flight.DepTime = time.Date(int(depYear), time.Month(depMonth), int(depDay), int(depHours), int(depMinutes), 0, 0, depLocation)
 		flight.ArrCity = arrCity
 		flight.ArrTime = time.Date(int(arrYear), time.Month(arrMonth), int(arrDay), int(arrHours), int(arrMinutes), 0, 0, arrLocation)
-		parsedDuration, _ := time.ParseDuration(fmt.Sprintf("%dm", int(duration)))
-		flight.Duration = parsedDuration
+		flight.Duration = time.Duration(int64(duration)) * time.Minute
 		flight.FlightNumber = flightNoPart1 + " " + flightNoPart2
 		flights = append(flights, flight)
 	}

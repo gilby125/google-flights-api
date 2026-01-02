@@ -121,8 +121,9 @@ func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Ne
 		// Price history routes
 		v1.GET("/price-history/:origin/:destination", getPriceHistory(neo4jDB))
 
-		// Admin routes
+		// Admin routes (with optional authentication)
 		admin := v1.Group("/admin")
+		admin.Use(middleware.AdminAuth(cfg.AdminAuthConfig))
 		{
 			// Job routes
 			admin.GET("/jobs", listJobs(postgresDB))
@@ -131,6 +132,9 @@ func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Ne
 			admin.GET("/bulk-jobs/:id", getBulkSearchResults(postgresDB))
 			admin.POST("/bulk-jobs", createBulkJob(postgresDB, workerManager))
 			admin.GET("/bulk-jobs/:id/offers", getBulkSearchOffers(postgresDB))
+			admin.POST("/price-graph-sweeps", enqueuePriceGraphSweep(postgresDB, workerManager.GetScheduler()))
+			admin.GET("/price-graph-sweeps", listPriceGraphSweeps(postgresDB))
+			admin.GET("/price-graph-sweeps/:id", getPriceGraphSweepResults(postgresDB))
 			admin.GET("/jobs/:id", getJobById(postgresDB))
 			admin.PUT("/jobs/:id", updateJob(postgresDB, workerManager))
 			admin.DELETE("/jobs/:id", DeleteJob(postgresDB, workerManager))
@@ -143,6 +147,18 @@ func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Ne
 			// Worker and queue status
 			admin.GET("/workers", GetWorkerStatus(workerManager))
 			admin.GET("/queue", GetQueueStatus(queue))
+
+			// Continuous sweep endpoints
+			admin.GET("/continuous-sweep/status", getContinuousSweepStatus(workerManager))
+			admin.POST("/continuous-sweep/start", startContinuousSweep(workerManager, postgresDB, cfg))
+			admin.POST("/continuous-sweep/stop", stopContinuousSweep(workerManager))
+			admin.POST("/continuous-sweep/pause", pauseContinuousSweep(workerManager))
+			admin.POST("/continuous-sweep/resume", resumeContinuousSweep(workerManager))
+			admin.PUT("/continuous-sweep/config", updateContinuousSweepConfig(workerManager))
+			admin.POST("/continuous-sweep/skip", skipCurrentRoute(workerManager))
+			admin.POST("/continuous-sweep/restart", restartCurrentSweep(workerManager))
+			admin.GET("/continuous-sweep/stats", getContinuousSweepStats(postgresDB))
+			admin.GET("/continuous-sweep/results", getContinuousSweepResults(postgresDB))
 		}
 	}
 
@@ -168,5 +184,6 @@ func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Ne
 	router.Static("/admin", "./web/admin")
 	router.Static("/search", "./web/search")
 	router.Static("/bulk-search", "./web/bulk-search")
+	router.StaticFile("/search.js", "./web/search/search.js")
 	router.StaticFile("/", "./web/index.html")
 }

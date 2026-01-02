@@ -22,7 +22,7 @@ COPY . .
 RUN mkdir -p web templates static tls
 
 # Build the API binary
-RUN go build -trimpath -ldflags="-s -w" -o /out/flight-api ./
+RUN GOVULN_DISABLE=1 go build -trimpath -ldflags="-s -w" -o /out/flight-api ./
 
 ###############################################
 # Runtime stage
@@ -39,6 +39,10 @@ COPY --from=builder /src/web /app/web
 COPY --from=builder /src/templates /app/templates
 COPY --from=builder /src/static /app/static
 COPY --from=builder /src/tls /app/tls
+
+# Health check for container orchestration
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD ["/app/flight-api", "-health-check"] || exit 1
 
 EXPOSE 8080
 ENTRYPOINT ["/app/flight-api"]

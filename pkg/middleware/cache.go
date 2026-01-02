@@ -76,6 +76,7 @@ func ResponseCache(cacheManager *cache.CacheManager, config CacheConfig) gin.Han
 			c.Header("X-Cache", "HIT")
 
 			c.Data(cachedResponse.StatusCode, cachedResponse.ContentType, cachedResponse.Body)
+			c.Abort() // stop remaining handlers from executing
 			return
 		}
 

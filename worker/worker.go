@@ -134,6 +134,26 @@ type BulkSearchPayload struct {
 	JobID             int `json:"job_id,omitempty"`
 }
 
+// PriceGraphSweepPayload defines the data needed to execute a price graph sweep
+type PriceGraphSweepPayload struct {
+	SweepID           int       `json:"sweep_id,omitempty"`
+	JobID             int       `json:"job_id,omitempty"`
+	Origins           []string  `json:"origins"`
+	Destinations      []string  `json:"destinations"`
+	DepartureDateFrom time.Time `json:"departure_date_from"`
+	DepartureDateTo   time.Time `json:"departure_date_to"`
+	TripLengths       []int     `json:"trip_lengths,omitempty"`
+	TripType          string    `json:"trip_type"`
+	Class             string    `json:"class"`
+	Stops             string    `json:"stops"`
+	Adults            int       `json:"adults"`
+	Children          int       `json:"children"`
+	InfantsLap        int       `json:"infants_lap"`
+	InfantsSeat       int       `json:"infants_seat"`
+	Currency          string    `json:"currency"`
+	RateLimitMillis   int       `json:"rate_limit_millis,omitempty"`
+}
+
 // StoreFlightOffers stores flight offers in the database (Exported for testing)
 func (w *Worker) StoreFlightOffers(ctx context.Context, payload FlightSearchPayload, offers []flights.FullOffer, priceRange *flights.PriceRange) error {
 	// Begin a transaction using the interface method

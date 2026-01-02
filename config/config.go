@@ -12,14 +12,27 @@ import (
 // Config holds all application configuration
 type Config struct {
 	Port              string
+	HTTPBindAddr      string
+	APIEnabled        bool
 	Environment       string
 	LoggingConfig     LoggingConfig
 	PostgresConfig    PostgresConfig
 	Neo4jConfig       Neo4jConfig
 	RedisConfig       RedisConfig
 	WorkerConfig      WorkerConfig
+	FlightConfig      FlightConfig
 	LetsEncryptConfig LetsEncryptConfig
+	NTFYConfig        NTFYConfig
+	AdminAuthConfig   AdminAuthConfig
 	WorkerEnabled     bool
+	InitSchema        bool
+	SeedNeo4j         bool
+}
+
+// FlightConfig holds flight search configuration
+type FlightConfig struct {
+	ExcludedAirlines []string // Airline codes to exclude from results (e.g., NK, G4, F9)
+	TopNDeals        int      // Number of top deals to fetch full itineraries for
 }
 
 // LoggingConfig holds logging configuration
@@ -73,11 +86,34 @@ type RedisConfig struct {
 
 // WorkerConfig holds worker configuration
 type WorkerConfig struct {
-	Concurrency     int
-	MaxRetries      int
-	RetryDelay      time.Duration
-	JobTimeout      time.Duration
-	ShutdownTimeout time.Duration
+	Concurrency        int
+	MaxRetries         int
+	RetryDelay         time.Duration
+	JobTimeout         time.Duration
+	ShutdownTimeout    time.Duration
+	SchedulerLockTTL   time.Duration
+	SchedulerLockRenew time.Duration
+	SchedulerLockKey   string
+}
+
+// NTFYConfig holds NTFY push notification configuration
+type NTFYConfig struct {
+	ServerURL      string
+	Topic          string
+	Username       string
+	Password       string
+	Enabled        bool
+	StallThreshold time.Duration
+	ErrorThreshold int
+	ErrorWindow    time.Duration
+}
+
+// AdminAuthConfig holds admin authentication configuration
+type AdminAuthConfig struct {
+	Enabled  bool
+	Username string
+	Password string
+	Token    string // Alternative: Bearer token auth
 }
 
 // Load loads configuration from environment variables
@@ -86,8 +122,20 @@ func Load() (*Config, error) {
 	_ = godotenv.Load(".env")
 
 	port := getEnv("PORT", "8080")
+	httpBindAddr := getEnv("HTTP_BIND_ADDR", "")
 	environment := getEnv("ENVIRONMENT", "development")
+	apiEnabled, _ := strconv.ParseBool(getEnv("API_ENABLED", "true"))
 	workerEnabled, _ := strconv.ParseBool(getEnv("WORKER_ENABLED", "true"))
+
+	// NOTE: InitSchema is destructive (drops tables). Default to false in production to avoid data loss.
+	initSchemaDefault := "true"
+	seedNeo4jDefault := "true"
+	if strings.ToLower(environment) == "production" {
+		initSchemaDefault = "false"
+		seedNeo4jDefault = "false"
+	}
+	initSchema, _ := strconv.ParseBool(getEnv("INIT_SCHEMA", initSchemaDefault))
+	seedNeo4j, _ := strconv.ParseBool(getEnv("SEED_NEO4J", seedNeo4jDefault))
 
 	loggingConfig := LoggingConfig{
 		Level:  getEnv("LOG_LEVEL", "info"),
@@ -138,24 +186,84 @@ func Load() (*Config, error) {
 	retryDelay, _ := time.ParseDuration(getEnv("WORKER_RETRY_DELAY", "30s"))
 	jobTimeout, _ := time.ParseDuration(getEnv("WORKER_JOB_TIMEOUT", "10m"))
 	shutdownTimeout, _ := time.ParseDuration(getEnv("WORKER_SHUTDOWN_TIMEOUT", "30s"))
+	schedulerLockTTL, _ := time.ParseDuration(getEnv("SCHEDULER_LOCK_TTL", "30s"))
+	schedulerLockRenew, _ := time.ParseDuration(getEnv("SCHEDULER_LOCK_RENEW", "10s"))
+	schedulerLockKey := getEnv("SCHEDULER_LOCK_KEY", "scheduler:leader")
 
 	workerConfig := WorkerConfig{
-		Concurrency:     concurrency,
-		MaxRetries:      maxRetries,
-		RetryDelay:      retryDelay,
-		JobTimeout:      jobTimeout,
-		ShutdownTimeout: shutdownTimeout,
+		Concurrency:        concurrency,
+		MaxRetries:         maxRetries,
+		RetryDelay:         retryDelay,
+		JobTimeout:         jobTimeout,
+		ShutdownTimeout:    shutdownTimeout,
+		SchedulerLockTTL:   schedulerLockTTL,
+		SchedulerLockRenew: schedulerLockRenew,
+		SchedulerLockKey:   schedulerLockKey,
+	}
+
+	// NTFY notification config
+	ntfyEnabled, _ := strconv.ParseBool(getEnv("NTFY_ENABLED", "false"))
+	ntfyErrorThreshold, _ := strconv.Atoi(getEnv("NTFY_ERROR_THRESHOLD", "10"))
+	ntfyStallThreshold, _ := time.ParseDuration(getEnv("NTFY_STALL_THRESHOLD", "15m"))
+	ntfyErrorWindow, _ := time.ParseDuration(getEnv("NTFY_ERROR_WINDOW", "5m"))
+
+	ntfyConfig := NTFYConfig{
+		ServerURL:      getEnv("NTFY_SERVER_URL", "https://ntfy.sh"),
+		Topic:          getEnv("NTFY_TOPIC", ""),
+		Username:       getEnv("NTFY_USERNAME", ""),
+		Password:       getEnv("NTFY_PASSWORD", ""),
+		Enabled:        ntfyEnabled,
+		StallThreshold: ntfyStallThreshold,
+		ErrorThreshold: ntfyErrorThreshold,
+		ErrorWindow:    ntfyErrorWindow,
+	}
+
+	// Admin authentication config
+	adminAuthEnabled, _ := strconv.ParseBool(getEnv("ADMIN_AUTH_ENABLED", "false"))
+	adminAuthConfig := AdminAuthConfig{
+		Enabled:  adminAuthEnabled,
+		Username: getEnv("ADMIN_AUTH_USERNAME", ""),
+		Password: getEnv("ADMIN_AUTH_PASSWORD", ""),
+		Token:    getEnv("ADMIN_AUTH_TOKEN", ""),
+	}
+
+	// Flight search config
+	// Default excluded airlines: Spirit, Allegiant, Frontier, Sun Country, Avelo, Breeze
+	excludedAirlinesStr := getEnv("EXCLUDED_AIRLINES", "NK,G4,F9,SY,XP,MX")
+	excludedAirlines := []string{}
+	if excludedAirlinesStr != "" {
+		for _, code := range strings.Split(excludedAirlinesStr, ",") {
+			code = strings.TrimSpace(strings.ToUpper(code))
+			if code != "" {
+				excludedAirlines = append(excludedAirlines, code)
+			}
+		}
+	}
+	topNDeals, _ := strconv.Atoi(getEnv("TOP_N_DEALS", "3"))
+	if topNDeals < 1 {
+		topNDeals = 3
+	}
+	flightConfig := FlightConfig{
+		ExcludedAirlines: excludedAirlines,
+		TopNDeals:        topNDeals,
 	}
 
 	return &Config{
-		Port:           port,
-		Environment:    environment,
-		LoggingConfig:  loggingConfig,
-		PostgresConfig: postgresConfig,
-		Neo4jConfig:    neo4jConfig,
-		RedisConfig:    redisConfig,
-		WorkerConfig:   workerConfig,
-		WorkerEnabled:  workerEnabled,
+		Port:            port,
+		HTTPBindAddr:    httpBindAddr,
+		APIEnabled:      apiEnabled,
+		Environment:     environment,
+		LoggingConfig:   loggingConfig,
+		PostgresConfig:  postgresConfig,
+		Neo4jConfig:     neo4jConfig,
+		RedisConfig:     redisConfig,
+		WorkerConfig:    workerConfig,
+		FlightConfig:    flightConfig,
+		NTFYConfig:      ntfyConfig,
+		AdminAuthConfig: adminAuthConfig,
+		WorkerEnabled:   workerEnabled,
+		InitSchema:      initSchema,
+		SeedNeo4j:       seedNeo4j,
 	}, nil
 }
 

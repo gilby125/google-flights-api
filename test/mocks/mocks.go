@@ -3,11 +3,11 @@ package mocks
 import (
 	"context"
 
+	"errors"                                    // Added import
 	"github.com/gilby125/google-flights-api/db" // Added db import for Neo4jResult interface
 	"github.com/gilby125/google-flights-api/queue"
-	"errors" // Added import
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j" // Added neo4j import
-	"reflect" // Added for Scan simulation
+	"reflect"                                   // Added for Scan simulation
 
 	"github.com/stretchr/testify/mock"
 )
@@ -64,7 +64,6 @@ func (r *MockSqlRow) Scan(dest ...interface{}) error {
 
 // --- End MockSqlRow Helper ---
 
-
 // --- MockQueryRowScanner Helper ---
 
 // MockQueryRowScanner simulates a RowScanner for testing QueryRowContext(...).Scan(...)
@@ -98,7 +97,6 @@ func (m *MockQueryRowScanner) Scan(dest ...interface{}) error {
 var _ db.RowScanner = (*MockQueryRowScanner)(nil)
 
 // --- End MockQueryRowScanner Helper ---
-
 
 type Worker struct {
 	mock.Mock
@@ -183,9 +181,13 @@ func (m *MockNeo4jResult) Err() error {
 	return args.Error(0) // Allow overriding
 }
 
+func (m *MockNeo4jResult) Close() error {
+	args := m.Called()
+	return args.Error(0)
+}
+
 // Ensure MockNeo4jResult implements db.Neo4jResult
 var _ db.Neo4jResult = (*MockNeo4jResult)(nil)
-
 
 // MockNeo4jDB implements db.Neo4jDatabase
 type MockNeo4jDB struct {
@@ -233,7 +235,6 @@ func (m *MockNeo4jDB) InitSchema() error {
 
 // Ensure MockNeo4jDB implements db.Neo4jDatabase
 var _ db.Neo4jDatabase = (*MockNeo4jDB)(nil)
-
 
 // --- Queue Mock ---
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -18,6 +19,17 @@ import (
 )
 
 func main() {
+	// Handle health check flag before loading full config/logger
+	for _, arg := range os.Args[1:] {
+		if arg == "-health-check" {
+			resp, err := http.Get("http://localhost:8080/health")
+			if err != nil || resp.StatusCode != http.StatusOK {
+				os.Exit(1)
+			}
+			os.Exit(0)
+		}
+	}
+
 	// Load configuration first
 	cfg, err := config.Load()
 	if err != nil {
@@ -30,52 +42,100 @@ func main() {
 		Format: cfg.LoggingConfig.Format,
 	})
 
-	logger.Info("Starting Google Flights API server", 
+	logger.Info("Starting Google Flights API server",
 		"version", "1.0.0",
 		"environment", cfg.Environment,
-		"port", cfg.Port)
+		"port", cfg.Port,
+		"api_enabled", cfg.APIEnabled,
+		"http_bind_addr", cfg.HTTPBindAddr,
+		"worker_enabled", cfg.WorkerEnabled)
 
 	logger.Info("Configuration loaded successfully")
 
-	// Initialize database connections
-	logger.Info("Connecting to databases...")
-	postgresDB, err := db.NewPostgresDB(cfg.PostgresConfig)
-	if err != nil {
-		logger.Fatal(err, "Failed to connect to PostgreSQL", "host", cfg.PostgresConfig.Host)
+	if cfg.Environment == "production" && cfg.InitSchema {
+		logger.Warn("INIT_SCHEMA is enabled in production; InitSchema drops tables and will wipe data", "init_schema", cfg.InitSchema)
+	}
+
+	// Initialize database connections with retries
+	var postgresDB db.PostgresDB
+	var neo4jDB *db.Neo4jDB
+	var redisQueue *queue.RedisQueue
+
+	maxRetries := 10
+	retryDelay := 5 * time.Second
+
+	logger.Info("Connecting to databases (with retries)...")
+
+	for i := 0; i < maxRetries; i++ {
+		var pErr, nErr, rErr error
+
+		if postgresDB == nil {
+			postgresDB, pErr = db.NewPostgresDB(cfg.PostgresConfig)
+			if pErr != nil {
+				logger.Warn("Failed to connect to PostgreSQL, retrying...", "error", pErr, "attempt", i+1)
+			}
+		}
+
+		if neo4jDB == nil {
+			neo4jDB, nErr = db.NewNeo4jDB(cfg.Neo4jConfig)
+			if nErr != nil {
+				logger.Warn("Failed to connect to Neo4j, retrying...", "error", nErr, "attempt", i+1)
+			}
+		}
+
+		if redisQueue == nil {
+			redisQueue, rErr = queue.NewRedisQueue(cfg.RedisConfig)
+			if rErr != nil {
+				logger.Warn("Failed to connect to Redis, retrying...", "error", rErr, "attempt", i+1)
+			}
+		}
+
+		if pErr == nil && nErr == nil && rErr == nil {
+			logger.Info("All database connections established successfully")
+			break
+		}
+
+		if i == maxRetries-1 {
+			logger.Fatal(fmt.Errorf("db connection timeout"), "All database connection attempts failed")
+		}
+
+		time.Sleep(retryDelay)
 	}
 	defer postgresDB.Close()
-
-	neo4jDB, err := db.NewNeo4jDB(cfg.Neo4jConfig)
-	if err != nil {
-		logger.Fatal(err, "Failed to connect to Neo4j", "uri", cfg.Neo4jConfig.URI)
-	}
 	defer neo4jDB.Close()
 
 	// Initialize database schemas
-	logger.Info("Initializing database schemas...")
-	if err := postgresDB.InitSchema(); err != nil {
-		logger.Fatal(err, "Failed to initialize PostgreSQL schema")
-	}
+	if cfg.InitSchema {
+		logger.Info("Initializing database schemas...")
+		if err := postgresDB.InitSchema(); err != nil {
+			logger.Fatal(err, "Failed to initialize PostgreSQL schema")
+		}
 
-	if err := neo4jDB.InitSchema(); err != nil {
-		logger.Fatal(err, "Failed to initialize Neo4j schema")
+		if err := neo4jDB.InitSchema(); err != nil {
+			logger.Fatal(err, "Failed to initialize Neo4j schema")
+		}
+	} else {
+		logger.Info("Skipping schema initialization", "init_schema", cfg.InitSchema)
 	}
 
 	// Seed Neo4j with data from PostgreSQL
-	logger.Info("Seeding Neo4j database...")
-	if err := neo4jDB.SeedNeo4jData(context.Background(), &postgresDB); err != nil {
-		logger.Fatal(err, "Failed to seed Neo4j database")
+	if cfg.SeedNeo4j {
+		logger.Info("Seeding Neo4j database...")
+		if err := neo4jDB.SeedNeo4jData(context.Background(), postgresDB); err != nil {
+			logger.Fatal(err, "Failed to seed Neo4j database")
+		}
+	} else {
+		logger.Info("Skipping Neo4j seeding", "seed_neo4j", cfg.SeedNeo4j)
 	}
 
 	// Initialize queue
-	logger.Info("Connecting to Redis queue...")
-	queue, err := queue.NewRedisQueue(cfg.RedisConfig)
-	if err != nil {
-		logger.Fatal(err, "Failed to connect to Redis", "host", cfg.RedisConfig.Host)
-	}
+	// redisQueue already initialized in retry loop
 
-	// Initialize worker manager
-	workerManager := worker.NewManager(queue, postgresDB, neo4jDB, cfg.WorkerConfig)
+	// Get Redis client for leader election
+	redisClient := redisQueue.GetClient()
+
+	// Initialize worker manager with Redis client for distributed leader election
+	workerManager := worker.NewManager(redisQueue, redisClient, postgresDB, neo4jDB, cfg.WorkerConfig, cfg.FlightConfig)
 
 	// Start worker pool if enabled
 	if cfg.WorkerEnabled {
@@ -86,26 +146,36 @@ func main() {
 		logger.Info("Worker pool disabled")
 	}
 
-	// Initialize API router
-	router := gin.New() // Use gin.New() instead of gin.Default() to have full control over middleware
-	router.LoadHTMLGlob("templates/*html")
+	var srv *http.Server
+	if cfg.APIEnabled {
+		// Initialize API router
+		router := gin.New() // Use gin.New() instead of gin.Default() to have full control over middleware
+		router.LoadHTMLGlob("templates/*html")
 
-	// Register all API routes from the api package
-	api.RegisterRoutes(router, postgresDB, neo4jDB, queue, workerManager, cfg)
+		// Register all API routes from the api package
+		api.RegisterRoutes(router, postgresDB, neo4jDB, redisQueue, workerManager, cfg)
 
-	// Start HTTP server
-	srv := &http.Server{
-		Addr:    ":" + cfg.Port,
-		Handler: router,
-	}
-
-	// Start server in a goroutine
-	go func() {
-		logger.Info("HTTP server starting", "port", cfg.Port, "addr", srv.Addr)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Fatal(err, "Failed to start HTTP server")
+		addr := ":" + cfg.Port
+		if cfg.HTTPBindAddr != "" {
+			addr = cfg.HTTPBindAddr + ":" + cfg.Port
 		}
-	}()
+
+		// Start HTTP server
+		srv = &http.Server{
+			Addr:    addr,
+			Handler: router,
+		}
+
+		// Start server in a goroutine
+		go func() {
+			logger.Info("HTTP server starting", "addr", srv.Addr)
+			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				logger.Fatal(err, "Failed to start HTTP server")
+			}
+		}()
+	} else {
+		logger.Info("API server disabled", "api_enabled", cfg.APIEnabled)
+	}
 
 	// Wait for interrupt signal to gracefully shut down the server
 	quit := make(chan os.Signal, 1)
@@ -118,10 +188,11 @@ func main() {
 	defer cancel()
 
 	// Attempt graceful shutdown
-	if err := srv.Shutdown(ctx); err != nil {
-		logger.Fatal(err, "Server forced to shutdown")
+	if srv != nil {
+		if err := srv.Shutdown(ctx); err != nil {
+			logger.Fatal(err, "Server forced to shutdown")
+		}
 	}
 
-	logger.Info("Server exited gracefully")
+	logger.Info("Process exited gracefully")
 }
-

@@ -1,34 +1,31 @@
-# Repository Guidelines
+# Repository Guidelines for AI Agents
 
-## Project Structure & Module Organization
-- `flights/` is the reusable Go client; keep it dependency-light.
-- `api/`, `main/`, and `pkg/` expose HTTP handlers, CLI entry points, and shared utilities, while `worker/` and `queue/` coordinate background jobs.
-- UI assets: `web/`, `static/`, `templates/`; tests: `test/`; config and tooling: `config/`, `db/`, `scripts/`; infra manifests at the root and in `kubernetes/`.
+## Build & Test Commands
+- `go run ./main` - Start API server (use `--help` for flags)
+- `go test ./... -v` - Run all Go tests (or `./run_tests.sh`)
+- `go test -v ./path/to/file_test.go` - Run single test file
+- `go test ./... -coverprofile=coverage.out` - Generate coverage report
+- `npm test` - Run Playwright E2E tests (requires `npm install`)
+- `npm run test:headed` - Run Playwright with visible browser
+- `docker compose up -d --build` - Start full stack for integration testing
 
-## Build, Test, and Development Commands
-- `go run ./main` starts the API server (see `--help` for flags).
-- `go test ./...` or `./run_tests.sh` runs all Go unit and integration tests.
-- `npm install` (once) and `npm test` execute the Playwright suite; `npm run test:report` opens the report viewer.
-- `docker-compose up -d --build` spins up the full stack (API, Postgres, Neo4j, Redis, Traefik) for end-to-end checks.
+## Code Style & Conventions
+- Run `gofmt` or `goimports` on all Go sources before committing
+- Use standard Go error handling: `if err != nil { return fmt.Errorf("context: %w", err) }`
+- Name directories with `lower_snake_case`, files with `snake_case.go`
+- Co-locate tests as `<name>_test.go` using standard `testing` package
+- Use `testify` for assertions in tests, follow mock patterns in `test/mocks/`
+- Import groups: stdlib, third-party, local (separated by blank lines)
+- Read config from `config/config.go`; never hardcode secrets
 
-## Coding Style & Naming Conventions
-- Run `gofmt` or `goimports` before committing; stick to idiomatic Go names and keep receivers concise.
-- Align new folders with existing lower_snake_case conventions.
-- Playwright specs should follow Prettier defaults (2 spaces, single quotes) and use `<feature>.spec.ts` filenames.
-- Reference configuration via environment variables defined in `config/config.go`; never commit secrets.
+## Architecture Notes
+- `flights/` is the standalone client library (keep dependency-light)
+- HTTP handlers in `api/` use Gin framework, routes in `routes.go`
+- Background jobs: Redis queue (`queue/`) → workers (`worker/`) → databases
+- Dual storage: PostgreSQL for results, Neo4j for route graphs
+- All endpoints documented in `docs/API_CONTRACT.md`
 
-## Testing Guidelines
-- Co-locate Go tests as `<name>_test.go` using the standard `testing` package.
-- Seed integration data through `db/seed.go` or helper fixtures so CI stays deterministic.
-- Keep Playwright scenarios stable by resetting state within each test and avoid parallel mode unless selectors are isolated.
-
-## Commit & Pull Request Guidelines
-- Match the repo history: imperative subjects (`Fix retry handling`, `Add bulk search support`) with optional scopes like `fix:`.
-- Limit each commit to one logical change and document migrations, new env vars, or API tweaks in the body.
-- Pull requests should include context, test evidence (`go test`, `npm test`, screenshots for UI), and links to issues or tickets.
-- Highlight breaking changes, new ports, or credential steps so reviewers can plan deployment updates.
-
-## Security & Configuration Tips
-- Keep credentials in `.env` (git-ignored) or a secret manager and align defaults with `config/config.go`.
-- Rotate `DB_PASSWORD`, `NEO4J_PASSWORD`, and `REDIS_PASSWORD` when sharing environments, and avoid committing artifacts from `scripts/generate-tls-certs.sh`.
-- Recheck Traefik and Kubernetes settings before exposing routes to ensure HTTPS, auth, and rate limits stay enforced.
+## Testing Strategy
+- Unit tests in `test/unit/`, integration in `test/integration/`, E2E in `test/e2e/`
+- Use `skipUnlessIntegration(t)` for tests requiring external services
+- Reset Playwright state between tests, avoid parallel mode unless isolated

@@ -12,10 +12,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gilby125/google-flights-api/config"
 	"github.com/gilby125/google-flights-api/db"
 	"github.com/gilby125/google-flights-api/flights"
 	"github.com/gilby125/google-flights-api/pkg/cache"
 	"github.com/gilby125/google-flights-api/pkg/logger"
+	"github.com/gilby125/google-flights-api/pkg/notify"
 	"github.com/gilby125/google-flights-api/queue"
 	"github.com/gilby125/google-flights-api/worker"
 	"github.com/gin-gonic/gin"
@@ -24,39 +26,75 @@ import (
 	"golang.org/x/text/language"
 )
 
+const dateLayout = "2006-01-02"
+
+// DateOnly parses YYYY-MM-DD or RFC3339 timestamps into a date (time at midnight UTC)
+type DateOnly struct {
+	time.Time
+}
+
+// UnmarshalJSON accepts either YYYY-MM-DD or RFC3339 timestamps
+func (d *DateOnly) UnmarshalJSON(b []byte) error {
+	str := strings.Trim(string(b), "\"")
+	if str == "" || str == "null" {
+		d.Time = time.Time{}
+		return nil
+	}
+
+	layouts := []string{dateLayout, time.RFC3339}
+	var lastErr error
+	for _, layout := range layouts {
+		parsed, err := time.Parse(layout, str)
+		if err == nil {
+			d.Time = parsed
+			return nil
+		}
+		lastErr = err
+	}
+	return fmt.Errorf("invalid date format %q: %w", str, lastErr)
+}
+
+// MarshalJSON renders dates as YYYY-MM-DD; zero values emit null
+func (d DateOnly) MarshalJSON() ([]byte, error) {
+	if d.Time.IsZero() {
+		return []byte("null"), nil
+	}
+	return []byte(fmt.Sprintf("\"%s\"", d.Time.Format(dateLayout))), nil
+}
+
 // SearchRequest represents a flight search request
 type SearchRequest struct {
-	Origin        string    `json:"origin" binding:"required"`
-	Destination   string    `json:"destination" binding:"required"`
-	DepartureDate time.Time `json:"departure_date" binding:"required"`
-	ReturnDate    time.Time `json:"return_date,omitempty"`
-	Adults        int       `json:"adults" binding:"required,min=1"`
-	Children      int       `json:"children" binding:"min=0"`
-	InfantsLap    int       `json:"infants_lap" binding:"min=0"`
-	InfantsSeat   int       `json:"infants_seat" binding:"min=0"`
-	TripType      string    `json:"trip_type" binding:"required,oneof=one_way round_trip"`
-	Class         string    `json:"class" binding:"required,oneof=economy premium_economy business first"`
-	Stops         string    `json:"stops" binding:"required,oneof=nonstop one_stop two_stops two_stops_plus any"` // Added two_stops_plus
-	Currency      string    `json:"currency" binding:"required,len=3"`
+	Origin        string   `json:"origin" binding:"required"`
+	Destination   string   `json:"destination" binding:"required"`
+	DepartureDate DateOnly `json:"departure_date" binding:"required"`
+	ReturnDate    DateOnly `json:"return_date,omitempty"`
+	Adults        int      `json:"adults" binding:"required,min=1"`
+	Children      int      `json:"children" binding:"min=0"`
+	InfantsLap    int      `json:"infants_lap" binding:"min=0"`
+	InfantsSeat   int      `json:"infants_seat" binding:"min=0"`
+	TripType      string   `json:"trip_type" binding:"required,oneof=one_way round_trip"`
+	Class         string   `json:"class" binding:"required,oneof=economy premium_economy business first"`
+	Stops         string   `json:"stops" binding:"required,oneof=nonstop one_stop two_stops two_stops_plus any"` // Added two_stops_plus
+	Currency      string   `json:"currency" binding:"required,len=3"`
 }
 
 // BulkSearchRequest represents a bulk flight search request
 type BulkSearchRequest struct {
-	Origins           []string  `json:"origins" binding:"required,min=1"`
-	Destinations      []string  `json:"destinations" binding:"required,min=1"`
-	DepartureDateFrom time.Time `json:"departure_date_from" binding:"required"`
-	DepartureDateTo   time.Time `json:"departure_date_to" binding:"required"`
-	ReturnDateFrom    time.Time `json:"return_date_from,omitempty"`
-	ReturnDateTo      time.Time `json:"return_date_to,omitempty"`
-	TripLength        int       `json:"trip_length,omitempty" binding:"min=0"`
-	Adults            int       `json:"adults" binding:"required,min=1"`
-	Children          int       `json:"children" binding:"min=0"`
-	InfantsLap        int       `json:"infants_lap" binding:"min=0"`
-	InfantsSeat       int       `json:"infants_seat" binding:"min=0"`
-	TripType          string    `json:"trip_type" binding:"required,oneof=one_way round_trip"`
-	Class             string    `json:"class" binding:"required,oneof=economy premium_economy business first"`
-	Stops             string    `json:"stops" binding:"required,oneof=nonstop one_stop two_stops any"`
-	Currency          string    `json:"currency" binding:"required,len=3"`
+	Origins           []string `json:"origins" binding:"required,min=1"`
+	Destinations      []string `json:"destinations" binding:"required,min=1"`
+	DepartureDateFrom DateOnly `json:"departure_date_from" binding:"required"`
+	DepartureDateTo   DateOnly `json:"departure_date_to" binding:"required"`
+	ReturnDateFrom    DateOnly `json:"return_date_from,omitempty"`
+	ReturnDateTo      DateOnly `json:"return_date_to,omitempty"`
+	TripLength        int      `json:"trip_length,omitempty" binding:"min=0"`
+	Adults            int      `json:"adults" binding:"required,min=1"`
+	Children          int      `json:"children" binding:"min=0"`
+	InfantsLap        int      `json:"infants_lap" binding:"min=0"`
+	InfantsSeat       int      `json:"infants_seat" binding:"min=0"`
+	TripType          string   `json:"trip_type" binding:"required,oneof=one_way round_trip"`
+	Class             string   `json:"class" binding:"required,oneof=economy premium_economy business first"`
+	Stops             string   `json:"stops" binding:"required,oneof=nonstop one_stop two_stops two_stops_plus any"`
+	Currency          string   `json:"currency" binding:"required,len=3"`
 }
 
 // JobRequest represents a scheduled job request
@@ -78,7 +116,7 @@ type JobRequest struct {
 	InfantsSeat       int    `json:"infants_seat" binding:"min=0"`
 	TripType          string `json:"trip_type" binding:"required,oneof=one_way round_trip"`
 	Class             string `json:"class" binding:"required,oneof=economy premium_economy business first"`
-	Stops             string `json:"stops" binding:"required,oneof=nonstop one_stop two_stops any"`
+	Stops             string `json:"stops" binding:"required,oneof=nonstop one_stop two_stops two_stops_plus any"`
 	Currency          string `json:"currency" binding:"required,len=3"`
 	Interval          string `json:"interval" binding:"required"`
 	Time              string `json:"time" binding:"required"`
@@ -104,9 +142,41 @@ type BulkJobRequest struct {
 	InfantsSeat       int      `json:"infants_seat" binding:"min=0"`
 	TripType          string   `json:"trip_type" binding:"required,oneof=one_way round_trip"`
 	Class             string   `json:"class" binding:"required,oneof=economy premium_economy business first"`
-	Stops             string   `json:"stops" binding:"required,oneof=nonstop one_stop two_stops any"`
+	Stops             string   `json:"stops" binding:"required,oneof=nonstop one_stop two_stops two_stops_plus any"`
 	Currency          string   `json:"currency" binding:"required,len=3"`
 	CronExpression    string   `json:"cron_expression" binding:"required"`
+}
+
+// PriceGraphSweepRequest represents a request to enqueue a price graph sweep
+type PriceGraphSweepRequest struct {
+	Origins           []string `json:"origins" binding:"required,min=1"`
+	Destinations      []string `json:"destinations" binding:"required,min=1"`
+	DepartureDateFrom DateOnly `json:"departure_date_from" binding:"required"`
+	DepartureDateTo   DateOnly `json:"departure_date_to" binding:"required"`
+	TripLengths       []int    `json:"trip_lengths,omitempty"`
+	TripType          string   `json:"trip_type" binding:"required,oneof=one_way round_trip"`
+	Class             string   `json:"class" binding:"required,oneof=economy premium_economy business first"`
+	Stops             string   `json:"stops" binding:"required,oneof=nonstop one_stop two_stops two_stops_plus any"`
+	Adults            int      `json:"adults" binding:"required,min=1"`
+	Children          int      `json:"children" binding:"min=0"`
+	InfantsLap        int      `json:"infants_lap" binding:"min=0"`
+	InfantsSeat       int      `json:"infants_seat" binding:"min=0"`
+	Currency          string   `json:"currency" binding:"required,len=3"`
+	RateLimitMillis   int      `json:"rate_limit_millis,omitempty" binding:"min=0"`
+}
+
+func maybeNullInt(value sql.NullInt32) interface{} {
+	if !value.Valid {
+		return nil
+	}
+	return value.Int32
+}
+
+func maybeNullTime(value sql.NullTime) interface{} {
+	if !value.Valid {
+		return nil
+	}
+	return value.Time
 }
 
 // getAirports returns a handler for getting all airports
@@ -114,7 +184,7 @@ func GetAirports(pgDB db.PostgresDB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		rows, err := pgDB.QueryAirports(c.Request.Context())
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query airports: " + err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query airports"})
 			return
 		}
 		defer rows.Close()
@@ -123,13 +193,13 @@ func GetAirports(pgDB db.PostgresDB) gin.HandlerFunc {
 		for rows.Next() {
 			var airport db.Airport
 			if err := rows.Scan(&airport.Code, &airport.Name, &airport.City, &airport.Country, &airport.Latitude, &airport.Longitude); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scan airport row: " + err.Error()})
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scan airport row"})
 				return
 			}
 			airports = append(airports, airport)
 		}
 		if err := rows.Err(); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error iterating airport rows: " + err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error iterating airport rows"})
 			return
 		}
 
@@ -190,7 +260,7 @@ func GetAirlines(pgDB db.PostgresDB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		rows, err := pgDB.QueryAirlines(c.Request.Context())
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query airlines: " + err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query airlines"})
 			return
 		}
 		defer rows.Close()
@@ -199,13 +269,13 @@ func GetAirlines(pgDB db.PostgresDB) gin.HandlerFunc {
 		for rows.Next() {
 			var airline db.Airline
 			if err := rows.Scan(&airline.Code, &airline.Name, &airline.Country); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scan airline row: " + err.Error()})
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scan airline row"})
 				return
 			}
 			airlines = append(airlines, airline)
 		}
 		if err := rows.Err(); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error iterating airline rows: " + err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error iterating airline rows"})
 			return
 		}
 
@@ -252,7 +322,7 @@ func CreateSearch(q queue.Queue) gin.HandlerFunc {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "Return date is required for round trips"})
 				return
 			}
-			if !req.ReturnDate.After(req.DepartureDate) {
+			if !req.ReturnDate.Time.After(req.DepartureDate.Time) {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "Return date must be after departure date"})
 				return
 			}
@@ -264,7 +334,7 @@ func CreateSearch(q queue.Queue) gin.HandlerFunc {
 				return
 			}
 			// Ensure ReturnDate is zeroed in the payload for one-way
-			req.ReturnDate = time.Time{}
+			req.ReturnDate = DateOnly{}
 		}
 		// --- End Custom Validation ---
 
@@ -272,8 +342,8 @@ func CreateSearch(q queue.Queue) gin.HandlerFunc {
 		payload := worker.FlightSearchPayload{
 			Origin:        req.Origin,
 			Destination:   req.Destination,
-			DepartureDate: req.DepartureDate,
-			ReturnDate:    req.ReturnDate, // Correctly zeroed for one-way
+			DepartureDate: req.DepartureDate.Time,
+			ReturnDate:    req.ReturnDate.Time, // Correctly zeroed for one-way
 			Adults:        req.Adults,
 			Children:      req.Children,
 			InfantsLap:    req.InfantsLap,
@@ -317,7 +387,7 @@ func GetSearchByID(pgDB db.PostgresDB) gin.HandlerFunc {
 			if strings.Contains(err.Error(), "not found") {
 				c.JSON(http.StatusNotFound, gin.H{"error": "Search not found"})
 			} else {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get search query: " + err.Error()})
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get search query"})
 			}
 			return
 		}
@@ -325,7 +395,7 @@ func GetSearchByID(pgDB db.PostgresDB) gin.HandlerFunc {
 		// Get the flight offers
 		offerRows, err := pgDB.GetFlightOffersBySearchID(c.Request.Context(), searchID)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get flight offers: " + err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get flight offers"})
 			return
 		}
 		defer offerRows.Close()
@@ -341,10 +411,9 @@ func GetSearchByID(pgDB db.PostgresDB) gin.HandlerFunc {
 			// Get the flight segments for this offer
 			segmentRows, err := pgDB.GetFlightSegmentsByOfferID(c.Request.Context(), offer.ID)
 			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get flight segments: " + err.Error()})
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get flight segments"})
 				return
 			}
-			defer segmentRows.Close()
 
 			segments := []db.FlightSegment{} // Use the defined struct
 			for segmentRows.Next() {
@@ -354,13 +423,16 @@ func GetSearchByID(pgDB db.PostgresDB) gin.HandlerFunc {
 					&segment.ArrivalAirport, &segment.DepartureTime, &segment.ArrivalTime,
 					&segment.Duration, &segment.Airplane, &segment.Legroom, &segment.IsReturn,
 				); err != nil {
-					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scan flight segment: " + err.Error()})
+					segmentRows.Close()
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scan flight segment"})
 					return
 				}
 				segments = append(segments, segment)
 			}
-			if err := segmentRows.Err(); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Error iterating flight segments: " + err.Error()})
+			segmentErr := segmentRows.Err()
+			segmentRows.Close() // Close immediately after use, not via defer
+			if segmentErr != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Error iterating flight segments"})
 				return
 			}
 
@@ -499,16 +571,17 @@ func DeleteJob(pgDB db.PostgresDB, workerManager *worker.Manager) gin.HandlerFun
 		defer tx.Rollback() // Ensure rollback on error
 
 		// Delete the job details
-		err = pgDB.DeleteJobDetailsByJobID(tx, jobID)
+		ctx := c.Request.Context()
+		err = pgDB.DeleteJobDetailsByJobID(ctx, tx, jobID)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete job details: " + err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete job details"})
 			return
 		}
 
 		// Delete the job
-		rowsAffected, err := pgDB.DeleteScheduledJobByID(tx, jobID)
+		rowsAffected, err := pgDB.DeleteScheduledJobByID(ctx, tx, jobID)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete scheduled job: " + err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete scheduled job"})
 			return
 		}
 
@@ -702,7 +775,7 @@ func getBulkSearchById(pgDB db.PostgresDB) gin.HandlerFunc { // Changed paramete
 			if strings.Contains(err.Error(), "not found") {
 				c.JSON(http.StatusNotFound, gin.H{"error": "Bulk search not found"})
 			} else {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get bulk search metadata: " + err.Error()})
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get bulk search metadata"})
 			}
 			return
 		}
@@ -720,7 +793,7 @@ func getBulkSearchById(pgDB db.PostgresDB) gin.HandlerFunc { // Changed paramete
 
 		rows, err := pgDB.QueryBulkSearchResultsPaginated(c.Request.Context(), searchID, perPage, offset)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query bulk search results: " + err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query bulk search results"})
 			return
 		}
 		defer rows.Close()
@@ -807,17 +880,13 @@ func getPriceHistory(neo4jDB db.Neo4jDatabase) gin.HandlerFunc {
 
 		result, err := neo4jDB.ExecuteReadQuery(ctx, query, params)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query price history: " + err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query price history"})
 			return
 		}
-		// IMPORTANT: The underlying session for the result is still open.
-		// We need to process the result fully here.
+		defer result.Close() // Ensure session is closed when done
 
 		priceHistory := []map[string]interface{}{}
-		// Process the result using the db.Neo4jResult interface.
-		// NOTE: The underlying session for the result is still open after this loop.
-		// Proper session management requires refactoring db.ExecuteReadQuery or careful handling here.
-		for result.Next() { // Use Next() from db.Neo4jResult interface
+		for result.Next() {
 			record := result.Record()
 			date, _ := record.Get("date")
 			price, _ := record.Get("price")
@@ -836,12 +905,10 @@ func getPriceHistory(neo4jDB db.Neo4jDatabase) gin.HandlerFunc {
 				"airline": airline,
 			})
 		}
-		// Check for errors after the loop using the result interface
 		if err = result.Err(); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error processing price history results: " + err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error processing price history results"})
 			return
 		}
-		// Session associated with 'result' is likely still open here.
 
 		c.JSON(http.StatusOK, gin.H{
 			"origin":      origin,
@@ -1000,6 +1067,226 @@ func listBulkSearches(pgDB db.PostgresDB) gin.HandlerFunc {
 	}
 }
 
+// enqueuePriceGraphSweep enqueues a price graph sweep job for execution
+func enqueuePriceGraphSweep(pgDB db.PostgresDB, scheduler *worker.Scheduler) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if scheduler == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Price graph scheduler unavailable"})
+			return
+		}
+
+		var req PriceGraphSweepRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		if req.DepartureDateFrom.Time.After(req.DepartureDateTo.Time) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "departure_date_from must be before departure_date_to"})
+			return
+		}
+
+		stops := req.Stops
+		if stops == "two_stops_plus" {
+			stops = "any"
+		}
+
+		payload := worker.PriceGraphSweepPayload{
+			Origins:           req.Origins,
+			Destinations:      req.Destinations,
+			DepartureDateFrom: req.DepartureDateFrom.Time,
+			DepartureDateTo:   req.DepartureDateTo.Time,
+			TripLengths:       req.TripLengths,
+			TripType:          req.TripType,
+			Class:             req.Class,
+			Stops:             stops,
+			Adults:            req.Adults,
+			Children:          req.Children,
+			InfantsLap:        req.InfantsLap,
+			InfantsSeat:       req.InfantsSeat,
+			Currency:          strings.ToUpper(req.Currency),
+			RateLimitMillis:   req.RateLimitMillis,
+		}
+
+		ctx := c.Request.Context()
+		sweepID, err := scheduler.EnqueuePriceGraphSweep(ctx, payload)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to enqueue price graph sweep: " + err.Error()})
+			return
+		}
+
+		sweep, err := pgDB.GetPriceGraphSweepByID(ctx, sweepID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch sweep metadata: " + err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusAccepted, gin.H{
+			"message":  "Price graph sweep enqueued",
+			"sweep_id": sweepID,
+			"sweep": map[string]interface{}{
+				"id":                sweep.ID,
+				"status":            sweep.Status,
+				"origin_count":      sweep.OriginCount,
+				"destination_count": sweep.DestinationCount,
+				"trip_length_min":   maybeNullInt(sweep.TripLengthMin),
+				"trip_length_max":   maybeNullInt(sweep.TripLengthMax),
+				"currency":          sweep.Currency,
+				"created_at":        sweep.CreatedAt,
+				"updated_at":        sweep.UpdatedAt,
+				"started_at":        maybeNullTime(sweep.StartedAt),
+				"completed_at":      maybeNullTime(sweep.CompletedAt),
+				"error_count":       sweep.ErrorCount,
+			},
+		})
+	}
+}
+
+// listPriceGraphSweeps lists price graph sweep runs
+func listPriceGraphSweeps(pgDB db.PostgresDB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+		offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+
+		rows, err := pgDB.ListPriceGraphSweeps(c.Request.Context(), limit, offset)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list price graph sweeps: " + err.Error()})
+			return
+		}
+		defer rows.Close()
+
+		results := make([]map[string]interface{}, 0)
+		for rows.Next() {
+			var sweep db.PriceGraphSweep
+			if err := rows.Scan(&sweep.ID, &sweep.JobID, &sweep.Status, &sweep.OriginCount, &sweep.DestinationCount,
+				&sweep.TripLengthMin, &sweep.TripLengthMax, &sweep.Currency, &sweep.ErrorCount,
+				&sweep.CreatedAt, &sweep.UpdatedAt, &sweep.StartedAt, &sweep.CompletedAt); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scan price graph sweep: " + err.Error()})
+				return
+			}
+
+			entry := map[string]interface{}{
+				"id":                sweep.ID,
+				"status":            sweep.Status,
+				"origin_count":      sweep.OriginCount,
+				"destination_count": sweep.DestinationCount,
+				"trip_length_min":   maybeNullInt(sweep.TripLengthMin),
+				"trip_length_max":   maybeNullInt(sweep.TripLengthMax),
+				"currency":          sweep.Currency,
+				"error_count":       sweep.ErrorCount,
+				"created_at":        sweep.CreatedAt,
+				"updated_at":        sweep.UpdatedAt,
+				"started_at":        maybeNullTime(sweep.StartedAt),
+				"completed_at":      maybeNullTime(sweep.CompletedAt),
+			}
+			if sweep.JobID.Valid {
+				entry["job_id"] = sweep.JobID.Int32
+			}
+			results = append(results, entry)
+		}
+		if err := rows.Err(); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error iterating sweeps: " + err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"items": results,
+			"count": len(results),
+		})
+	}
+}
+
+// getPriceGraphSweepResults returns stored price graph results for a sweep
+func getPriceGraphSweepResults(pgDB db.PostgresDB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		sweepID, err := strconv.Atoi(c.Param("id"))
+		if err != nil || sweepID <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid sweep ID"})
+			return
+		}
+
+		ctx := c.Request.Context()
+		summary, err := pgDB.GetPriceGraphSweepByID(ctx, sweepID)
+		if err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				c.JSON(http.StatusNotFound, gin.H{"error": "Price graph sweep not found"})
+			} else {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load sweep metadata: " + err.Error()})
+			}
+			return
+		}
+
+		limit, _ := strconv.Atoi(c.DefaultQuery("limit", "100"))
+		offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+
+		rows, err := pgDB.ListPriceGraphResults(ctx, sweepID, limit, offset)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list sweep results: " + err.Error()})
+			return
+		}
+		defer rows.Close()
+
+		results := make([]map[string]interface{}, 0)
+		for rows.Next() {
+			var (
+				id          int
+				sid         int
+				origin      string
+				destination string
+				departure   time.Time
+				returnDate  sql.NullTime
+				tripLength  sql.NullInt32
+				price       float64
+				currency    string
+				queriedAt   time.Time
+				createdAt   time.Time
+			)
+
+			if err := rows.Scan(&id, &sid, &origin, &destination, &departure, &returnDate, &tripLength, &price, &currency, &queriedAt, &createdAt); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scan result: " + err.Error()})
+				return
+			}
+
+			entry := map[string]interface{}{
+				"id":             id,
+				"sweep_id":       sid,
+				"origin":         origin,
+				"destination":    destination,
+				"departure_date": departure,
+				"return_date":    maybeNullTime(returnDate),
+				"trip_length":    maybeNullInt(tripLength),
+				"price":          price,
+				"currency":       currency,
+				"queried_at":     queriedAt,
+				"created_at":     createdAt,
+			}
+			results = append(results, entry)
+		}
+		if err := rows.Err(); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error iterating results: " + err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"sweep": map[string]interface{}{
+				"id":                summary.ID,
+				"status":            summary.Status,
+				"origin_count":      summary.OriginCount,
+				"destination_count": summary.DestinationCount,
+				"trip_length_min":   maybeNullInt(summary.TripLengthMin),
+				"trip_length_max":   maybeNullInt(summary.TripLengthMax),
+				"currency":          summary.Currency,
+				"error_count":       summary.ErrorCount,
+				"created_at":        summary.CreatedAt,
+				"updated_at":        summary.UpdatedAt,
+				"started_at":        maybeNullTime(summary.StartedAt),
+				"completed_at":      maybeNullTime(summary.CompletedAt),
+			},
+			"results": results,
+			"count":   len(results),
+		})
+	}
+}
+
 // getBulkSearchResults returns a handler that fetches summary and results for a bulk search
 func getBulkSearchResults(pgDB db.PostgresDB) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -1025,7 +1312,7 @@ func getBulkSearchResults(pgDB db.PostgresDB) gin.HandlerFunc {
 
 		rows, err := pgDB.QueryBulkSearchResultsPaginated(c.Request.Context(), bulkID, limit, offset)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query bulk search results: " + err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query bulk search results"})
 			return
 		}
 		defer rows.Close()
@@ -1178,11 +1465,34 @@ func getBulkSearchOffers(pgDB db.PostgresDB) gin.HandlerFunc {
 		if offset < 0 {
 			offset = 0
 		}
+		sortBy := c.DefaultQuery("sort_by", "price")
 
 		offers, err := pgDB.ListBulkSearchOffers(c.Request.Context(), bulkID)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load bulk search offers: " + err.Error()})
 			return
+		}
+
+		// Sort offers based on sort_by parameter
+		switch sortBy {
+		case "cost_per_mile":
+			sort.Slice(offers, func(i, j int) bool {
+				// Offers without cost_per_mile go to the end
+				if !offers[i].CostPerMile.Valid && !offers[j].CostPerMile.Valid {
+					return offers[i].Price < offers[j].Price // fallback to price
+				}
+				if !offers[i].CostPerMile.Valid {
+					return false
+				}
+				if !offers[j].CostPerMile.Valid {
+					return true
+				}
+				return offers[i].CostPerMile.Float64 < offers[j].CostPerMile.Float64
+			})
+		default: // "price" or any other value defaults to price sorting
+			sort.Slice(offers, func(i, j int) bool {
+				return offers[i].Price < offers[j].Price
+			})
 		}
 
 		total := len(offers)
@@ -1232,6 +1542,12 @@ func getBulkSearchOffers(pgDB db.PostgresDB) gin.HandlerFunc {
 			}
 			if offer.ReturnFlightDuration.Valid {
 				entry["return_flight_duration"] = offer.ReturnFlightDuration.Int32
+			}
+			if offer.DistanceMiles.Valid {
+				entry["distance_miles"] = offer.DistanceMiles.Float64
+			}
+			if offer.CostPerMile.Valid {
+				entry["cost_per_mile"] = offer.CostPerMile.Float64
 			}
 			if len(offer.OutboundFlights) > 0 {
 				entry["outbound_flights"] = json.RawMessage(offer.OutboundFlights)
@@ -1412,9 +1728,10 @@ func createJob(pgDB db.PostgresDB, workerManager *worker.Manager) gin.HandlerFun
 		// TODO: Add more robust cron expression validation if needed (e.g., using a library)
 
 		// Insert the job
-		jobID, err := pgDB.CreateScheduledJob(tx, req.Name, req.CronExpression, true) // Assume enabled by default
+		ctx := c.Request.Context()
+		jobID, err := pgDB.CreateScheduledJob(ctx, tx, req.Name, req.CronExpression, true) // Assume enabled by default
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create scheduled job: " + err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create scheduled job"})
 			return
 		}
 
@@ -1454,10 +1771,10 @@ func createJob(pgDB db.PostgresDB, workerManager *worker.Manager) gin.HandlerFun
 		// Insert the job details
 		log.Printf("Creating job details for job ID %d: origin=%s, destination=%s, dynamic_dates=%v",
 			jobID, req.Origin, req.Destination, req.DynamicDates)
-		err = pgDB.CreateJobDetails(tx, details)
+		err = pgDB.CreateJobDetails(ctx, tx, details)
 		if err != nil {
 			log.Printf("Failed to create job details: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create job details: " + err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create job details"})
 			return
 		}
 		log.Printf("Successfully created job details for job ID %d", jobID)
@@ -1513,10 +1830,10 @@ func CreateBulkSearch(q queue.Queue, pgDB db.PostgresDB) gin.HandlerFunc {
 		payload := worker.BulkSearchPayload{
 			Origins:           req.Origins,
 			Destinations:      req.Destinations,
-			DepartureDateFrom: req.DepartureDateFrom,
-			DepartureDateTo:   req.DepartureDateTo,
-			ReturnDateFrom:    req.ReturnDateFrom,
-			ReturnDateTo:      req.ReturnDateTo,
+			DepartureDateFrom: req.DepartureDateFrom.Time,
+			DepartureDateTo:   req.DepartureDateTo.Time,
+			ReturnDateFrom:    req.ReturnDateFrom.Time,
+			ReturnDateTo:      req.ReturnDateTo.Time,
 			TripLength:        req.TripLength,
 			Adults:            req.Adults,
 			Children:          req.Children,
@@ -1592,17 +1909,18 @@ func updateJob(pgDB db.PostgresDB, workerManager *worker.Manager) gin.HandlerFun
 		}
 
 		// Begin a transaction
-		tx, err := pgDB.BeginTx(c.Request.Context())
+		ctx := c.Request.Context()
+		tx, err := pgDB.BeginTx(ctx)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to begin transaction: " + err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to begin transaction"})
 			return
 		}
 		defer tx.Rollback() // Ensure rollback on error
 
 		// Update the job
-		err = pgDB.UpdateScheduledJob(tx, jobID, req.Name, req.CronExpression)
+		err = pgDB.UpdateScheduledJob(ctx, tx, jobID, req.Name, req.CronExpression)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update scheduled job: " + err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update scheduled job"})
 			return
 		}
 
@@ -1633,9 +1951,9 @@ func updateJob(pgDB db.PostgresDB, workerManager *worker.Manager) gin.HandlerFun
 		}
 
 		// Update the job details
-		err = pgDB.UpdateJobDetails(tx, jobID, details)
+		err = pgDB.UpdateJobDetails(ctx, tx, jobID, details)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update job details: " + err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update job details"})
 			return
 		}
 
@@ -2132,17 +2450,18 @@ func createBulkJob(pgDB db.PostgresDB, workerManager *worker.Manager) gin.Handle
 				jobName := fmt.Sprintf("%s: %s→%s", req.Name, origin, destination)
 
 				// Begin transaction for each job
-				tx, err := pgDB.BeginTx(c.Request.Context())
+				ctx := c.Request.Context()
+				tx, err := pgDB.BeginTx(ctx)
 				if err != nil {
-					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to begin transaction: " + err.Error()})
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to begin transaction"})
 					return
 				}
 
 				// Create the scheduled job
-				jobID, err := pgDB.CreateScheduledJob(tx, jobName, req.CronExpression, true)
+				jobID, err := pgDB.CreateScheduledJob(ctx, tx, jobName, req.CronExpression, true)
 				if err != nil {
 					tx.Rollback()
-					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create scheduled job: " + err.Error()})
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create scheduled job"})
 					return
 				}
 
@@ -2184,9 +2503,9 @@ func createBulkJob(pgDB db.PostgresDB, workerManager *worker.Manager) gin.Handle
 					Currency:           req.Currency,
 				}
 
-				if err := pgDB.CreateJobDetails(tx, details); err != nil {
+				if err := pgDB.CreateJobDetails(ctx, tx, details); err != nil {
 					tx.Rollback()
-					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create job details: " + err.Error()})
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create job details"})
 					return
 				}
 
@@ -2227,4 +2546,385 @@ func createBulkJob(pgDB db.PostgresDB, workerManager *worker.Manager) gin.Handle
 // WorkerStatusProvider exposes worker status metrics for the admin API.
 type WorkerStatusProvider interface {
 	WorkerStatuses() []worker.WorkerStatus
+}
+
+// --- Continuous Sweep Handlers ---
+
+// SweepConfigRequest represents a request to update sweep configuration
+type SweepConfigRequest struct {
+	PacingMode          string `json:"pacing_mode,omitempty"`
+	TargetDurationHours int    `json:"target_duration_hours,omitempty"`
+	MinDelayMs          int    `json:"min_delay_ms,omitempty"`
+}
+
+// getContinuousSweepStatus returns the current status of the continuous sweep
+func getContinuousSweepStatus(workerManager *worker.Manager) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		runner := workerManager.GetSweepRunner()
+		if runner == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"error":   "Continuous sweep runner not initialized",
+				"message": "The sweep runner has not been configured. Start the sweep first.",
+			})
+			return
+		}
+
+		status := runner.GetStatus()
+		c.JSON(http.StatusOK, status)
+	}
+}
+
+// startContinuousSweep starts the continuous sweep process
+func startContinuousSweep(workerManager *worker.Manager, pgDB db.PostgresDB, cfg *config.Config) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		runner := workerManager.GetSweepRunner()
+
+		// If no runner exists, create one with default config
+		if runner == nil {
+			// Get a flight session from the manager's cache
+			session, err := getOrCreateSession(workerManager)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create flight session: " + err.Error()})
+				return
+			}
+
+			// Create NTFY client for notifications
+			var notifier *notify.NTFYClient
+			if cfg.NTFYConfig.Enabled && cfg.NTFYConfig.Topic != "" {
+				notifier = notify.NewNTFYClient(notify.NTFYConfig{
+					ServerURL:       cfg.NTFYConfig.ServerURL,
+					Topic:           cfg.NTFYConfig.Topic,
+					Username:        cfg.NTFYConfig.Username,
+					Password:        cfg.NTFYConfig.Password,
+					Enabled:         cfg.NTFYConfig.Enabled,
+					StallThreshold:  cfg.NTFYConfig.StallThreshold,
+					ErrorThreshold:  cfg.NTFYConfig.ErrorThreshold,
+					ErrorWindow:     cfg.NTFYConfig.ErrorWindow,
+					DefaultPriority: notify.PriorityDefault,
+				})
+			}
+
+			sweepConfig := worker.DefaultContinuousSweepConfig()
+			runner = worker.NewContinuousSweepRunner(pgDB, session, notifier, sweepConfig)
+			workerManager.SetSweepRunner(runner)
+		}
+
+		// Start the sweep
+		if err := runner.Start(); err != nil {
+			c.JSON(http.StatusConflict, gin.H{"error": "Sweep already running"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"message": "Continuous sweep started",
+			"status":  runner.GetStatus(),
+		})
+	}
+}
+
+// stopContinuousSweep stops the continuous sweep process
+func stopContinuousSweep(workerManager *worker.Manager) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		runner := workerManager.GetSweepRunner()
+		if runner == nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Continuous sweep runner not initialized"})
+			return
+		}
+
+		runner.Stop()
+		c.JSON(http.StatusOK, gin.H{
+			"message": "Continuous sweep stopped",
+			"status":  runner.GetStatus(),
+		})
+	}
+}
+
+// pauseContinuousSweep pauses the continuous sweep process
+func pauseContinuousSweep(workerManager *worker.Manager) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		runner := workerManager.GetSweepRunner()
+		if runner == nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Continuous sweep runner not initialized"})
+			return
+		}
+
+		runner.Pause()
+		c.JSON(http.StatusOK, gin.H{
+			"message": "Continuous sweep paused",
+			"status":  runner.GetStatus(),
+		})
+	}
+}
+
+// resumeContinuousSweep resumes the continuous sweep process
+func resumeContinuousSweep(workerManager *worker.Manager) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		runner := workerManager.GetSweepRunner()
+		if runner == nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Continuous sweep runner not initialized"})
+			return
+		}
+
+		runner.Resume()
+		c.JSON(http.StatusOK, gin.H{
+			"message": "Continuous sweep resumed",
+			"status":  runner.GetStatus(),
+		})
+	}
+}
+
+// updateContinuousSweepConfig updates the sweep configuration
+func updateContinuousSweepConfig(workerManager *worker.Manager) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		runner := workerManager.GetSweepRunner()
+		if runner == nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Continuous sweep runner not initialized"})
+			return
+		}
+
+		var req SweepConfigRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
+			return
+		}
+
+		// Get current config and update fields
+		currentStatus := runner.GetStatus()
+		newConfig := worker.ContinuousSweepConfig{
+			TripLengths:         []int{7, 14},
+			DepartureWindowDays: 30,
+			Class:               "economy",
+			Stops:               "any",
+			Adults:              1,
+			Currency:            "USD",
+			InternationalOnly:   true,
+		}
+
+		// Apply updates
+		if req.PacingMode != "" {
+			if req.PacingMode == "adaptive" {
+				newConfig.PacingMode = worker.PacingModeAdaptive
+			} else if req.PacingMode == "fixed" {
+				newConfig.PacingMode = worker.PacingModeFixed
+			} else {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid pacing_mode. Use 'adaptive' or 'fixed'"})
+				return
+			}
+		} else {
+			newConfig.PacingMode = worker.PacingMode(currentStatus.PacingMode)
+		}
+
+		if req.TargetDurationHours > 0 {
+			newConfig.TargetDurationHours = req.TargetDurationHours
+		} else {
+			newConfig.TargetDurationHours = currentStatus.TargetDurationHours
+		}
+
+		if req.MinDelayMs > 0 {
+			newConfig.MinDelayMs = req.MinDelayMs
+		} else {
+			newConfig.MinDelayMs = currentStatus.CurrentDelayMs
+		}
+
+		runner.SetConfig(newConfig)
+
+		c.JSON(http.StatusOK, gin.H{
+			"message": "Sweep configuration updated",
+			"status":  runner.GetStatus(),
+		})
+	}
+}
+
+// skipCurrentRoute skips the current route in the sweep
+func skipCurrentRoute(workerManager *worker.Manager) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		runner := workerManager.GetSweepRunner()
+		if runner == nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Continuous sweep runner not initialized"})
+			return
+		}
+
+		runner.SkipRoute()
+		c.JSON(http.StatusOK, gin.H{
+			"message": "Route skipped",
+			"status":  runner.GetStatus(),
+		})
+	}
+}
+
+// restartCurrentSweep restarts the current sweep from the beginning
+func restartCurrentSweep(workerManager *worker.Manager) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		runner := workerManager.GetSweepRunner()
+		if runner == nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Continuous sweep runner not initialized"})
+			return
+		}
+
+		runner.RestartSweep()
+		c.JSON(http.StatusOK, gin.H{
+			"message": "Sweep restarted from beginning",
+			"status":  runner.GetStatus(),
+		})
+	}
+}
+
+// ContinuousSweepStatsResponse is the JSON-friendly response for sweep stats
+type ContinuousSweepStatsResponse struct {
+	ID                   int        `json:"id"`
+	SweepNumber          int        `json:"sweep_number"`
+	StartedAt            time.Time  `json:"started_at"`
+	CompletedAt          *time.Time `json:"completed_at,omitempty"`
+	TotalRoutes          int        `json:"total_routes"`
+	SuccessfulQueries    int        `json:"successful_queries"`
+	FailedQueries        int        `json:"failed_queries"`
+	TotalDurationSeconds *int       `json:"total_duration_seconds,omitempty"`
+	AvgDelayMs           *int       `json:"avg_delay_ms,omitempty"`
+	MinPriceFound        *float64   `json:"min_price_found,omitempty"`
+	MaxPriceFound        *float64   `json:"max_price_found,omitempty"`
+	CreatedAt            time.Time  `json:"created_at"`
+}
+
+// convertSweepStats converts db.ContinuousSweepStats to JSON-friendly response
+func convertSweepStats(stats []db.ContinuousSweepStats) []ContinuousSweepStatsResponse {
+	result := make([]ContinuousSweepStatsResponse, len(stats))
+	for i, s := range stats {
+		result[i] = ContinuousSweepStatsResponse{
+			ID:                s.ID,
+			SweepNumber:       s.SweepNumber,
+			StartedAt:         s.StartedAt,
+			TotalRoutes:       s.TotalRoutes,
+			SuccessfulQueries: s.SuccessfulQueries,
+			FailedQueries:     s.FailedQueries,
+			CreatedAt:         s.CreatedAt,
+		}
+		if s.CompletedAt.Valid {
+			result[i].CompletedAt = &s.CompletedAt.Time
+		}
+		if s.TotalDurationSeconds.Valid {
+			dur := int(s.TotalDurationSeconds.Int32)
+			result[i].TotalDurationSeconds = &dur
+		}
+		if s.AvgDelayMs.Valid {
+			delay := int(s.AvgDelayMs.Int32)
+			result[i].AvgDelayMs = &delay
+		}
+		if s.MinPriceFound.Valid {
+			result[i].MinPriceFound = &s.MinPriceFound.Float64
+		}
+		if s.MaxPriceFound.Valid {
+			result[i].MaxPriceFound = &s.MaxPriceFound.Float64
+		}
+	}
+	return result
+}
+
+// getContinuousSweepStats returns historical sweep statistics
+func getContinuousSweepStats(pgDB db.PostgresDB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
+		if limit <= 0 || limit > 100 {
+			limit = 10
+		}
+
+		stats, err := pgDB.ListContinuousSweepStats(c.Request.Context(), limit)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch sweep stats"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"stats": convertSweepStats(stats),
+			"count": len(stats),
+		})
+	}
+}
+
+// ContinuousSweepResultResponse is the JSON-friendly response for sweep results
+type ContinuousSweepResultResponse struct {
+	Origin        string     `json:"origin"`
+	Destination   string     `json:"destination"`
+	DepartureDate time.Time  `json:"departure_date"`
+	ReturnDate    *time.Time `json:"return_date,omitempty"`
+	TripLength    *int       `json:"trip_length,omitempty"`
+	Price         float64    `json:"price"`
+	Currency      string     `json:"currency"`
+	QueriedAt     time.Time  `json:"queried_at"`
+}
+
+// convertSweepResults converts db.PriceGraphResultRecord to JSON-friendly response
+func convertSweepResults(results []db.PriceGraphResultRecord) []ContinuousSweepResultResponse {
+	resp := make([]ContinuousSweepResultResponse, len(results))
+	for i, r := range results {
+		resp[i] = ContinuousSweepResultResponse{
+			Origin:        r.Origin,
+			Destination:   r.Destination,
+			DepartureDate: r.DepartureDate,
+			Price:         r.Price,
+			Currency:      r.Currency,
+			QueriedAt:     r.QueriedAt,
+		}
+		if r.ReturnDate.Valid {
+			resp[i].ReturnDate = &r.ReturnDate.Time
+		}
+		if r.TripLength.Valid {
+			tripLen := int(r.TripLength.Int32)
+			resp[i].TripLength = &tripLen
+		}
+	}
+	return resp
+}
+
+// getContinuousSweepResults returns price graph results from continuous sweeps
+func getContinuousSweepResults(pgDB db.PostgresDB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		limit, _ := strconv.Atoi(c.DefaultQuery("limit", "100"))
+		offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+
+		filters := db.ContinuousSweepResultsFilter{
+			Origin:      c.Query("origin"),
+			Destination: c.Query("destination"),
+			Limit:       limit,
+			Offset:      offset,
+		}
+
+		// Parse date filters
+		if from := c.Query("from"); from != "" {
+			if t, err := time.Parse("2006-01-02", from); err == nil {
+				filters.FromDate = t
+			}
+		}
+		if to := c.Query("to"); to != "" {
+			if t, err := time.Parse("2006-01-02", to); err == nil {
+				filters.ToDate = t
+			}
+		}
+
+		results, err := pgDB.ListContinuousSweepResults(c.Request.Context(), filters)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch sweep results"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"results": convertSweepResults(results),
+			"count":   len(results),
+			"filters": gin.H{
+				"origin":      filters.Origin,
+				"destination": filters.Destination,
+				"from":        filters.FromDate,
+				"to":          filters.ToDate,
+			},
+		})
+	}
+}
+
+// getOrCreateSession gets an existing flight session from the manager or creates a new one
+func getOrCreateSession(m *worker.Manager) (*flights.Session, error) {
+	// Create a new session
+	session, err := flights.New()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create flights session: %w", err)
+	}
+	return session, nil
 }

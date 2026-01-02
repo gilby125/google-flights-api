@@ -468,3 +468,8 @@ func (q *RedisQueue) completedKey(queueName string) string {
 func (q *RedisQueue) failedKey(queueName string) string {
 	return fmt.Sprintf("queue:%s:failed", queueName)
 }
+
+// GetClient returns the underlying Redis client for advanced operations like distributed locking
+func (q *RedisQueue) GetClient() *redis.Client {
+	return q.client
+}

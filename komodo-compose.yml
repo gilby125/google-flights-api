@@ -1,0 +1,105 @@
+services:
+  api:
+    image: ghcr.io/gilby125/flight-api:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      PORT: 8080
+      ENVIRONMENT: production
+      API_ENABLED: ${API_ENABLED:-true}
+      WORKER_ENABLED: ${WORKER_ENABLED:-true}
+      # WARNING: INIT_SCHEMA drops tables (destructive). Use true only on first boot of a fresh DB.
+      INIT_SCHEMA: ${INIT_SCHEMA:-false}
+      SEED_NEO4J: ${SEED_NEO4J:-false}
+      # DB Connectivity (Internal)
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: flights
+      # IMPORTANT: If you already have an initialized pgdata volume, changing DB_PASSWORD here
+      # will NOT change the existing database user's password. Either keep DB_PASSWORD the same
+      # as when pgdata was first created, ALTER USER in Postgres, or wipe the volume.
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      DB_NAME: flights
+      DB_SSLMODE: disable
+      # Redis Connectivity (Internal)
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      # Neo4j Connectivity (Internal)
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:?NEO4J_PASSWORD is required}
+    depends_on:
+      - postgres
+      - redis
+      - neo4j
+    ports:
+      - "8088:8080"
+    healthcheck:
+      test: ["CMD", "/app/flight-api", "-health-check"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - default
+      - komodo_default
+    labels:
+      - "traefik.enable=true"
+      - 'traefik.http.routers.flights-api.rule=Host(`${DOMAIN:-flights.local}`)'
+      # For Komodo/Traefik: set TRAEFIK_ENTRYPOINTS=websecure and TRAEFIK_TLS=true for HTTPS.
+      - "traefik.http.routers.flights-api.entrypoints=${TRAEFIK_ENTRYPOINTS:-web}"
+      - "traefik.http.routers.flights-api.tls=${TRAEFIK_TLS:-false}"
+      - "traefik.http.services.flights-api.loadbalancer.server.port=8080"
+      - "traefik.docker.network=komodo_default"
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: flights
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      POSTGRES_DB: flights
+    # NOTE: If pgdata already exists with a different password, update it in-place:
+    #   docker compose -f komodo-compose.yml exec postgres psql -U flights -d postgres -c "ALTER USER flights WITH PASSWORD '<new>';"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flights"]
+      interval: 10s
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - default
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD is required}", "--save", "60", "1"]
+    volumes:
+      - redisdata:/data
+    restart: unless-stopped
+    networks:
+      - default
+
+  neo4j:
+    image: neo4j:5
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?NEO4J_PASSWORD is required}
+      NEO4J_ACCEPT_LICENSE_AGREEMENT: "yes"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:7474 || exit 1"]
+      interval: 15s
+    volumes:
+      - neo4jdata:/data
+    restart: unless-stopped
+    networks:
+      - default
+
+networks:
+  default:
+  komodo_default:
+    external: true
+
+volumes:
+  pgdata:
+  redisdata:
+  neo4jdata:

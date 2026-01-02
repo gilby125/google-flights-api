@@ -44,24 +44,24 @@ func (p *PostgresDBImpl) SeedData() error {
 
 // seedAirports seeds the airports table with common airports
 func (p *PostgresDBImpl) seedAirports() error {
-    // ... (keep existing airport seeding implementation unchanged)
+	// ... (keep existing airport seeding implementation unchanged)
 	return nil // Added missing return
 }
 
 // seedAirlines seeds the airlines table with common airlines
 func (p *PostgresDBImpl) seedAirlines() error {
-    // ... (keep existing airline seeding implementation unchanged)
+	// ... (keep existing airline seeding implementation unchanged)
 	return nil // Added missing return
 }
 
 // SeedNeo4jData seeds the Neo4j database with initial data and relationships
-func (n *Neo4jDB) SeedNeo4jData(ctx context.Context, postgresDB *PostgresDB) error {
-    // ... (keep existing neo4j implementation unchanged)
+func (n *Neo4jDB) SeedNeo4jData(ctx context.Context, postgresDB PostgresDB) error {
+	// ... (keep existing neo4j implementation unchanged)
 	return nil // Added missing return
 }
 
 // CreateFlightRoute creates a directed flight route relationship with properties
 func (n *Neo4jDB) CreateFlightRoute(originCode, destCode, airlineCode string, distance int) error {
-    // ... (keep existing implementation unchanged)
+	// ... (keep existing implementation unchanged)
 	return nil // Added missing return
 }

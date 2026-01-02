@@ -12,12 +12,15 @@ coverage.out
 # Dependency directories
 vendor/
 /node_modules/
-
+.gocache/
+.gomodcache/
+.gopath/
 # Environment files
 *.env
 .env.local
 .env.development
 .env.production
+.env.*
 
 # MCP configuration (contains secrets)
 .mcp.json
@@ -49,4 +52,5 @@ tls/ca-*
 !PROGRESS.md
 !AGENTS.md
 !docs/*.md
+!KOMODO_DEPLOYMENT_RULES.md
 planning.md

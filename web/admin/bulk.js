@@ -14,6 +14,7 @@ const bulkElements = {
     resultCurrencyFilter: document.getElementById('resultCurrencyFilter'),
     summary: document.getElementById('bulkSummary'),
     refreshBtn: document.getElementById('refreshBulkBtn'),
+    saveBulkJobBtn: document.getElementById('saveBulkJobBtn'),
 };
 
 let bulkRuns = [];
@@ -33,6 +34,9 @@ let resultsCurrencyFilter = '';
 async function initBulkPage() {
     if (bulkElements.refreshBtn) {
         bulkElements.refreshBtn.addEventListener('click', loadBulkRuns);
+    }
+    if (bulkElements.saveBulkJobBtn) {
+        bulkElements.saveBulkJobBtn.addEventListener('click', submitBulkJob);
     }
     if (bulkElements.runFilterInput) {
         bulkElements.runFilterInput.addEventListener('input', event => {
@@ -67,6 +71,142 @@ async function initBulkPage() {
     }
 
     await loadBulkRuns();
+}
+
+function showAlert(message, type = 'info') {
+    const alertDiv = document.createElement('div');
+    alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
+    alertDiv.setAttribute('role', 'alert');
+    alertDiv.innerHTML = `
+        <div>${message}</div>
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    `;
+
+    const main = document.querySelector('main');
+    if (main) {
+        main.insertBefore(alertDiv, main.firstChild);
+    } else {
+        document.body.insertBefore(alertDiv, document.body.firstChild);
+    }
+
+    setTimeout(() => {
+        alertDiv.classList.remove('show');
+        setTimeout(() => alertDiv.remove(), 150);
+    }, 6000);
+}
+
+function parseAirportList(input) {
+    return input
+        .split(/[\n,]/)
+        .map(code => code.trim().toUpperCase())
+        .filter(code => code.length > 0);
+}
+
+function buildCronExpression(interval, timeValue) {
+    if (!timeValue) return '0 12 * * *';
+    const [hour, minute] = timeValue.split(':');
+    switch (interval) {
+        case 'weekly':
+            return `${minute} ${hour} * * 1`;
+        case 'monthly':
+            return `${minute} ${hour} 1 * *`;
+        case 'daily':
+        default:
+            return `${minute} ${hour} * * *`;
+    }
+}
+
+function updateBulkCronPreview() {
+    const intervalInput = document.getElementById('bulkInterval');
+    const timeInput = document.getElementById('bulkTime');
+    const preview = document.getElementById('bulkCronPreview');
+    if (!intervalInput || !timeInput || !preview) return;
+    preview.textContent = buildCronExpression(intervalInput.value, timeInput.value);
+}
+
+async function submitBulkJob() {
+    const form = document.getElementById('newBulkJobForm');
+    if (!form) return;
+    if (!form.checkValidity()) {
+        form.reportValidity();
+        return;
+    }
+
+    const payload = {
+        name: document.getElementById('bulkJobName')?.value?.trim(),
+        origins: parseAirportList(document.getElementById('bulkOrigins')?.value || ''),
+        destinations: parseAirportList(document.getElementById('bulkDestinations')?.value || ''),
+        date_start: document.getElementById('bulkDateStart')?.value,
+        date_end: document.getElementById('bulkDateEnd')?.value,
+        return_date_start: document.getElementById('bulkReturnDateStart')?.value || '',
+        return_date_end: document.getElementById('bulkReturnDateEnd')?.value || '',
+        trip_length: parseInt(document.getElementById('bulkTripLength')?.value || '0', 10),
+        adults: parseInt(document.getElementById('bulkAdults')?.value || '1', 10),
+        children: parseInt(document.getElementById('bulkChildren')?.value || '0', 10),
+        infants_lap: parseInt(document.getElementById('bulkInfantsLap')?.value || '0', 10),
+        infants_seat: parseInt(document.getElementById('bulkInfantsSeat')?.value || '0', 10),
+        trip_type: document.getElementById('bulkTripType')?.value || 'round_trip',
+        class: document.getElementById('bulkClass')?.value || 'economy',
+        stops: document.getElementById('bulkStops')?.value || 'any',
+        currency: document.getElementById('bulkCurrency')?.value || 'USD',
+    };
+
+    const interval = document.getElementById('bulkInterval')?.value || 'daily';
+    const timeValue = document.getElementById('bulkTime')?.value || '12:00';
+    payload.cron_expression = buildCronExpression(interval, timeValue);
+
+    if (!payload.name) {
+        showAlert('Job name is required.', 'warning');
+        return;
+    }
+    if (!payload.origins.length || !payload.destinations.length) {
+        showAlert('At least one origin and destination are required.', 'warning');
+        return;
+    }
+
+    const btn = bulkElements.saveBulkJobBtn;
+    if (btn) {
+        btn.disabled = true;
+        btn.dataset.originalText = btn.dataset.originalText || btn.textContent;
+        btn.textContent = 'Saving...';
+    }
+
+    try {
+        const response = await fetch(`${API_BASE}/bulk-jobs`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+
+        const responseText = await response.text();
+        let responseBody = {};
+        try {
+            responseBody = JSON.parse(responseText);
+        } catch (_) {
+            responseBody = { raw: responseText };
+        }
+
+        if (!response.ok) {
+            throw new Error(responseBody?.error || `HTTP ${response.status}`);
+        }
+
+        showAlert(responseBody?.message || 'Bulk job scheduled.', 'success');
+
+        const modalEl = document.getElementById('newBulkJobModal');
+        if (modalEl && window.bootstrap?.Modal) {
+            const instance = window.bootstrap.Modal.getInstance(modalEl) || new window.bootstrap.Modal(modalEl);
+            instance.hide();
+        }
+
+        await loadBulkRuns();
+    } catch (err) {
+        showAlert(`Failed to schedule bulk job: ${err.message}`, 'danger');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = btn.dataset.originalText || 'Save Bulk Job';
+        }
+    }
 }
 
 function updateRunsSort(field) {
@@ -243,6 +383,15 @@ async function loadBulkResults(runId) {
         currentRunId = null;
     }
 }
+
+document.addEventListener('DOMContentLoaded', () => {
+    initBulkPage();
+    const intervalInput = document.getElementById('bulkInterval');
+    const timeInput = document.getElementById('bulkTime');
+    if (intervalInput) intervalInput.addEventListener('change', updateBulkCronPreview);
+    if (timeInput) timeInput.addEventListener('change', updateBulkCronPreview);
+    updateBulkCronPreview();
+});
 
 async function loadBulkOffers(runId) {
     if (!bulkElements.offersTable) {
@@ -520,5 +669,3 @@ function compareDates(a, b) {
     const dateB = b ? new Date(b).getTime() : 0;
     return dateA - dateB;
 }
-
-document.addEventListener('DOMContentLoaded', initBulkPage);

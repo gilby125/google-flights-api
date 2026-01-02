@@ -15,7 +15,10 @@ import (
 	"github.com/gilby125/google-flights-api/config"
 	"github.com/gilby125/google-flights-api/db"
 	"github.com/gilby125/google-flights-api/flights"
+	"github.com/gilby125/google-flights-api/iata"
+	"github.com/gilby125/google-flights-api/pkg/geo"
 	"github.com/gilby125/google-flights-api/queue"
+	"github.com/redis/go-redis/v9"
 	"golang.org/x/text/currency"
 	"golang.org/x/text/language"
 )
@@ -91,6 +94,24 @@ func timeToNullTime(t time.Time) sql.NullTime {
 	return sql.NullTime{Time: t, Valid: true}
 }
 
+// calculateDistanceAndCostPerMile returns distance in miles and cost per mile for a route.
+// Uses IATA airport coordinates for calculation. Returns null values if coordinates are unavailable.
+func calculateDistanceAndCostPerMile(origin, destination string, price float64) (sql.NullFloat64, sql.NullFloat64) {
+	originLoc := iata.IATATimeZone(origin)
+	destLoc := iata.IATATimeZone(destination)
+
+	// Check if we have valid coordinates (non-zero lat/lon)
+	if (originLoc.Lat == 0 && originLoc.Lon == 0) || (destLoc.Lat == 0 && destLoc.Lon == 0) {
+		return sql.NullFloat64{}, sql.NullFloat64{}
+	}
+
+	distance := geo.Haversine(originLoc.Lat, originLoc.Lon, destLoc.Lat, destLoc.Lon)
+	costPerMile := geo.CostPerMile(price, distance)
+
+	return sql.NullFloat64{Float64: distance, Valid: true},
+		sql.NullFloat64{Float64: costPerMile, Valid: true}
+}
+
 func flightsToJSON(flights []flights.Flight) []byte {
 	legs := make([]map[string]any, 0, len(flights))
 	for _, f := range flights {
@@ -160,34 +181,90 @@ type WorkerStatus struct {
 
 // Manager manages a pool of workers
 type Manager struct {
-	queue        queue.Queue
-	postgresDB   db.PostgresDB    // Changed type from pointer to interface
-	neo4jDB      db.Neo4jDatabase // Use the interface type
-	config       config.WorkerConfig
-	workers      []*Worker
-	stopChan     chan struct{}
-	workerWg     sync.WaitGroup
-	flightCache  map[string]*flights.Session
-	cacheMutex   sync.RWMutex
-	scheduler    *Scheduler
-	statsMutex   sync.RWMutex
-	workerStates []*workerState
+	queue         queue.Queue
+	postgresDB    db.PostgresDB    // Changed type from pointer to interface
+	neo4jDB       db.Neo4jDatabase // Use the interface type
+	config        config.WorkerConfig
+	flightConfig  config.FlightConfig
+	topNDeals     int
+	excludedSet   map[string]bool
+	workers       []*Worker
+	stopChan      chan struct{}
+	workerWg      sync.WaitGroup
+	flightCache   map[string]*flights.Session
+	cacheMutex    sync.RWMutex
+	scheduler     *Scheduler
+	statsMutex    sync.RWMutex
+	workerStates  []*workerState
+	leaderElector *LeaderElector
+	redisClient   *redis.Client
+	sweepRunner   *ContinuousSweepRunner
+	sweepMutex    sync.RWMutex // Protects sweepRunner access
 }
 
-// NewManager creates a new worker manager
-func NewManager(queue queue.Queue, postgresDB db.PostgresDB, neo4jDB db.Neo4jDatabase, config config.WorkerConfig) *Manager { // Changed neo4jDB parameter type to interface
+// NewManager creates a new worker manager.
+// If redisClient is provided, leader election is enabled for the scheduler.
+// If redisClient is nil, the scheduler runs on every instance (legacy behavior).
+func NewManager(queue queue.Queue, redisClient *redis.Client, postgresDB db.PostgresDB, neo4jDB db.Neo4jDatabase, workerConfig config.WorkerConfig, flightConfig config.FlightConfig) *Manager {
 	// Pass nil for Cronner to use the default cron instance
 	scheduler := NewScheduler(queue, postgresDB, nil)
-	return &Manager{
+
+	topNDeals := flightConfig.TopNDeals
+	if topNDeals <= 0 {
+		topNDeals = 3
+	}
+
+	excludedSet := make(map[string]bool, len(flightConfig.ExcludedAirlines))
+	for _, code := range flightConfig.ExcludedAirlines {
+		code = strings.TrimSpace(strings.ToUpper(code))
+		if code == "" {
+			continue
+		}
+		excludedSet[code] = true
+	}
+
+	m := &Manager{
 		queue:        queue,
-		postgresDB:   postgresDB, // Use unexported field name
-		neo4jDB:      neo4jDB,    // Use unexported field name
-		config:       config,
+		postgresDB:   postgresDB,
+		neo4jDB:      neo4jDB,
+		config:       workerConfig,
+		flightConfig: flightConfig,
+		topNDeals:    topNDeals,
+		excludedSet:  excludedSet,
 		stopChan:     make(chan struct{}),
 		flightCache:  make(map[string]*flights.Session),
 		scheduler:    scheduler,
-		workerStates: make([]*workerState, config.Concurrency),
+		workerStates: make([]*workerState, workerConfig.Concurrency),
+		redisClient:  redisClient,
 	}
+
+	// Create leader elector if Redis client is provided
+	if redisClient != nil {
+		m.leaderElector = NewLeaderElector(
+			redisClient,
+			workerConfig.SchedulerLockKey,
+			workerConfig.SchedulerLockTTL,
+			workerConfig.SchedulerLockRenew,
+			m.onBecomeLeader,
+			m.onLoseLeader,
+		)
+	}
+
+	return m
+}
+
+// onBecomeLeader is called when this instance becomes the scheduler leader.
+func (m *Manager) onBecomeLeader() {
+	log.Println("This instance became the scheduler leader - starting scheduler")
+	if err := m.scheduler.Start(); err != nil {
+		log.Printf("Failed to start scheduler after becoming leader: %v", err)
+	}
+}
+
+// onLoseLeader is called when this instance loses scheduler leadership.
+func (m *Manager) onLoseLeader() {
+	log.Println("This instance lost scheduler leadership - stopping scheduler")
+	m.scheduler.Stop()
 }
 
 // updateWorkerState applies the provided update function while holding the mutex.
@@ -239,7 +316,8 @@ func (m *Manager) WorkerStatuses() []WorkerStatus {
 	return statuses
 }
 
-// Start starts the worker pool and scheduler
+// Start starts the worker pool and scheduler.
+// If leader election is enabled, only the leader instance runs the scheduler.
 func (m *Manager) Start() {
 	log.Printf("Starting worker pool with %d workers", m.config.Concurrency)
 
@@ -255,7 +333,7 @@ func (m *Manager) Start() {
 	}
 	m.statsMutex.Unlock()
 
-	// Create and start workers
+	// Create and start workers (ALL instances run workers)
 	for i := 0; i < m.config.Concurrency; i++ {
 		worker := &Worker{
 			postgresDB: m.postgresDB,
@@ -267,15 +345,22 @@ func (m *Manager) Start() {
 		go m.runWorker(i, worker)
 	}
 
-	// Start the scheduler
-	if err := m.scheduler.Start(); err != nil {
-		log.Printf("Warning: Failed to start scheduler: %v", err)
+	// Start leader election if enabled, otherwise start scheduler directly
+	if m.leaderElector != nil {
+		m.leaderElector.Start()
+		log.Println("Leader election started - scheduler will run on leader instance only")
 	} else {
-		log.Println("Scheduler started successfully")
+		// Legacy behavior: start scheduler on every instance
+		if err := m.scheduler.Start(); err != nil {
+			log.Printf("Warning: Failed to start scheduler: %v", err)
+		} else {
+			log.Println("Scheduler started successfully (no leader election)")
+		}
 	}
 }
 
-// Stop stops the worker pool and scheduler
+// Stop stops the worker pool and scheduler.
+// If leader election is enabled, it releases leadership first.
 func (m *Manager) Stop() {
 	log.Println("Stopping worker pool and scheduler")
 
@@ -290,8 +375,13 @@ func (m *Manager) Stop() {
 	}
 	m.statsMutex.Unlock()
 
-	// Stop the scheduler
-	m.scheduler.Stop()
+	// Stop leader election first (releases lock and stops scheduler if leader)
+	if m.leaderElector != nil {
+		m.leaderElector.Stop()
+	} else {
+		// Legacy behavior: stop scheduler directly
+		m.scheduler.Stop()
+	}
 
 	// Signal all workers to stop
 	close(m.stopChan)
@@ -361,6 +451,10 @@ func (m *Manager) runWorker(id int, worker *Worker) {
 
 			if err := m.processQueue(id, worker, "bulk_search"); err != nil {
 				log.Printf("Worker %d error processing bulk_search queue: %v", displayID, err)
+			}
+
+			if err := m.processQueue(id, worker, "price_graph_sweep"); err != nil {
+				log.Printf("Worker %d error processing price_graph_sweep queue: %v", displayID, err)
 			}
 
 			// Sleep briefly to avoid hammering the queue
@@ -494,8 +588,28 @@ func (m *Manager) processJob(ctx context.Context, worker *Worker, queueName stri
 			return fmt.Errorf("failed to unmarshal bulk search payload: %w", err)
 		}
 
-		// Process the bulk search
-		return m.processBulkSearch(ctx, worker, session, payload)
+		// Cheap-first currently requires TripLength for round trips; fall back to the legacy
+		// implementation when TripLength isn't provided (return-window mode).
+		if payload.TripType == "round_trip" && payload.TripLength == 0 {
+			log.Printf("[BulkSearch] TripLength=0 for round_trip; falling back to legacy bulk search")
+			return m.processBulkSearch(ctx, worker, session, payload)
+		}
+
+		// Process the bulk search using 2-phase cheap-first strategy.
+		// This reduces API calls from O(routes × dates) to O(routes + routes × topNDeals)
+		return m.processBulkSearchCheapFirst(ctx, worker, session, payload)
+	case "price_graph_sweep":
+		session, err := m.getFlightSession("price_graph")
+		if err != nil {
+			return fmt.Errorf("failed to get flight session: %w", err)
+		}
+
+		var payload PriceGraphSweepPayload
+		if err := json.Unmarshal(job.Payload, &payload); err != nil {
+			return fmt.Errorf("failed to unmarshal price graph sweep payload: %w", err)
+		}
+
+		return m.processPriceGraphSweep(ctx, worker, session, payload)
 
 	default:
 		return fmt.Errorf("unknown job type: %s", queueName)
@@ -511,6 +625,8 @@ func (m *Manager) getFlightSession(sessionType string) (*flights.Session, error)
 	case "bulk_search":
 		// Use cached session like direct search for better reliability
 		sessionKey = "bulk_search"
+	case "price_graph":
+		sessionKey = "price_graph"
 	case "direct_search":
 		// Use cached session for direct search (works fine)
 		sessionKey = "direct_search"
@@ -787,6 +903,7 @@ func (m *Manager) processBulkSearch(ctx context.Context, worker *Worker, session
 
 					if bulkSearchID > 0 {
 						for _, offer := range offers {
+							distanceMiles, costPerMile := calculateDistanceAndCostPerMile(origin, destination, offer.Price)
 							offerRecord := db.BulkSearchOfferRecord{
 								BulkSearchID:         bulkSearchID,
 								Origin:               origin,
@@ -802,6 +919,8 @@ func (m *Manager) processBulkSearch(ctx context.Context, worker *Worker, session
 								DstCity:              nullString(offer.DstCity),
 								FlightDuration:       durationToNullMinutes(offer.FlightDuration),
 								ReturnFlightDuration: durationToNullMinutes(offer.ReturnFlightDuration),
+								DistanceMiles:        distanceMiles,
+								CostPerMile:          costPerMile,
 								OutboundFlightsJSON:  flightsToJSON(offer.Flight),
 								ReturnFlightsJSON:    flightsToJSON(offer.ReturnFlight),
 								OfferJSON:            offerToJSON(offer),
@@ -827,6 +946,12 @@ func (m *Manager) processBulkSearch(ctx context.Context, worker *Worker, session
 	// Store the lowest fare results summary
 	log.Printf("Bulk search summary: found lowest fares for %d out of %d routes", len(routeResults), totalRoutes)
 	for routeKey, result := range routeResults {
+		// Skip routes with no valid offers (Price == math.MaxFloat64 is the sentinel value)
+		if result.BestOffer.Price >= math.MaxFloat64 {
+			log.Printf("Skipping storage for route %s: no valid offers found", routeKey)
+			continue
+		}
+
 		// Store the best offer for each route
 		bestSearchPayload := FlightSearchPayload{
 			Origin:        result.Origin,
@@ -979,6 +1104,566 @@ func (m *Manager) processBulkSearch(ctx context.Context, worker *Worker, session
 	return nil
 }
 
+// isExcludedAirline checks if any flight in the offer uses an excluded airline.
+func (m *Manager) isExcludedAirline(offer flights.FullOffer) bool {
+	if len(m.excludedSet) == 0 {
+		return false
+	}
+	// Check outbound flights
+	for _, flight := range offer.Flight {
+		if len(flight.FlightNumber) >= 2 {
+			airlineCode := flight.FlightNumber[:2]
+			if m.excludedSet[airlineCode] {
+				return true
+			}
+		}
+	}
+	// Check return flights
+	for _, flight := range offer.ReturnFlight {
+		if len(flight.FlightNumber) >= 2 {
+			airlineCode := flight.FlightNumber[:2]
+			if m.excludedSet[airlineCode] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// scoreDeal calculates a composite deal score where lower is better.
+// It considers price, duration overhead, stops, and departure time.
+func scoreDeal(offer flights.FullOffer, distanceMiles float64) float64 {
+	score := offer.Price
+
+	// Penalize duration: each hour over baseline (500mph) adds $10 equivalent
+	if distanceMiles > 0 {
+		baselineHours := distanceMiles / 500.0
+		if offer.ReturnFlightDuration > 0 || len(offer.ReturnFlight) > 0 {
+			baselineHours *= 2
+		}
+		actualHours := offer.FlightDuration.Hours() + offer.ReturnFlightDuration.Hours()
+		extraHours := actualHours - baselineHours
+		if extraHours > 0 {
+			score += extraHours * 10
+		}
+	}
+
+	// Penalize stops: $30 per stop on outbound, $20 per stop on return
+	outboundStops := 0
+	if len(offer.Flight) > 1 {
+		outboundStops = len(offer.Flight) - 1
+	}
+	returnStops := 0
+	if len(offer.ReturnFlight) > 1 {
+		returnStops = len(offer.ReturnFlight) - 1
+	}
+	score += float64(outboundStops)*30 + float64(returnStops)*20
+
+	// Penalize red-eye departures (10pm-6am)
+	if len(offer.Flight) > 0 {
+		hour := offer.Flight[0].DepTime.Hour()
+		if hour >= 22 || hour < 6 {
+			score += 20
+		}
+	}
+
+	return score
+}
+
+// processBulkSearchCheapFirst implements a 2-phase "cheap-first" bulk search strategy:
+// Phase 1: Use GetPriceGraph to find prices for ALL dates in one API call per route
+// Phase 2: Call GetOffers only for the top N cheapest dates to get full itineraries
+//
+// This reduces API calls from O(routes × dates) to O(routes + routes × N)
+// Example: 100 routes × 30 dates → 3000 calls becomes 100 + 300 = 400 calls
+func (m *Manager) processBulkSearchCheapFirst(ctx context.Context, worker *Worker, session *flights.Session, payload BulkSearchPayload) (err error) {
+	topN := m.topNDeals
+
+	// Validate origins and destinations
+	if len(payload.Origins) == 0 {
+		return fmt.Errorf("bulk search payload requires at least one origin")
+	}
+	if len(payload.Destinations) == 0 {
+		return fmt.Errorf("bulk search payload requires at least one destination")
+	}
+
+	// Map the payload to flights API arguments
+	var tripType flights.TripType
+	switch payload.TripType {
+	case "one_way":
+		tripType = flights.OneWay
+	case "round_trip":
+		tripType = flights.RoundTrip
+	default:
+		return fmt.Errorf("invalid trip type: %s", payload.TripType)
+	}
+
+	// Parse currency
+	cur, err := currency.ParseISO(payload.Currency)
+	if err != nil {
+		log.Printf("Warning: Invalid currency '%s', defaulting to USD. Error: %v", payload.Currency, err)
+		cur = currency.USD
+	}
+
+	// Parse class and stops
+	flightClass := parseClass(payload.Class)
+	flightStops := parseStops(payload.Stops)
+
+	totalRoutes := len(payload.Origins) * len(payload.Destinations)
+	log.Printf("[CheapFirst] Starting 2-phase bulk search: %d origins × %d destinations = %d routes",
+		len(payload.Origins), len(payload.Destinations), totalRoutes)
+
+	// Create or get bulk search record
+	var bulkSearchID int
+	if payload.BulkSearchID > 0 {
+		bulkSearchID = payload.BulkSearchID
+		if updateErr := m.postgresDB.UpdateBulkSearchStatus(ctx, bulkSearchID, "running"); updateErr != nil {
+			log.Printf("Failed to update bulk search %d status to running: %v", bulkSearchID, updateErr)
+		}
+	} else {
+		var jobRef sql.NullInt32
+		if payload.JobID > 0 {
+			jobRef = sql.NullInt32{Int32: int32(payload.JobID), Valid: true}
+		}
+		newID, createErr := m.postgresDB.CreateBulkSearchRecord(ctx, jobRef, totalRoutes, payload.Currency, "running")
+		if createErr != nil {
+			return fmt.Errorf("failed to create bulk search record: %w", createErr)
+		}
+		bulkSearchID = newID
+	}
+
+	defer func() {
+		if bulkSearchID > 0 && err != nil {
+			if updateErr := m.postgresDB.UpdateBulkSearchStatus(ctx, bulkSearchID, "failed"); updateErr != nil {
+				log.Printf("Failed to mark bulk search %d as failed: %v", bulkSearchID, updateErr)
+			}
+		}
+	}()
+
+	// Track results
+	type RouteResult struct {
+		Origin      string
+		Destination string
+		BestOffer   flights.FullOffer
+		BestDate    time.Time
+		BestReturn  time.Time
+		DealScore   float64
+	}
+	routeResults := make(map[string]*RouteResult)
+	var searchErrors []error
+
+	// Track stats
+	var (
+		phase1Calls int
+		phase2Calls int
+		totalOffers int
+		minPrice    float64 = math.MaxFloat64
+		maxPrice    float64
+		sumPrice    float64
+	)
+
+	for _, origin := range payload.Origins {
+		for _, destination := range payload.Destinations {
+			routeKey := fmt.Sprintf("%s-%s", origin, destination)
+			log.Printf("[CheapFirst] Phase 1: Getting price graph for %s", routeKey)
+
+			// Calculate distance for deal scoring
+			distanceMiles, _ := calculateDistanceAndCostPerMile(origin, destination, 1.0)
+			dist := 0.0
+			if distanceMiles.Valid {
+				dist = distanceMiles.Float64
+			}
+
+			// PHASE 1: Get prices for all dates in ONE call
+			priceGraphArgs := flights.PriceGraphArgs{
+				RangeStartDate: payload.DepartureDateFrom,
+				RangeEndDate:   payload.DepartureDateTo,
+				TripLength:     payload.TripLength,
+				SrcAirports:    []string{origin},
+				DstAirports:    []string{destination},
+				Options: flights.Options{
+					Travelers: flights.Travelers{
+						Adults:       payload.Adults,
+						Children:     payload.Children,
+						InfantOnLap:  payload.InfantsLap,
+						InfantInSeat: payload.InfantsSeat,
+					},
+					Currency: cur,
+					Stops:    flightStops,
+					Class:    flightClass,
+					TripType: tripType,
+					Lang:     language.English,
+				},
+			}
+
+			priceOffers, err := session.GetPriceGraph(ctx, priceGraphArgs)
+			phase1Calls++
+
+			if err != nil {
+				log.Printf("[CheapFirst] Error getting price graph for %s: %v", routeKey, err)
+				searchErrors = append(searchErrors, fmt.Errorf("price graph for %s failed: %w", routeKey, err))
+				continue
+			}
+
+			if len(priceOffers) == 0 {
+				log.Printf("[CheapFirst] No prices found for %s", routeKey)
+				continue
+			}
+
+			// Sort offers by price to find top N cheapest dates
+			sort.Slice(priceOffers, func(i, j int) bool {
+				return priceOffers[i].Price < priceOffers[j].Price
+			})
+
+			// Take top N (or fewer if not enough offers)
+			topOffers := priceOffers
+			if len(topOffers) > topN {
+				topOffers = topOffers[:topN]
+			}
+
+			log.Printf("[CheapFirst] Phase 2: Getting full itineraries for top %d dates for %s", len(topOffers), routeKey)
+
+			// PHASE 2: Get full itineraries only for cheapest dates
+			var bestOffer *flights.FullOffer
+			var bestScore float64 = math.MaxFloat64
+			var bestDate, bestReturn time.Time
+
+			for _, priceOffer := range topOffers {
+				args := flights.Args{
+					Date:        priceOffer.StartDate,
+					ReturnDate:  priceOffer.ReturnDate,
+					SrcAirports: []string{origin},
+					DstAirports: []string{destination},
+					Options: flights.Options{
+						Travelers: flights.Travelers{
+							Adults:       payload.Adults,
+							Children:     payload.Children,
+							InfantOnLap:  payload.InfantsLap,
+							InfantInSeat: payload.InfantsSeat,
+						},
+						Currency: cur,
+						Stops:    flightStops,
+						Class:    flightClass,
+						TripType: tripType,
+						Lang:     language.English,
+					},
+				}
+
+				fullOffers, _, err := session.GetOffers(ctx, args)
+				phase2Calls++
+
+				if err != nil {
+					log.Printf("[CheapFirst] Error getting offers for %s on %s: %v",
+						routeKey, priceOffer.StartDate.Format("2006-01-02"), err)
+					continue
+				}
+
+				totalOffers += len(fullOffers)
+
+				// Find best offer by composite deal score (skip excluded airlines)
+				for i := range fullOffers {
+					// Skip offers from excluded airlines (Spirit, Allegiant, Frontier)
+					if m.isExcludedAirline(fullOffers[i]) {
+						continue
+					}
+					score := scoreDeal(fullOffers[i], dist)
+					if score < bestScore {
+						bestScore = score
+						bestOffer = &fullOffers[i]
+						bestDate = priceOffer.StartDate
+						bestReturn = priceOffer.ReturnDate
+					}
+				}
+			}
+
+			if bestOffer != nil {
+				routeResults[routeKey] = &RouteResult{
+					Origin:      origin,
+					Destination: destination,
+					BestOffer:   *bestOffer,
+					BestDate:    bestDate,
+					BestReturn:  bestReturn,
+					DealScore:   bestScore,
+				}
+
+				log.Printf("[CheapFirst] Route %s: best deal $%.2f (score: %.2f) on %s",
+					routeKey, bestOffer.Price, bestScore, bestDate.Format("2006-01-02"))
+
+				// Update price stats
+				if bestOffer.Price < minPrice {
+					minPrice = bestOffer.Price
+				}
+				if bestOffer.Price > maxPrice {
+					maxPrice = bestOffer.Price
+				}
+				sumPrice += bestOffer.Price
+			} else {
+				log.Printf("[CheapFirst] Route %s: no valid offers found", routeKey)
+			}
+		}
+	}
+
+	log.Printf("[CheapFirst] API call summary: Phase1=%d, Phase2=%d, Total=%d (vs old method: %d)",
+		phase1Calls, phase2Calls, phase1Calls+phase2Calls,
+		totalRoutes*len(m.generateDateRange(payload.DepartureDateFrom, payload.DepartureDateTo, payload.TripLength)))
+
+	// Store results (minimal storage - no StoreFlightOffers, no bulk_search_offers)
+	completedRoutes := 0
+	for _, result := range routeResults {
+		departureDate := result.BestDate
+		returnDate := sql.NullTime{}
+		if !result.BestReturn.IsZero() {
+			returnDate = sql.NullTime{Time: result.BestReturn, Valid: true}
+		}
+
+		airlineCode := ""
+		if len(result.BestOffer.Flight) > 0 {
+			flightNumber := result.BestOffer.Flight[0].FlightNumber
+			if len(flightNumber) >= 2 {
+				airlineCode = flightNumber[:2]
+			}
+		}
+
+		flightDuration := int(result.BestOffer.FlightDuration.Minutes())
+		returnFlightDuration := int(result.BestOffer.ReturnFlightDuration.Minutes())
+		totalDuration := flightDuration + returnFlightDuration
+
+		record := db.BulkSearchResultRecord{
+			BulkSearchID:         bulkSearchID,
+			Origin:               result.Origin,
+			Destination:          result.Destination,
+			DepartureDate:        departureDate,
+			ReturnDate:           returnDate,
+			Price:                result.BestOffer.Price,
+			Currency:             strings.ToUpper(payload.Currency),
+			AirlineCode:          nullString(airlineCode),
+			Duration:             nullInt32(totalDuration),
+			SrcAirportCode:       nullString(result.BestOffer.SrcAirportCode),
+			DstAirportCode:       nullString(result.BestOffer.DstAirportCode),
+			SrcCity:              nullString(result.BestOffer.SrcCity),
+			DstCity:              nullString(result.BestOffer.DstCity),
+			FlightDuration:       durationToNullMinutes(result.BestOffer.FlightDuration),
+			ReturnFlightDuration: durationToNullMinutes(result.BestOffer.ReturnFlightDuration),
+			OutboundFlightsJSON:  flightsToJSON(result.BestOffer.Flight),
+			ReturnFlightsJSON:    flightsToJSON(result.BestOffer.ReturnFlight),
+			OfferJSON:            offerToJSON(result.BestOffer),
+		}
+
+		if insertErr := m.postgresDB.InsertBulkSearchResult(ctx, record); insertErr != nil {
+			log.Printf("[CheapFirst] Failed to insert result for %s -> %s: %v",
+				result.Origin, result.Destination, insertErr)
+		}
+		completedRoutes++
+	}
+
+	// Finalize bulk search
+	var minPriceNull, maxPriceNull, avgPriceNull sql.NullFloat64
+	if completedRoutes > 0 {
+		minPriceNull = sql.NullFloat64{Float64: minPrice, Valid: true}
+		maxPriceNull = sql.NullFloat64{Float64: maxPrice, Valid: true}
+		avgPriceNull = sql.NullFloat64{Float64: sumPrice / float64(completedRoutes), Valid: true}
+	}
+
+	status := "completed"
+	if len(searchErrors) > 0 && completedRoutes > 0 {
+		status = "completed_with_errors"
+	}
+	if completedRoutes == 0 {
+		status = "failed"
+	}
+
+	log.Printf("[CheapFirst] Bulk search completed: %d routes, %d offers, status=%s",
+		completedRoutes, totalOffers, status)
+
+	summary := db.BulkSearchSummary{
+		ID:           bulkSearchID,
+		Status:       status,
+		Completed:    completedRoutes,
+		TotalOffers:  totalOffers,
+		ErrorCount:   len(searchErrors),
+		MinPrice:     minPriceNull,
+		MaxPrice:     maxPriceNull,
+		AveragePrice: avgPriceNull,
+	}
+
+	if completeErr := m.postgresDB.CompleteBulkSearch(ctx, summary); completeErr != nil {
+		log.Printf("[CheapFirst] Failed to update bulk search summary for %d: %v", bulkSearchID, completeErr)
+	}
+
+	return nil
+}
+
+// processPriceGraphSweep executes a price graph sweep job and stores the cheapest fares for each date
+func (m *Manager) processPriceGraphSweep(ctx context.Context, worker *Worker, session *flights.Session, payload PriceGraphSweepPayload) (err error) {
+	if len(payload.Origins) == 0 {
+		return fmt.Errorf("price graph sweep requires at least one origin")
+	}
+	if len(payload.Destinations) == 0 {
+		return fmt.Errorf("price graph sweep requires at least one destination")
+	}
+
+	tripLengths := payload.TripLengths
+	if len(tripLengths) == 0 {
+		tripLengths = []int{0}
+	}
+
+	var tripType flights.TripType
+	switch payload.TripType {
+	case "one_way":
+		tripType = flights.OneWay
+	default:
+		tripType = flights.RoundTrip
+	}
+
+	flightClass := parseClass(payload.Class)
+	flightStops := parseStops(payload.Stops)
+
+	cur, err := currency.ParseISO(payload.Currency)
+	if err != nil {
+		log.Printf("Warning: invalid currency '%s' for price graph sweep, defaulting to USD: %v", payload.Currency, err)
+		cur = currency.USD
+		payload.Currency = "USD"
+	}
+
+	var jobRef sql.NullInt32
+	if payload.JobID > 0 {
+		jobRef = sql.NullInt32{Int32: int32(payload.JobID), Valid: true}
+	}
+
+	var minLen, maxLen sql.NullInt32
+	if len(tripLengths) > 0 {
+		minVal := tripLengths[0]
+		maxVal := tripLengths[0]
+		for _, l := range tripLengths {
+			if l < minVal {
+				minVal = l
+			}
+			if l > maxVal {
+				maxVal = l
+			}
+		}
+		minLen = sql.NullInt32{Int32: int32(minVal), Valid: true}
+		maxLen = sql.NullInt32{Int32: int32(maxVal), Valid: true}
+	}
+
+	sweepID := payload.SweepID
+	if sweepID == 0 {
+		newID, createErr := m.postgresDB.CreatePriceGraphSweep(ctx, jobRef, len(payload.Origins), len(payload.Destinations), minLen, maxLen, strings.ToUpper(payload.Currency))
+		if createErr != nil {
+			return createErr
+		}
+		sweepID = newID
+	}
+
+	resultsInserted := 0
+	errorCount := 0
+
+	startedAt := sql.NullTime{Time: time.Now(), Valid: true}
+	if updateErr := m.postgresDB.UpdatePriceGraphSweepStatus(ctx, sweepID, "running", startedAt, sql.NullTime{}, 0); updateErr != nil {
+		log.Printf("Failed to mark price graph sweep %d as running: %v", sweepID, updateErr)
+	}
+
+	defer func() {
+		if err != nil {
+			if updateErr := m.postgresDB.UpdatePriceGraphSweepStatus(ctx, sweepID, "failed", sql.NullTime{}, sql.NullTime{}, errorCount); updateErr != nil {
+				log.Printf("Failed to mark price graph sweep %d as failed: %v", sweepID, updateErr)
+			}
+		}
+	}()
+
+	rateDelay := time.Duration(payload.RateLimitMillis) * time.Millisecond
+	if rateDelay <= 0 {
+		rateDelay = 750 * time.Millisecond
+	}
+
+	options := flights.Options{
+		Travelers: flights.Travelers{
+			Adults:       payload.Adults,
+			Children:     payload.Children,
+			InfantOnLap:  payload.InfantsLap,
+			InfantInSeat: payload.InfantsSeat,
+		},
+		Currency: cur,
+		Stops:    flightStops,
+		Class:    flightClass,
+		TripType: tripType,
+		Lang:     language.English,
+	}
+
+	for _, origin := range payload.Origins {
+		for _, destination := range payload.Destinations {
+			for _, length := range tripLengths {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				default:
+				}
+
+				args := flights.PriceGraphArgs{
+					RangeStartDate: payload.DepartureDateFrom,
+					RangeEndDate:   payload.DepartureDateTo,
+					TripLength:     length,
+					SrcAirports:    []string{origin},
+					DstAirports:    []string{destination},
+					Options:        options,
+				}
+
+				offers, sweepErr := session.GetPriceGraph(ctx, args)
+				if sweepErr != nil {
+					errorCount++
+					log.Printf("Price graph sweep error for %s -> %s (length %d): %v", origin, destination, length, sweepErr)
+					continue
+				}
+
+				for _, offer := range offers {
+					distanceMiles, costPerMile := calculateDistanceAndCostPerMile(origin, destination, offer.Price)
+					record := db.PriceGraphResultRecord{
+						SweepID:       sweepID,
+						Origin:        origin,
+						Destination:   destination,
+						DepartureDate: offer.StartDate,
+						ReturnDate:    timeToNullTime(offer.ReturnDate),
+						TripLength:    nullInt32(length),
+						Price:         offer.Price,
+						Currency:      strings.ToUpper(payload.Currency),
+						DistanceMiles: distanceMiles,
+						CostPerMile:   costPerMile,
+						QueriedAt:     time.Now(),
+					}
+
+					if insertErr := m.postgresDB.InsertPriceGraphResult(ctx, record); insertErr != nil {
+						errorCount++
+						log.Printf("Failed to store price graph result for %s -> %s on %s: %v", origin, destination, offer.StartDate.Format("2006-01-02"), insertErr)
+						continue
+					}
+					resultsInserted++
+				}
+
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(rateDelay):
+				}
+			}
+		}
+	}
+
+	status := "completed"
+	if resultsInserted == 0 && errorCount > 0 {
+		status = "failed"
+	} else if errorCount > 0 {
+		status = "completed_with_errors"
+	}
+
+	completedAt := sql.NullTime{Time: time.Now(), Valid: true}
+	if updateErr := m.postgresDB.UpdatePriceGraphSweepStatus(ctx, sweepID, status, sql.NullTime{}, completedAt, errorCount); updateErr != nil {
+		log.Printf("Failed to finalize price graph sweep %d: %v", sweepID, updateErr)
+	}
+
+	log.Printf("Price graph sweep %d finished with %d results (%d errors)", sweepID, resultsInserted, errorCount)
+	return nil
+}
+
 // generateDateRange generates a slice of dates within the given range for searching
 func (m *Manager) generateDateRange(startDate, endDate time.Time, tripLength int) []time.Time {
 	var dates []time.Time
@@ -1010,4 +1695,18 @@ func (m *Manager) generateDateRange(startDate, endDate time.Time, tripLength int
 // GetScheduler returns the scheduler instance
 func (m *Manager) GetScheduler() *Scheduler {
 	return m.scheduler
+}
+
+// GetSweepRunner returns the continuous sweep runner instance
+func (m *Manager) GetSweepRunner() *ContinuousSweepRunner {
+	m.sweepMutex.RLock()
+	defer m.sweepMutex.RUnlock()
+	return m.sweepRunner
+}
+
+// SetSweepRunner sets the continuous sweep runner instance
+func (m *Manager) SetSweepRunner(runner *ContinuousSweepRunner) {
+	m.sweepMutex.Lock()
+	defer m.sweepMutex.Unlock()
+	m.sweepRunner = runner
 }
