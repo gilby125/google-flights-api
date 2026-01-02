@@ -27,8 +27,9 @@ services:
       - postgres
       - neo4j
       - redis
-    ports:
-      - "8080:8080"
+    # Removed host port mapping - Dokploy handles routing
+    # ports:
+    #   - "8080:8080"
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
       interval: 30s

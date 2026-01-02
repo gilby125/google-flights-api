@@ -26,8 +26,10 @@ services:
       REDIS_QUEUE_STREAM_PREFIX: ${REDIS_QUEUE_STREAM_PREFIX:-flights}
       REDIS_QUEUE_BLOCK_TIMEOUT: ${REDIS_QUEUE_BLOCK_TIMEOUT:-5s}
       REDIS_QUEUE_VISIBILITY_TIMEOUT: ${REDIS_QUEUE_VISIBILITY_TIMEOUT:-2m}
-    ports:
-      - "8080:8080"
+    # Removed host port mapping to avoid port allocation conflict with multiple replicas
+    # Dokploy handles routing to internal port 8080
+    # ports:
+    #   - "8080:8080"
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
       interval: 30s
