@@ -108,5 +108,13 @@ services:
           cpus: ${WORKER_CPU_LIMIT:-1.0}
           memory: ${WORKER_MEM_LIMIT:-1G}
 
+    healthcheck:
+      # Worker deployments often run with API_ENABLED=false, so HTTP health may not exist.
+      test: [ "CMD-SHELL", "pgrep -f '/app/flight-api' >/dev/null 2>&1" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
 volumes:
   tailscale-state:
