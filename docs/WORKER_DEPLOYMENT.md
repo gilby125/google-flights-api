@@ -263,6 +263,55 @@ hcloud server create --type cax11 --image ubuntu-22.04 --name worker-1
 
 See the dedicated guide: [GCP Free Tier Worker Setup](GCP_FREE_TIER_WORKER.md)
 
+
+---
+
+## Deployment Automation
+
+Use the provided script to deploy binaries and configuration updates to all workers:
+
+### Basic Usage
+
+```bash
+# Deploy latest binary and restart all workers
+./scripts/deploy-workers.sh
+
+# Only update binary (don't restart)
+./scripts/deploy-workers.sh --binary-only
+
+# Only restart workers (e.g., after manual config change)
+./scripts/deploy-workers.sh --restart-only
+
+# Update environment variable and restart
+./scripts/deploy-workers.sh --env LOG_LEVEL=debug
+./scripts/deploy-workers.sh --env LOG_LEVEL=info --env WORKER_CONCURRENCY=8
+```
+
+### How It Works
+
+The script automatically:
+1. **Tries Tailscale SSH first** - Direct private network access
+2. **Falls back to cloud CLIs** if Tailscale unavailable:
+   - **GCP**: Uses IAP tunnel (`gcloud compute ssh --tunnel-through-iap`)
+   - **Azure**: Uses run-command API (`az vm run-command invoke`)
+3. Downloads the correct binary (amd64/arm64) from GitHub Releases
+4. Stops the worker, installs the binary, and restarts
+
+### Requirements
+
+- `gcloud` CLI (for GCP workers)
+- `az` CLI (for Azure workers)
+- Tailscale installed (optional, but recommended)
+
+### Adding More Workers
+
+Edit `scripts/deploy-workers.sh` and add to the `WORKERS` array:
+
+```bash
+WORKERS[my-worker-name]="gcp:vm-name:zone"
+WORKERS[my-worker-name]="azure:vm-name"
+```
+
 ---
 
 ## Security Hardening
