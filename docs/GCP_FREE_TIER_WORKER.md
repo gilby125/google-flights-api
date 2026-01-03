@@ -13,7 +13,11 @@ This guide documents how to run a **free** worker node on Google Cloud Platform'
 
 ## 1. Build the Binary (Native Linux AMD64)
 
-Cross-compile the binary locally. This same binary (`flight-api`) serves as both the API server and the worker, depending on environment variables.
+### Option A: CI/CD Download (Recommended)
+Our CI/CD pipeline builds this automatically. You can download it directly on the VM (see Step 3).
+
+### Option B: Manual Local Build
+Cross-compile the binary locally. This same binary (`flight-api`) serves as both the API server and the worker.
 
 ```bash
 # Disable CGO for static linking
@@ -34,8 +38,16 @@ gcloud compute instances create flights-worker \
   --tags=http-server
 ```
 
-## 3. Upload Binary & Systemd Configs
+## 3. Deployment
 
+### Option A: Direct Download on VM (Recommended)
+SSH into the VM (Step 4) and download the release binary directly.
+
+```bash
+curl -L -o /tmp/flight-api https://github.com/gilby125/google-flights-api/releases/latest/download/flight-api-linux-amd64
+```
+
+### Option B: Local Upload
 Transfer the binary and the systemd unit templates to the VM.
 
 ```bash
@@ -130,11 +142,30 @@ Install the systemd unit and start the worker.
 sudo cp /tmp/google-flights-worker@.service /etc/systemd/system/
 sudo systemctl daemon-reload
 
-# Enable and start instance 1
-sudo systemctl enable --now google-flights-worker@1
-
 # Check status
 systemctl status google-flights-worker@1
+
+---
+
+## 7. Security Hardening (Highly Recommended)
+
+Lock down the VM so it is only accessible via **Tailscale SSH**.
+
+1. **Verify Tailscale SSH is active:**
+   ```bash
+   sudo tailscale up --ssh --accept-routes
+   ```
+
+2. **Delete public firewall rules (from your local machine):**
+   ```bash
+   gcloud compute firewall-rules delete default-allow-ssh
+   gcloud compute firewall-rules delete default-allow-rdp
+   ```
+
+3. **SSH via Tailscale:**
+   ```bash
+   ssh flights-worker
+   ```
 ```
 
 ## Management Commands

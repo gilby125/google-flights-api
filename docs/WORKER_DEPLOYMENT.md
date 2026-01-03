@@ -3,9 +3,9 @@
 Deploy workers to any cloud provider to distribute flight search load.
 
 This repo supports two worker deployment patterns:
-- Recommended: **remote workers over Tailscale + systemd** (no Docker on worker)
+- Recommended: **remote workers over Tailscale + CI/CD binaries** (no Docker, automated builds)
 - Alternative: **Docker worker with Tailscale sidecar**
-- Alternative: **Docker worker managed by systemd** (no scripts / no binary copy)
+- Alternative: **Docker worker managed by systemd**
 
 If you already have Tailscale installed on the **worker VM itself**, you can use plain Docker Compose on the worker (Dokploy/Compose/etc.) and point `DB_HOST`/`REDIS_HOST`/`NEO4J_URI` at the main server’s Tailscale IP. You do not need a Tailscale sidecar container in that case.
 
@@ -66,9 +66,26 @@ nc -vz <main-ts-ip> 6379
 nc -vz <main-ts-ip> 7687
 ```
 
-### Step 4 — Install the worker on OCI (systemd, no Docker)
+### Step 4 — Install the worker on Remote VM (systemd, no Docker)
 
-1) Build a Linux binary (on your dev box or CI) and copy to OCI as `/opt/google-flights/google-flights-api`:
+#### Option 1: CI/CD Download (Recommended)
+Our GitHub Actions pipeline automatically builds and releases binaries for every push to `main`.
+
+```bash
+# On the VM (amd64 for GCP/Azure, arm64 for OCI)
+ARCH=$(uname -m)
+if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+  URL="https://github.com/gilby125/google-flights-api/releases/latest/download/flight-api-linux-arm64"
+else
+  URL="https://github.com/gilby125/google-flights-api/releases/latest/download/flight-api-linux-amd64"
+fi
+
+curl -L -o /tmp/google-flights-api "$URL"
+chmod +x /tmp/google-flights-api
+```
+
+#### Option 2: Manual local build
+1) Build a Linux binary and copy to Remote VM as `/opt/google-flights/google-flights-api`:
 
 ```bash
 # amd64 (most Intel/AMD VMs)
@@ -245,6 +262,39 @@ hcloud server create --type cax11 --image ubuntu-22.04 --name worker-1
 ### Google Cloud Platform (Free Tier)
 
 See the dedicated guide: [GCP Free Tier Worker Setup](GCP_FREE_TIER_WORKER.md)
+
+---
+
+## Security Hardening
+
+To protect your workers, we recommend using **Tailscale SSH** and disabling all public inbound ports (including 22).
+
+### 1. Enable Tailscale SSH
+On the worker VM:
+```bash
+sudo tailscale up --ssh --accept-routes
+```
+
+### 2. Lock Down Firewalls
+Once Tailscale SSH is verified, delete the public SSH access rules.
+
+**GCP:**
+```bash
+gcloud compute firewall-rules delete default-allow-ssh
+gcloud compute firewall-rules delete default-allow-rdp # Highly recommended
+```
+
+**Azure:**
+```bash
+az network nsg rule delete --nsg-name flights-workerNSG --resource-group YOUR_RG --name default-allow-ssh
+```
+
+### 3. SSH into Workers
+You no longer need public IPs. SSH directly via Tailscale:
+```bash
+ssh flights-worker
+ssh azure-worker
+```
 
 ---
 
