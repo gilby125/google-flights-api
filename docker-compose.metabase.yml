@@ -1,0 +1,17 @@
+services:
+  metabase:
+    image: metabase/metabase:latest
+    depends_on:
+      - postgres
+    environment:
+      # Persist Metabase's internal application DB (H2) to a named volume.
+      MB_DB_FILE: /metabase-data/metabase.db
+      JAVA_TIMEZONE: ${TZ:-UTC}
+    ports:
+      - "${METABASE_PORT:-3000}:3000"
+    volumes:
+      - metabase_data:/metabase-data
+    restart: unless-stopped
+
+volumes:
+  metabase_data:
