@@ -212,10 +212,7 @@ func InitTestPostgres(cfg *config.Config) *pgxpool.Pool {
 
 // NewPostgresDB creates a new PostgreSQL database connection
 func NewPostgresDB(cfg config.PostgresConfig) (PostgresDB, error) {
-	connStr := fmt.Sprintf(
-		"host=%s port=%s user=%s password=%s dbname=%s sslmode=%s sslcert=%s sslkey=%s sslrootcert=%s",
-		cfg.Host, cfg.Port, cfg.User, cfg.Password, cfg.DBName, cfg.SSLMode,
-		cfg.SSLCert, cfg.SSLKey, cfg.SSLRootCert)
+	connStr := BuildPostgresConnString(cfg)
 
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
@@ -228,6 +225,15 @@ func NewPostgresDB(cfg config.PostgresConfig) (PostgresDB, error) {
 	}
 
 	return &PostgresDBImpl{db: db}, nil
+}
+
+// BuildPostgresConnString builds a lib/pq keyword/value connection string from config.
+func BuildPostgresConnString(cfg config.PostgresConfig) string {
+	return fmt.Sprintf(
+		"host=%s port=%s user=%s password=%s dbname=%s sslmode=%s sslcert=%s sslkey=%s sslrootcert=%s",
+		cfg.Host, cfg.Port, cfg.User, cfg.Password, cfg.DBName, cfg.SSLMode,
+		cfg.SSLCert, cfg.SSLKey, cfg.SSLRootCert,
+	)
 }
 
 // GetSearchByID retrieves a search record by its ID
@@ -969,9 +975,11 @@ func (p *PostgresDBImpl) InsertPriceGraphResult(ctx context.Context, record Pric
 	}
 	_, err := p.db.ExecContext(ctx,
 		`INSERT INTO price_graph_results
-			(sweep_id, origin, destination, departure_date, return_date,
-			 trip_length, price, currency, distance_miles, cost_per_mile, queried_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+				(sweep_id, origin, destination, departure_date, return_date,
+				 trip_length, price, currency, distance_miles, cost_per_mile,
+				 adults, children, infants_lap, infants_seat, trip_type, class, stops, search_url,
+				 queried_at)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
 		record.SweepID,
 		record.Origin,
 		record.Destination,
@@ -982,6 +990,14 @@ func (p *PostgresDBImpl) InsertPriceGraphResult(ctx context.Context, record Pric
 		record.Currency,
 		record.DistanceMiles,
 		record.CostPerMile,
+		record.Adults,
+		record.Children,
+		record.InfantsLap,
+		record.InfantsSeat,
+		record.TripType,
+		record.Class,
+		record.Stops,
+		record.SearchURL,
 		record.QueriedAt,
 	)
 	if err != nil {
@@ -999,11 +1015,13 @@ func (p *PostgresDBImpl) ListPriceGraphResults(ctx context.Context, sweepID, lim
 	}
 	return p.db.QueryContext(ctx,
 		`SELECT id, sweep_id, origin, destination, departure_date,
-                return_date, trip_length, price, currency, queried_at, created_at
-         FROM price_graph_results
-         WHERE sweep_id = $1
-         ORDER BY price ASC
-         LIMIT $2 OFFSET $3`,
+	                return_date, trip_length, price, currency,
+					adults, children, infants_lap, infants_seat, trip_type, class, stops, search_url,
+					queried_at, created_at
+	         FROM price_graph_results
+	         WHERE sweep_id = $1
+	         ORDER BY price ASC
+	         LIMIT $2 OFFSET $3`,
 		sweepID, limit, offset,
 	)
 }
@@ -1187,7 +1205,9 @@ func (p *PostgresDBImpl) ListContinuousSweepResults(ctx context.Context, filters
 
 	// Build dynamic query with filters
 	query := `SELECT sweep_id, origin, destination, departure_date,
-	                 return_date, trip_length, price, currency, queried_at
+	                 return_date, trip_length, price, currency,
+					 adults, children, infants_lap, infants_seat, trip_type, class, stops, search_url,
+					 queried_at
 	          FROM price_graph_results
 	          WHERE sweep_id = 0`
 	args := []interface{}{}
@@ -1235,6 +1255,14 @@ func (p *PostgresDBImpl) ListContinuousSweepResults(ctx context.Context, filters
 			&r.TripLength,
 			&r.Price,
 			&r.Currency,
+			&r.Adults,
+			&r.Children,
+			&r.InfantsLap,
+			&r.InfantsSeat,
+			&r.TripType,
+			&r.Class,
+			&r.Stops,
+			&r.SearchURL,
 			&r.QueriedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan continuous sweep result: %w", err)
@@ -1755,12 +1783,5 @@ func (p *PostgresDBImpl) InitSchema() error {
 		return fmt.Errorf("failed to create indexes: %w", err)
 	}
 
-	return nil
-}
-
-// RunMigrations executes database migrations
-func RunMigrations(connString string) error {
-	// Implementation would use a migration library like golang-migrate
-	// For testing purposes, we'll just return nil
 	return nil
 }

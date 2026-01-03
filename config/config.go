@@ -132,8 +132,8 @@ func Load() (*Config, error) {
 	apiEnabled, _ := strconv.ParseBool(getEnv("API_ENABLED", "true"))
 	workerEnabled, _ := strconv.ParseBool(getEnv("WORKER_ENABLED", "true"))
 
-	// InitSchema is safe and idempotent (CREATE TABLE IF NOT EXISTS, etc).
-	// Default to true so fresh deployments "just work"; set INIT_SCHEMA=false if you really want to manage schema externally.
+	// INIT_SCHEMA controls whether the app runs PostgreSQL migrations and initializes Neo4j schema on startup.
+	// Default to true so fresh deployments "just work"; set INIT_SCHEMA=false on workers or if you manage schema externally.
 	initSchemaDefault := "true"
 	seedNeo4jDefault := "true"
 	if strings.ToLower(environment) == "production" {

@@ -196,6 +196,14 @@ type PriceGraphResult struct {
 	Currency      string
 	DistanceMiles sql.NullFloat64
 	CostPerMile   sql.NullFloat64
+	Adults        int
+	Children      int
+	InfantsLap    int
+	InfantsSeat   int
+	TripType      string
+	Class         string
+	Stops         string
+	SearchURL     sql.NullString
 	QueriedAt     time.Time
 	CreatedAt     time.Time
 }
@@ -212,6 +220,14 @@ type PriceGraphResultRecord struct {
 	Currency      string
 	DistanceMiles sql.NullFloat64
 	CostPerMile   sql.NullFloat64
+	Adults        int
+	Children      int
+	InfantsLap    int
+	InfantsSeat   int
+	TripType      string
+	Class         string
+	Stops         string
+	SearchURL     sql.NullString
 	QueriedAt     time.Time
 }
 
@@ -359,23 +375,23 @@ type ContinuousSweepStats struct {
 
 // SweepStatusResponse is the API response for sweep status
 type SweepStatusResponse struct {
-	IsRunning            bool      `json:"is_running"`
-	IsPaused             bool      `json:"is_paused"`
-	SweepNumber          int       `json:"sweep_number"`
-	RouteIndex           int       `json:"route_index"`
-	TotalRoutes          int       `json:"total_routes"`
-	ProgressPercent      float64   `json:"progress_percent"`
-	CurrentOrigin        string    `json:"current_origin"`
-	CurrentDestination   string    `json:"current_destination"`
-	QueriesCompleted     int       `json:"queries_completed"`
-	ErrorsCount          int       `json:"errors_count"`
-	LastError            string    `json:"last_error,omitempty"`
-	SweepStartedAt       time.Time `json:"sweep_started_at,omitempty"`
-	EstimatedCompletion  time.Time `json:"estimated_completion,omitempty"`
-	PacingMode           string    `json:"pacing_mode"`
-	CurrentDelayMs       int       `json:"current_delay_ms"`
-	TargetDurationHours  int       `json:"target_duration_hours"`
-	QueriesPerHour       float64   `json:"queries_per_hour"`
+	IsRunning           bool      `json:"is_running"`
+	IsPaused            bool      `json:"is_paused"`
+	SweepNumber         int       `json:"sweep_number"`
+	RouteIndex          int       `json:"route_index"`
+	TotalRoutes         int       `json:"total_routes"`
+	ProgressPercent     float64   `json:"progress_percent"`
+	CurrentOrigin       string    `json:"current_origin"`
+	CurrentDestination  string    `json:"current_destination"`
+	QueriesCompleted    int       `json:"queries_completed"`
+	ErrorsCount         int       `json:"errors_count"`
+	LastError           string    `json:"last_error,omitempty"`
+	SweepStartedAt      time.Time `json:"sweep_started_at,omitempty"`
+	EstimatedCompletion time.Time `json:"estimated_completion,omitempty"`
+	PacingMode          string    `json:"pacing_mode"`
+	CurrentDelayMs      int       `json:"current_delay_ms"`
+	TargetDurationHours int       `json:"target_duration_hours"`
+	QueriesPerHour      float64   `json:"queries_per_hour"`
 }
 
 // ContinuousSweepResultsFilter defines filters for querying continuous sweep results

@@ -183,6 +183,13 @@ func maybeNullTime(value sql.NullTime) interface{} {
 	return value.Time
 }
 
+func maybeNullString(value sql.NullString) interface{} {
+	if !value.Valid {
+		return nil
+	}
+	return value.String
+}
+
 // getAirports returns a handler for getting all airports
 func GetAirports(pgDB db.PostgresDB) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -1361,11 +1368,39 @@ func getPriceGraphSweepResults(pgDB db.PostgresDB) gin.HandlerFunc {
 				tripLength  sql.NullInt32
 				price       float64
 				currency    string
+				adults      int
+				children    int
+				infantsLap  int
+				infantsSeat int
+				tripType    string
+				class       string
+				stops       string
+				searchURL   sql.NullString
 				queriedAt   time.Time
 				createdAt   time.Time
 			)
 
-			if err := rows.Scan(&id, &sid, &origin, &destination, &departure, &returnDate, &tripLength, &price, &currency, &queriedAt, &createdAt); err != nil {
+			if err := rows.Scan(
+				&id,
+				&sid,
+				&origin,
+				&destination,
+				&departure,
+				&returnDate,
+				&tripLength,
+				&price,
+				&currency,
+				&adults,
+				&children,
+				&infantsLap,
+				&infantsSeat,
+				&tripType,
+				&class,
+				&stops,
+				&searchURL,
+				&queriedAt,
+				&createdAt,
+			); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scan result: " + err.Error()})
 				return
 			}
@@ -1380,6 +1415,14 @@ func getPriceGraphSweepResults(pgDB db.PostgresDB) gin.HandlerFunc {
 				"trip_length":    maybeNullInt(tripLength),
 				"price":          price,
 				"currency":       currency,
+				"adults":         adults,
+				"children":       children,
+				"infants_lap":    infantsLap,
+				"infants_seat":   infantsSeat,
+				"trip_type":      tripType,
+				"class":          class,
+				"stops":          stops,
+				"search_url":     maybeNullString(searchURL),
 				"queried_at":     queriedAt,
 				"created_at":     createdAt,
 			}
@@ -3048,6 +3091,14 @@ type ContinuousSweepResultResponse struct {
 	TripLength    *int       `json:"trip_length,omitempty"`
 	Price         float64    `json:"price"`
 	Currency      string     `json:"currency"`
+	Adults        int        `json:"adults"`
+	Children      int        `json:"children"`
+	InfantsLap    int        `json:"infants_lap"`
+	InfantsSeat   int        `json:"infants_seat"`
+	TripType      string     `json:"trip_type"`
+	Class         string     `json:"class"`
+	Stops         string     `json:"stops"`
+	SearchURL     *string    `json:"search_url,omitempty"`
 	QueriedAt     time.Time  `json:"queried_at"`
 }
 
@@ -3061,6 +3112,13 @@ func convertSweepResults(results []db.PriceGraphResultRecord) []ContinuousSweepR
 			DepartureDate: r.DepartureDate,
 			Price:         r.Price,
 			Currency:      r.Currency,
+			Adults:        r.Adults,
+			Children:      r.Children,
+			InfantsLap:    r.InfantsLap,
+			InfantsSeat:   r.InfantsSeat,
+			TripType:      r.TripType,
+			Class:         r.Class,
+			Stops:         r.Stops,
 			QueriedAt:     r.QueriedAt,
 		}
 		if r.ReturnDate.Valid {
@@ -3069,6 +3127,9 @@ func convertSweepResults(results []db.PriceGraphResultRecord) []ContinuousSweepR
 		if r.TripLength.Valid {
 			tripLen := int(r.TripLength.Int32)
 			resp[i].TripLength = &tripLen
+		}
+		if r.SearchURL.Valid {
+			resp[i].SearchURL = &r.SearchURL.String
 		}
 	}
 	return resp

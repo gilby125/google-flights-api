@@ -160,11 +160,11 @@ func main() {
 		defer neo4jDB.Close()
 	}
 
-	// Initialize database schemas
+	// Initialize database schemas (migrations) and Neo4j constraints/indexes
 	if cfg.InitSchema {
-		logger.Info("Initializing database schemas...")
-		if err := postgresDB.InitSchema(); err != nil {
-			logger.Fatal(err, "Failed to initialize PostgreSQL schema")
+		logger.Info("Running database migrations...")
+		if err := db.RunMigrations(db.BuildPostgresConnString(cfg.PostgresConfig)); err != nil {
+			logger.Fatal(err, "Failed to run PostgreSQL migrations")
 		}
 
 		if neo4jDB != nil {

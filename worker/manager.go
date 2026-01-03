@@ -74,6 +74,13 @@ func nullString(value string) sql.NullString {
 	return sql.NullString{String: value, Valid: true}
 }
 
+func defaultString(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
 func nullInt32(value int) sql.NullInt32 {
 	if value == 0 {
 		return sql.NullInt32{}
@@ -803,7 +810,27 @@ func (m *Manager) processContinuousPriceGraph(ctx context.Context, worker *Worke
 		TripLength:    sql.NullInt32{Int32: int32(payload.TripLength), Valid: true},
 		Price:         cheapest.Price,
 		Currency:      strings.ToUpper(payload.Currency),
+		Adults:        adults,
+		Children:      0,
+		InfantsLap:    0,
+		InfantsSeat:   0,
+		TripType:      "round_trip",
+		Class:         defaultString(payload.Class, "economy"),
+		Stops:         defaultString(payload.Stops, "any"),
 		QueriedAt:     time.Now(),
+	}
+
+	searchURL, urlErr := session.SerializeURL(ctx, flights.Args{
+		Date:        cheapest.StartDate,
+		ReturnDate:  cheapest.ReturnDate,
+		SrcAirports: []string{payload.Origin},
+		DstAirports: []string{payload.Destination},
+		Options:     args.Options,
+	})
+	if urlErr == nil && searchURL != "" {
+		record.SearchURL = sql.NullString{String: searchURL, Valid: true}
+	} else if urlErr != nil {
+		log.Printf("Failed to serialize Google Flights URL for %s->%s: %v", payload.Origin, payload.Destination, urlErr)
 	}
 
 	if err := worker.postgresDB.InsertPriceGraphResult(ctx, record); err != nil {
@@ -1825,7 +1852,27 @@ func (m *Manager) processPriceGraphSweep(ctx context.Context, worker *Worker, se
 						Currency:      strings.ToUpper(payload.Currency),
 						DistanceMiles: distanceMiles,
 						CostPerMile:   costPerMile,
+						Adults:        payload.Adults,
+						Children:      payload.Children,
+						InfantsLap:    payload.InfantsLap,
+						InfantsSeat:   payload.InfantsSeat,
+						TripType:      payload.TripType,
+						Class:         payload.Class,
+						Stops:         payload.Stops,
 						QueriedAt:     time.Now(),
+					}
+
+					searchURL, urlErr := session.SerializeURL(ctx, flights.Args{
+						Date:        offer.StartDate,
+						ReturnDate:  offer.ReturnDate,
+						SrcAirports: []string{origin},
+						DstAirports: []string{destination},
+						Options:     options,
+					})
+					if urlErr == nil && searchURL != "" {
+						record.SearchURL = sql.NullString{String: searchURL, Valid: true}
+					} else if urlErr != nil {
+						log.Printf("Failed to serialize Google Flights URL for %s->%s: %v", origin, destination, urlErr)
 					}
 
 					if insertErr := m.postgresDB.InsertPriceGraphResult(ctx, record); insertErr != nil {
