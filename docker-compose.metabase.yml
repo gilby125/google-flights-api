@@ -1,8 +1,6 @@
 services:
   metabase:
     image: metabase/metabase:latest
-    depends_on:
-      - postgres
     environment:
       # Persist Metabase's internal application DB (H2) to a named volume.
       MB_DB_FILE: /metabase-data/metabase.db
