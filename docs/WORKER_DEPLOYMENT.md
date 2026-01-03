@@ -284,7 +284,11 @@ Use the provided script to deploy binaries and configuration updates to all work
 
 # Update environment variable and restart
 ./scripts/deploy-workers.sh --env LOG_LEVEL=debug
-./scripts/deploy-workers.sh --env LOG_LEVEL=info --env WORKER_CONCURRENCY=8
+
+# Update multiple environment variables from .env file (recommended for secrets)
+cp .env.workers.example .env.workers
+# Edit .env.workers with your settings
+./scripts/deploy-workers.sh --env-file .env.workers
 ```
 
 ### How It Works

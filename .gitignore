@@ -58,3 +58,4 @@ tls/ca-*
 !docs/*.md
 !KOMODO_DEPLOYMENT_RULES.md
 planning.md
+.env.workers

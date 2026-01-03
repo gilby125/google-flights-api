@@ -2,7 +2,7 @@
 set -e
 
 # Deploy to remote workers
-# Usage: ./scripts/deploy-workers.sh [--binary-only] [--restart-only] [--env KEY=VALUE]
+# Usage: ./scripts/deploy-workers.sh [--binary-only] [--restart-only] [--env KEY=VALUE] [--env-file .env.workers]
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -11,6 +11,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BINARY_ONLY=false
 RESTART_ONLY=false
 ENV_UPDATES=()
+ENV_FILE=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -27,13 +28,35 @@ while [[ $# -gt 0 ]]; do
       ENV_UPDATES+=("$2")
       shift 2
       ;;
+    --env-file)
+      ENV_FILE="$2"
+      shift 2
+      ;;
     *)
       echo "Unknown option: $1"
-      echo "Usage: $0 [--binary-only] [--restart-only] [--env KEY=VALUE]"
+      echo "Usage: $0 [--binary-only] [--restart-only] [--env KEY=VALUE] [--env-file path/to/.env]"
       exit 1
       ;;
   esac
 done
+
+# Load env file if specified
+if [[ -n "$ENV_FILE" ]]; then
+  if [[ ! -f "$ENV_FILE" ]]; then
+    echo "Error: Env file not found: $ENV_FILE"
+    exit 1
+  fi
+  echo "Loading environment from: $ENV_FILE"
+  while IFS='=' read -r key value; do
+    # Skip comments and empty lines
+    [[ $key =~ ^#.*$ ]] && continue
+    [[ -z $key ]] && continue
+    # Remove quotes from value
+    value="${value%\"}"
+    value="${value#\"}"
+    ENV_UPDATES+=("$key=$value")
+  done < "$ENV_FILE"
+fi
 
 # Worker configurations
 declare -A WORKERS
