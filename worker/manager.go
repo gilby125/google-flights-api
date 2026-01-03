@@ -801,6 +801,9 @@ func (m *Manager) processContinuousPriceGraph(ctx context.Context, worker *Worke
 		return nil
 	}
 
+	// Calculate distance and cost per mile
+	distanceMiles, costPerMile := calculateDistanceAndCostPerMile(payload.Origin, payload.Destination, cheapest.Price)
+
 	record := db.PriceGraphResultRecord{
 		SweepID:       0,
 		Origin:        payload.Origin,
@@ -810,6 +813,8 @@ func (m *Manager) processContinuousPriceGraph(ctx context.Context, worker *Worke
 		TripLength:    sql.NullInt32{Int32: int32(payload.TripLength), Valid: true},
 		Price:         cheapest.Price,
 		Currency:      strings.ToUpper(payload.Currency),
+		DistanceMiles: distanceMiles,
+		CostPerMile:   costPerMile,
 		Adults:        adults,
 		Children:      0,
 		InfantsLap:    0,
