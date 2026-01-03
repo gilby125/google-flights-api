@@ -781,7 +781,7 @@ func (m *Manager) processContinuousPriceGraph(ctx context.Context, worker *Worke
 		Lang:      language.English,
 	}
 
-	offers, err := session.GetPriceGraph(ctx, args)
+	offers, _, err := session.GetPriceGraph(ctx, args)
 	if err != nil {
 		return fmt.Errorf("price graph query failed for %s->%s (trip length %d): %w", payload.Origin, payload.Destination, payload.TripLength, err)
 	}
@@ -1520,7 +1520,7 @@ func (m *Manager) processBulkSearchCheapFirst(ctx context.Context, worker *Worke
 				},
 			}
 
-			priceOffers, err := session.GetPriceGraph(ctx, priceGraphArgs)
+			priceOffers, _, err := session.GetPriceGraph(ctx, priceGraphArgs)
 			phase1Calls++
 
 			if err != nil {
@@ -1832,7 +1832,7 @@ func (m *Manager) processPriceGraphSweep(ctx context.Context, worker *Worker, se
 					Options:        options,
 				}
 
-				offers, sweepErr := session.GetPriceGraph(ctx, args)
+				offers, _, sweepErr := session.GetPriceGraph(ctx, args)
 				if sweepErr != nil {
 					errorCount++
 					log.Printf("Price graph sweep error for %s -> %s (length %d): %v", origin, destination, length, sweepErr)

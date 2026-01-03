@@ -131,6 +131,10 @@ REDIS_PASSWORD=your_redis_password
 # Log Settings
 LOG_LEVEL=info
 LOG_FORMAT=json
+
+# Optional: price graph parsing diagnostics (redacted)
+# Enables additional parsing summaries from the Go client (no raw payloads; only fingerprints + lengths).
+PRICE_GRAPH_DIAGNOSTICS=0
 ```
 
 ## 6. Enable & Start Service

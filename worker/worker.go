@@ -505,7 +505,7 @@ func generateCertificate(cfClient *cloudflare.API, domain string) ([]byte, []byt
 
 // processPriceGraphSearch uses the price graph API to find the best dates for a trip
 func (w *Worker) processPriceGraphSearch(ctx context.Context, session *flights.Session, origin, destination string, payload BulkSearchPayload) error {
-	offers, err := session.GetPriceGraph(
+	offers, _, err := session.GetPriceGraph(
 		ctx,
 		flights.PriceGraphArgs{
 			RangeStartDate: payload.DepartureDateFrom,

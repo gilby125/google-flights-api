@@ -32,7 +32,7 @@ func getCheapesOffer(
 		Lang:      lang,
 	}
 
-	offers, err := session.GetPriceGraph(
+	offers, _, err := session.GetPriceGraph(
 		context.Background(),
 		flights.PriceGraphArgs{
 			RangeStartDate: rangeStartDate,

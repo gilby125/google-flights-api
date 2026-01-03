@@ -111,6 +111,18 @@ The sweep data is stored separately in `price_graph_sweeps` and `price_graph_res
 
 This section details how to use the `flights` package directly in your own Go projects.
 
+### Price Graph Diagnostics (Troubleshooting)
+
+`Session.GetPriceGraph` now returns parsed offers *and* non-fatal parsing diagnostics:
+
+```go
+offers, parseErrs, err := session.GetPriceGraph(ctx, args)
+```
+
+- `parseErrs` may be non-nil even when `err == nil` (it reports skipped/unparseable entries, date parse failures, and zero-price rows).
+- When troubleshooting parsing drift, set `PRICE_GRAPH_DIAGNOSTICS=1` to emit **redacted** diagnostics logs (SHA-256 fingerprints + lengths; no raw payloads).
+  - For `$0` fares specifically, diagnostics logs include `raw_price_type` / `raw_price_is_null` to help determine whether Google returned a null/0 price value vs. a parsing mismatch.
+
 ### Go protoc plugin used in the project
 ```
 go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.31.0
@@ -163,7 +175,7 @@ func main() {
 }
 
 func priceGraphExample(session *flights.Session) {
-	offers, err := session.GetPriceGraph(
+	offers, _, err := session.GetPriceGraph(
 		context.Background(),
 		flights.PriceGraphArgs{
 			RangeStartDate: time.Now().AddDate(0, 0, 30),
@@ -256,5 +268,3 @@ go run ./examples/example3/main.go
 ```
 
 ## Bug / Feature / Suggestion
-
-

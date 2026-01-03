@@ -4,15 +4,36 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/go-retryablehttp"
 )
+
+const priceGraphDiagnosticsEnv = "PRICE_GRAPH_DIAGNOSTICS"
+
+// ParseErrors tracks non-fatal parsing issues for diagnostics.
+//
+// NOTE: This is best-effort instrumentation; parsing may drift as Google changes
+// response formats.
+type ParseErrors struct {
+	UnmarshalFailures int `json:"unmarshal_failures"`
+	DateParseFailures int `json:"date_parse_failures"`
+	ZeroPriceCount    int `json:"zero_price_count"`
+	TotalOffersRaw    int `json:"total_offers_raw"`
+	EmptySections     int `json:"empty_sections"`
+	// Samples contain redacted diagnostics (fingerprints + context), never raw payloads.
+	Samples []string `json:"samples,omitempty"`
+}
 
 func (s *Session) getPriceGraphRawData(ctx context.Context, args PriceGraphArgs) (string, error) {
 	return s.getRawData(ctx, args.Convert())
@@ -72,38 +93,196 @@ func priceGraphSchema(startDate, returnDate *string, price *float64) *[]interfac
 	return &[]interface{}{startDate, returnDate, &[]interface{}{&[]interface{}{nil, price}}}
 }
 
-func getPriceGraphSection(bytesToDecode []byte) ([]Offer, error) {
+func truncateSample(input string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	input = strings.TrimSpace(input)
+	if len(input) <= max {
+		return input
+	}
+	return input[:max] + "…"
+}
+
+func priceGraphDiagnosticsEnabled() bool {
+	raw, ok := os.LookupEnv(priceGraphDiagnosticsEnv)
+	if !ok {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func fingerprintBytes(input []byte) string {
+	sum := sha256.Sum256(input)
+	// Short fingerprint for logs; full SHA-256 is overkill.
+	return hex.EncodeToString(sum[:8])
+}
+
+func sampleFingerprint(prefix string, input []byte) string {
+	if len(input) == 0 {
+		return fmt.Sprintf("%s sha256=<empty> len=0", prefix)
+	}
+	return fmt.Sprintf("%s sha256=%s len=%d", prefix, fingerprintBytes(input), len(input))
+}
+
+func extractRawPriceValue(raw json.RawMessage) (value any, ok bool) {
+	var row []any
+	if err := json.Unmarshal(raw, &row); err != nil {
+		return nil, false
+	}
+	if len(row) < 3 {
+		return nil, false
+	}
+
+	pricing, ok := row[2].([]any)
+	if !ok || len(pricing) < 1 {
+		return nil, false
+	}
+
+	firstCell, ok := pricing[0].([]any)
+	if !ok || len(firstCell) < 2 {
+		return nil, false
+	}
+
+	return firstCell[1], true
+}
+
+func mergeParseErrors(dst, src *ParseErrors) {
+	if dst == nil || src == nil {
+		return
+	}
+	dst.UnmarshalFailures += src.UnmarshalFailures
+	dst.DateParseFailures += src.DateParseFailures
+	dst.ZeroPriceCount += src.ZeroPriceCount
+	dst.TotalOffersRaw += src.TotalOffersRaw
+	dst.EmptySections += src.EmptySections
+
+	if len(dst.Samples) >= 5 {
+		return
+	}
+	for _, sample := range src.Samples {
+		if sample == "" {
+			continue
+		}
+		dst.Samples = append(dst.Samples, sample)
+		if len(dst.Samples) >= 5 {
+			return
+		}
+	}
+}
+
+func getPriceGraphSection(sectionIndex int, bytesToDecode []byte) ([]Offer, *ParseErrors) {
 	offers := []Offer{}
+	parseErrors := &ParseErrors{Samples: make([]string, 0, 5)}
 
 	var err error
 
 	rawOffers := []json.RawMessage{}
 
 	if err = json.Unmarshal([]byte(bytesToDecode), &[]interface{}{nil, &rawOffers}); err != nil {
-		return nil, err
+		parseErrors.UnmarshalFailures++
+		if len(parseErrors.Samples) < 5 {
+			parseErrors.Samples = append(parseErrors.Samples, sampleFingerprint("raw_offers_unmarshal", bytesToDecode))
+		}
+		if priceGraphDiagnosticsEnabled() && len(bytesToDecode) > 0 {
+			slog.Info("price graph: failed to unmarshal raw offers array",
+				"section", sectionIndex,
+				"error", err,
+				"bytes_length", len(bytesToDecode),
+				"sha256", fingerprintBytes(bytesToDecode),
+			)
+		}
+		return nil, parseErrors
 	}
 
-	for _, o := range rawOffers {
+	parseErrors.TotalOffersRaw = len(rawOffers)
+	zeroPriceLogged := 0
+
+	for i, o := range rawOffers {
 		finalOffer := Offer{}
 
 		startDate := ""
 		returnDate := ""
 
 		if err = json.Unmarshal(o, priceGraphSchema(&startDate, &returnDate, &finalOffer.Price)); err != nil {
+			parseErrors.UnmarshalFailures++
+			if len(parseErrors.Samples) < 5 {
+				parseErrors.Samples = append(parseErrors.Samples, sampleFingerprint(fmt.Sprintf("offer_unmarshal[%d]", i), o))
+			}
 			continue
 		}
 
 		if finalOffer.StartDate, err = time.Parse("2006-01-02", startDate); err != nil {
+			parseErrors.DateParseFailures++
+			if len(parseErrors.Samples) < 5 {
+				parseErrors.Samples = append(parseErrors.Samples, sampleFingerprint(fmt.Sprintf("start_date_parse[%d]", i), o))
+			}
 			continue
 		}
 		if finalOffer.ReturnDate, err = time.Parse("2006-01-02", returnDate); err != nil {
+			parseErrors.DateParseFailures++
+			if len(parseErrors.Samples) < 5 {
+				parseErrors.Samples = append(parseErrors.Samples, sampleFingerprint(fmt.Sprintf("return_date_parse[%d]", i), o))
+			}
 			continue
+		}
+
+		if finalOffer.Price == 0 {
+			parseErrors.ZeroPriceCount++
+			if zeroPriceLogged < 10 {
+				zeroPriceLogged++
+				if priceGraphDiagnosticsEnabled() {
+					rawValue, ok := extractRawPriceValue(o)
+					rawType := "<unknown>"
+					rawNil := false
+					rawFloat := false
+					if ok {
+						if rawValue == nil {
+							rawNil = true
+							rawType = "null"
+						} else {
+							rawType = fmt.Sprintf("%T", rawValue)
+							if _, isFloat := rawValue.(float64); isFloat {
+								rawFloat = true
+							}
+						}
+					}
+					slog.Info("price graph: zero-price offer parsed",
+						"section", sectionIndex,
+						"index", i,
+						"start_date", startDate,
+						"return_date", returnDate,
+						"sha256", fingerprintBytes(o),
+						"len", len(o),
+						"raw_price_extracted", ok,
+						"raw_price_type", rawType,
+						"raw_price_is_null", rawNil,
+						"raw_price_is_float", rawFloat,
+					)
+				}
+			}
 		}
 
 		offers = append(offers, finalOffer)
 	}
 
-	return offers, nil
+	if priceGraphDiagnosticsEnabled() && (parseErrors.UnmarshalFailures > 0 || parseErrors.DateParseFailures > 0 || parseErrors.ZeroPriceCount > 0) {
+		slog.Info("price graph: section parse summary",
+			"section", sectionIndex,
+			"raw_offers", parseErrors.TotalOffersRaw,
+			"unmarshal_failures", parseErrors.UnmarshalFailures,
+			"date_parse_failures", parseErrors.DateParseFailures,
+			"zero_price_count", parseErrors.ZeroPriceCount,
+			"samples", parseErrors.Samples,
+		)
+	}
+
+	return offers, parseErrors
 }
 
 // GetPriceGraph retrieves offers (date range) from the "Price graph" section of Google Flight search.
@@ -113,21 +292,24 @@ func getPriceGraphSection(bytesToDecode []byte) ([]Offer, error) {
 // GetPriceGraph returns an error if any of the requests fail or if any of the city names are misspelled.
 //
 // Requirements are described by the [PriceGraphArgs.Validate] function.
-func (s *Session) GetPriceGraph(ctx context.Context, args PriceGraphArgs) ([]Offer, error) {
+func (s *Session) GetPriceGraph(ctx context.Context, args PriceGraphArgs) ([]Offer, *ParseErrors, error) {
 	if err := args.Validate(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	offers := []Offer{}
+	parseErrors := &ParseErrors{Samples: make([]string, 0, 5)}
 
 	resp, err := s.doRequestPriceGraph(ctx, args)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer resp.Body.Close()
 
 	body := bufio.NewReader(resp.Body)
 	skipPrefix(body)
+
+	sectionIndex := 0
 
 	for {
 		readLine(body) // skip line
@@ -136,10 +318,17 @@ func (s *Session) GetPriceGraph(ctx context.Context, args PriceGraphArgs) ([]Off
 			sortSlice(offers, func(lv, rv Offer) bool {
 				return lv.StartDate.Before(rv.StartDate)
 			})
-			return offers, nil
+			return offers, parseErrors, nil
 		}
 
-		offers_, _ := getPriceGraphSection(bytesToDecode)
+		sectionIndex++
+		// The upstream response sometimes includes empty frames near the end; treat them as benign.
+		if len(bytes.TrimSpace(bytesToDecode)) == 0 {
+			parseErrors.EmptySections++
+			continue
+		}
+		offers_, sectionErrors := getPriceGraphSection(sectionIndex, bytesToDecode)
+		mergeParseErrors(parseErrors, sectionErrors)
 		offers = append(offers, offers_...)
 	}
 }

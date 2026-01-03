@@ -17,7 +17,7 @@ func ExampleSession_GetPriceGraph() {
 		log.Fatal(err)
 	}
 
-	offers, err := session.GetPriceGraph(
+	offers, _, err := session.GetPriceGraph(
 		context.Background(),
 		flights.PriceGraphArgs{
 			RangeStartDate: time.Now().AddDate(0, 0, 30),

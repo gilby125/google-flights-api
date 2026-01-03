@@ -24,7 +24,7 @@ func TestGetPriceGraph(t *testing.T) {
 	daysDiff2 := 90
 	expectedOffers := daysDiff2 - daysDiff1 + 1
 
-	offers, err := session.GetPriceGraph(
+	offers, _, err := session.GetPriceGraph(
 		context.Background(),
 		PriceGraphArgs{
 			time.Now().AddDate(0, 0, daysDiff1),
@@ -46,7 +46,7 @@ func TestGetPriceGraph(t *testing.T) {
 func testGetPriceGraphTravelers(t *testing.T, session *Session, rootPrice float64, args PriceGraphArgs, multiplier float64) {
 	percentageDiff := 20.0
 
-	offers, err := session.GetPriceGraph(context.Background(), args)
+	offers, _, err := session.GetPriceGraph(context.Background(), args)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestGetPriceGraphTravelers(t *testing.T) {
 		Options{Travelers{Adults: 1}, currency.PLN, AnyStops, Economy, RoundTrip, language.English},
 	}
 
-	offers, err := session.GetPriceGraph(context.Background(), args)
+	offers, _, err := session.GetPriceGraph(context.Background(), args)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestGetPriceGraphMock(t *testing.T) {
 		client: httpClientMock,
 	}
 
-	offers, err := session.GetPriceGraph(
+	offers, _, err := session.GetPriceGraph(
 		context.Background(),
 		PriceGraphArgs{
 			time.Now().AddDate(0, 0, 2),
