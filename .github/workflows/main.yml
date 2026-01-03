@@ -171,6 +171,71 @@ jobs:
           GOVULN_DISABLE=1
           CGO_ENABLED=0
 
+  binary-build:
+    runs-on: ubuntu-latest
+    needs: build-test
+    if: github.event_name != 'pull_request'
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - name: Build binaries
+      run: |
+        mkdir -p dist
+        
+        # Linux AMD64 (GCP e2-micro, Azure VMs)
+        echo "Building linux/amd64..."
+        CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+          -trimpath -ldflags="-s -w -X main.Version=${{ github.sha }}" \
+          -o dist/flight-api-linux-amd64 .
+        
+        # Linux ARM64 (Oracle OCI Ampere, AWS Graviton)
+        echo "Building linux/arm64..."
+        CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build \
+          -trimpath -ldflags="-s -w -X main.Version=${{ github.sha }}" \
+          -o dist/flight-api-linux-arm64 .
+        
+        # Generate checksums
+        cd dist && sha256sum * > checksums.txt
+
+    - name: Upload binaries as artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: binaries-${{ github.sha }}
+        path: dist/
+        retention-days: 30
+
+    - name: Create Release (main branch only)
+      if: github.ref_name == 'main'
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: build-${{ github.run_number }}
+        name: Build ${{ github.run_number }} (${{ github.sha }})
+        body: |
+          Automated build from commit ${{ github.sha }}
+          
+          **Download binaries:**
+          - `flight-api-linux-amd64` - For GCP, Azure, standard x86 VMs
+          - `flight-api-linux-arm64` - For Oracle OCI Ampere, AWS Graviton
+          
+          **Verify checksums:**
+          ```bash
+          sha256sum -c checksums.txt
+          ```
+        files: |
+          dist/flight-api-linux-amd64
+          dist/flight-api-linux-arm64
+          dist/checksums.txt
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   deploy-kubernetes-staging:
     runs-on: ubuntu-latest
     needs: [docker-build]
