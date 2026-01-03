@@ -1,21 +1,34 @@
 services:
+  metabase_db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: ${METABASE_DB_NAME:-metabase}
+      POSTGRES_USER: ${METABASE_DB_USER:-metabase}
+      POSTGRES_PASSWORD: ${METABASE_DB_PASSWORD:-changeme}
+    volumes:
+      - metabase_pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
   metabase:
     image: metabase/metabase:latest
     environment:
-      # Persist Metabase's internal application DB (H2) to a named volume.
-      MB_DB_FILE: /metabase-data/metabase.db
+      # Use Postgres for Metabase's internal application DB (recommended for production).
+      MB_DB_TYPE: postgres
+      MB_DB_HOST: metabase_db
+      MB_DB_PORT: 5432
+      MB_DB_DBNAME: ${METABASE_DB_NAME:-metabase}
+      MB_DB_USER: ${METABASE_DB_USER:-metabase}
+      MB_DB_PASS: ${METABASE_DB_PASSWORD:-changeme}
       JAVA_TIMEZONE: ${TZ:-UTC}
     ports:
       # Bind Metabase to localhost by default; set TAILSCALE_BIND_IP to expose over Tailscale.
       - "${TAILSCALE_BIND_IP:-127.0.0.1}:${METABASE_PORT:-3002}:3000"
-    volumes:
-      - metabase_data:/metabase-data
     networks:
       - google_flights_master_default
     restart: unless-stopped
 
 volumes:
-  metabase_data:
+  metabase_pgdata:
 
 networks:
   # Attach to the existing Flight API stack network so Metabase can reach Postgres as `postgres`.

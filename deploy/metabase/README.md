@@ -15,6 +15,11 @@ Metabase UI: `http://<host>:${METABASE_PORT:-3000}`
 
 Note: on shared hosts, `3000` is often already taken (e.g. Forgejo). Consider setting `METABASE_PORT=3002`.
 
+This standalone setup uses its own Postgres DB for Metabase's internal application data (recommended). Set:
+
+- `METABASE_DB_PASSWORD` (recommended; default is `changeme`)
+- Optional: `METABASE_DB_NAME` (default `metabase`), `METABASE_DB_USER` (default `metabase`)
+
 By default this binds to `127.0.0.1`. To expose it over Tailscale, set:
 
 - `TAILSCALE_BIND_IP=100.87.196.33` (or whatever the host's Tailscale IP is)
