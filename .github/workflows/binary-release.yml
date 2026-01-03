@@ -1,0 +1,72 @@
+name: Binary Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Create a GitHub Release'
+        required: false
+        default: true
+        type: boolean
+
+env:
+  GO_VERSION: '1.24'
+
+jobs:
+  build-binaries:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - name: Build binaries
+      run: |
+        mkdir -p dist
+        
+        # Linux AMD64 (GCP e2-micro, Azure VMs)
+        echo "Building linux/amd64..."
+        CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+          -trimpath -ldflags="-s -w -X main.Version=${{ github.sha }}" \
+          -o dist/flight-api-linux-amd64 .
+        
+        # Linux ARM64 (Oracle OCI Ampere, AWS Graviton)
+        echo "Building linux/arm64..."
+        CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build \
+          -trimpath -ldflags="-s -w -X main.Version=${{ github.sha }}" \
+          -o dist/flight-api-linux-arm64 .
+        
+        # Generate checksums
+        cd dist && sha256sum * > checksums.txt
+
+    - name: Upload binaries as artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: binaries-${{ github.sha }}
+        path: dist/
+        retention-days: 30
+
+    - name: Create Release
+      if: inputs.create_release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v${{ github.run_number }}-manual
+        name: Manual Build ${{ github.run_number }}
+        body: |
+          Manual build from commit ${{ github.sha }}
+          
+          **Download binaries:**
+          - `flight-api-linux-amd64` - For GCP, Azure, standard x86 VMs
+          - `flight-api-linux-arm64` - For Oracle OCI Ampere, AWS Graviton
+        files: |
+          dist/flight-api-linux-amd64
+          dist/flight-api-linux-arm64
+          dist/checksums.txt
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
