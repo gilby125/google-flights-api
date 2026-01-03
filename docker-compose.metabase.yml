@@ -6,10 +6,19 @@ services:
       MB_DB_FILE: /metabase-data/metabase.db
       JAVA_TIMEZONE: ${TZ:-UTC}
     ports:
-      - "${METABASE_PORT:-3000}:3000"
+      # Default to 3002 to avoid clashing with common services (e.g. Forgejo on 3000).
+      # Bind to localhost by default; set TAILSCALE_BIND_IP to expose over Tailscale.
+      - "${TAILSCALE_BIND_IP:-127.0.0.1}:${METABASE_PORT:-3002}:3000"
     volumes:
       - metabase_data:/metabase-data
+    networks:
+      - google_flights_master_default
     restart: unless-stopped
 
 volumes:
   metabase_data:
+
+networks:
+  # Attach to the existing Flight API stack network so Metabase can reach Postgres as `postgres`.
+  google_flights_master_default:
+    external: true

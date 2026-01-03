@@ -13,6 +13,8 @@ docker compose -f deploy/metabase/docker-compose.yml up -d
 
 Metabase UI: `http://<host>:${METABASE_PORT:-3000}`
 
+Note: on shared hosts, `3000` is often already taken (e.g. Forgejo). Consider setting `METABASE_PORT=3002`.
+
 By default this binds to `127.0.0.1`. To expose it over Tailscale, set:
 
 - `TAILSCALE_BIND_IP=100.87.196.33` (or whatever the host's Tailscale IP is)

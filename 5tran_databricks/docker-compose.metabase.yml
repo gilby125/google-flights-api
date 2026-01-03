@@ -5,7 +5,7 @@ services:
       MB_DB_FILE: /metabase-data/metabase.db
       JAVA_TIMEZONE: ${TZ:-UTC}
     ports:
-      - "${TAILSCALE_BIND_IP:-127.0.0.1}:${METABASE_PORT:-3000}:3000"
+      - "${TAILSCALE_BIND_IP:-127.0.0.1}:${METABASE_PORT:-3002}:3000"
     volumes:
       - metabase_data:/metabase-data
     networks:
