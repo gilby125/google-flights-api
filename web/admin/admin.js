@@ -19,6 +19,8 @@ const ENDPOINTS = {
     QUEUE: `${API_BASE}/admin/queue`,
     AIRPORTS: `${API_BASE}/airports`,
     AIRLINES: `${API_BASE}/airlines`,
+    REGIONS: `${API_BASE}/regions`,
+    AIRLINE_GROUPS: `${API_BASE}/airline-groups`,
     PRICE_GRAPH_SWEEPS: `${API_BASE}/admin/price-graph-sweeps`,
     CONTINUOUS_SWEEP: `${API_BASE}/admin/continuous-sweep`
 };
@@ -93,6 +95,9 @@ async function initAdminPanel() {
 
     // Initialize cron preview
     updateCronPreview();
+
+    // Initialize macro token helpers (regions / airline-groups)
+    initMacroTokenHelpers();
 
     // Load initial data
     await refreshData();
@@ -947,6 +952,98 @@ function toggleDateMode() {
     }
 }
 
+function initMacroTokenHelpers() {
+    const originSelect = document.getElementById('pgOriginRegionSelect');
+    const originAddBtn = document.getElementById('pgOriginRegionAddBtn');
+    const destSelect = document.getElementById('pgDestinationRegionSelect');
+    const destAddBtn = document.getElementById('pgDestinationRegionAddBtn');
+
+    if (originAddBtn) {
+        originAddBtn.addEventListener('click', () => {
+            const token = originSelect?.value || '';
+            if (!token) return;
+            appendTokenToTextarea('pgOrigins', token);
+        });
+    }
+
+    if (destAddBtn) {
+        destAddBtn.addEventListener('click', () => {
+            const token = destSelect?.value || '';
+            if (!token) return;
+            appendTokenToTextarea('pgDestinations', token);
+        });
+    }
+
+    // Populate selects asynchronously; UI should still function without it.
+    loadMacroMetadata().catch(err => console.warn('Failed to load macro metadata', err));
+}
+
+async function loadMacroMetadata() {
+    const originSelect = document.getElementById('pgOriginRegionSelect');
+    const originAddBtn = document.getElementById('pgOriginRegionAddBtn');
+    const destSelect = document.getElementById('pgDestinationRegionSelect');
+    const destAddBtn = document.getElementById('pgDestinationRegionAddBtn');
+
+    if (!originSelect && !destSelect) return;
+
+    const response = await fetch(ENDPOINTS.REGIONS);
+    if (!response.ok) {
+        throw new Error(`Failed to load regions (HTTP ${response.status})`);
+    }
+
+    const regions = safeParseJSON(await response.text(), []);
+    if (!Array.isArray(regions) || regions.length === 0) return;
+
+    populateRegionSelect(originSelect, regions);
+    populateRegionSelect(destSelect, regions);
+
+    if (originSelect) originSelect.disabled = false;
+    if (destSelect) destSelect.disabled = false;
+    if (originAddBtn) originAddBtn.disabled = false;
+    if (destAddBtn) destAddBtn.disabled = false;
+}
+
+function populateRegionSelect(selectEl, regions) {
+    if (!selectEl) return;
+
+    const currentValue = selectEl.value;
+    selectEl.innerHTML = '<option value="">Add a region…</option>';
+
+    regions.forEach(region => {
+        if (!region?.token) return;
+        const count = typeof region.airport_count === 'number' ? region.airport_count : null;
+        const samples = Array.isArray(region.sample_airports) ? region.sample_airports.slice(0, 3) : [];
+        const labelParts = [region.token];
+        if (count != null) labelParts.push(`(${count})`);
+        if (samples.length) labelParts.push(`— ${samples.join(', ')}`);
+
+        const option = document.createElement('option');
+        option.value = region.token;
+        option.textContent = labelParts.join(' ');
+        selectEl.appendChild(option);
+    });
+
+    if (currentValue) {
+        selectEl.value = currentValue;
+    }
+}
+
+function appendTokenToTextarea(textareaId, token) {
+    const textarea = document.getElementById(textareaId);
+    if (!textarea) return;
+
+    const normalized = String(token).trim().toUpperCase();
+    if (!normalized) return;
+
+    const existing = parseAirportList(textarea.value || '');
+    if (existing.includes(normalized)) {
+        return;
+    }
+
+    const next = existing.concat([normalized]);
+    textarea.value = next.join(', ');
+}
+
 function setButtonLoading(button, isLoading) {
     if (!button) return;
     if (isLoading) {
@@ -965,7 +1062,7 @@ function setButtonLoading(button, isLoading) {
 
 function parseAirportList(input) {
     return input
-        .split(',')
+        .split(/[\n,]/)
         .map(code => code.trim().toUpperCase())
         .filter(code => code.length > 0);
 }

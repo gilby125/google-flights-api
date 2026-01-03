@@ -43,9 +43,56 @@ const inputs = {
 // Chart instance
 let priceChart = null;
 let currentOffers = [];
+let currentSearchParams = null;
 let advancedOptionsVisible =
   !!elements.advancedOptions &&
   getComputedStyle(elements.advancedOptions).display !== "none";
+
+function escapeHtml(value) {
+  if (value == null) return "";
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function extractAirlineCodeFromFlightNumber(flightNumber) {
+  const input = String(flightNumber || "").trim().toUpperCase();
+  if (input.length < 2) return "";
+  const prefix = input.slice(0, 2);
+  return /^[A-Z0-9]{2}$/.test(prefix) ? prefix : "";
+}
+
+function renderAirlineGroupBadges(tokens) {
+  if (!Array.isArray(tokens) || tokens.length === 0) return "";
+
+  const labelFor = (token) => {
+    switch (token) {
+      case "GROUP:LOW_COST":
+        return { label: "Low-cost", cls: "bg-success" };
+      case "GROUP:STAR_ALLIANCE":
+        return { label: "Star Alliance", cls: "bg-primary" };
+      case "GROUP:ONEWORLD":
+        return { label: "oneworld", cls: "bg-info text-dark" };
+      case "GROUP:SKYTEAM":
+        return { label: "SkyTeam", cls: "bg-secondary" };
+      default:
+        return { label: token, cls: "bg-light text-dark border" };
+    }
+  };
+
+  return tokens
+    .map((raw) => {
+      const token = String(raw || "").trim().toUpperCase();
+      if (!token) return "";
+      const meta = labelFor(token);
+      return `<span class="badge ${meta.cls} me-1">${escapeHtml(meta.label)}</span>`;
+    })
+    .filter(Boolean)
+    .join("");
+}
 
 // Initialize the search page
 function initSearchPage() {
@@ -409,6 +456,7 @@ function displaySearchResults(searchResult) {
   }
 
   currentOffers = searchResult.offers.slice();
+  currentSearchParams = searchResult.search_params || null;
 
   // Sort and display results
   sortFlightResults();
@@ -456,7 +504,7 @@ function createFlightCard(offer) {
 
   // Format departure and arrival times
   const departureSegment = offer.segments[0];
-  const returnSegment = offer.segments.find((s) => s.is_return);
+  const tripType = currentSearchParams?.trip_type || "round_trip";
 
   const departureTime = new Date(departureSegment.departure_time);
   const arrivalTime = new Date(departureSegment.arrival_time);
@@ -479,7 +527,6 @@ function createFlightCard(offer) {
   let googleFlightsUrl = offer.google_flights_url;
   if (!googleFlightsUrl) {
     // Fallback to client-side URL generation if backend URL is not available
-    const tripType = returnSegment ? "round_trip" : "one_way";
     googleFlightsUrl = createGoogleFlightsUrl(
       departureSegment.departure_airport,
       departureSegment.arrival_airport,
@@ -488,10 +535,16 @@ function createFlightCard(offer) {
     );
   }
 
-  const airlineCode = departureSegment.airline_code || "";
+  const airlineCode =
+    departureSegment.airline_code ||
+    extractAirlineCodeFromFlightNumber(departureSegment.flight_number) ||
+    "";
   const airlineLogo = airlineCode
     ? `https://www.gstatic.com/flights/airline_logos/70px/${airlineCode}.png`
     : "https://via.placeholder.com/70x40?text=Air";
+
+  const airlineGroupBadges = renderAirlineGroupBadges(offer.airline_groups);
+  const currency = offer.currency || currentSearchParams?.currency || "";
 
   // Create card content
   card.innerHTML = `
@@ -499,7 +552,8 @@ function createFlightCard(offer) {
             <div class="col-md-2">
                 <img src="${airlineLogo}" 
                      alt="${airlineCode || "Airline"}" class="airline-logo">
-                <div>${airlineCode || "Unknown"} ${departureSegment.flight_number || ""}</div>
+                <div>${escapeHtml(airlineCode || "Unknown")} ${escapeHtml(departureSegment.flight_number || "")}</div>
+                <div class="mt-2">${airlineGroupBadges}</div>
             </div>
             <div class="col-md-3">
                 <div class="flight-time">${formattedDepartureTime} - ${formattedArrivalTime}</div>
@@ -511,7 +565,7 @@ function createFlightCard(offer) {
                 <div>${departureSegment.airplane || "Aircraft information unavailable"}</div>
             </div>
             <div class="col-md-2 text-end">
-                <div class="flight-price">${offer.currency} ${offer.price.toFixed(2)}</div>
+                <div class="flight-price">${escapeHtml(currency)} ${Number(offer.price || 0).toFixed(2)}</div>
                 <button class="btn btn-sm btn-outline-primary mt-2">Select</button>
                 <a href="${googleFlightsUrl}" target="_blank" class="btn btn-sm btn-outline-secondary mt-1">
                     <i class="bi bi-google"></i> View on Google Flights

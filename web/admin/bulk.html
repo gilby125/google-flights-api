@@ -234,12 +234,24 @@
                             <div class="col-md-6">
                                 <label for="bulkOrigins" class="form-label">Origins</label>
                                 <textarea class="form-control" id="bulkOrigins" rows="2" placeholder="e.g. JFK, BOS, EWR" required></textarea>
-                                <div class="form-text">Comma-separated airport codes.</div>
+                                <div class="form-text">Comma-separated airport codes or <code>REGION:*</code> tokens (e.g. <code>REGION:NORTH_AMERICA</code>).</div>
+                                <div class="input-group input-group-sm mt-2">
+                                    <select class="form-select" id="bulkOriginRegionSelect" disabled>
+                                        <option value="">Add a region…</option>
+                                    </select>
+                                    <button class="btn btn-outline-secondary" type="button" id="bulkOriginRegionAddBtn" disabled>Add</button>
+                                </div>
                             </div>
                             <div class="col-md-6">
                                 <label for="bulkDestinations" class="form-label">Destinations</label>
                                 <textarea class="form-control" id="bulkDestinations" rows="2" placeholder="e.g. LHR, CDG, AMS" required></textarea>
-                                <div class="form-text">Comma-separated airport codes.</div>
+                                <div class="form-text">Comma-separated airport codes or <code>REGION:*</code> tokens (e.g. <code>REGION:EUROPE</code>).</div>
+                                <div class="input-group input-group-sm mt-2">
+                                    <select class="form-select" id="bulkDestinationRegionSelect" disabled>
+                                        <option value="">Add a region…</option>
+                                    </select>
+                                    <button class="btn btn-outline-secondary" type="button" id="bulkDestinationRegionAddBtn" disabled>Add</button>
+                                </div>
                             </div>
                         </div>
 

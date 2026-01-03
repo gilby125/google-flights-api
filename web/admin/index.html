@@ -438,12 +438,24 @@
                                         <div class="mb-3">
                                             <label for="pgOrigins" class="form-label">Origins</label>
                                             <textarea class="form-control" id="pgOrigins" rows="2" placeholder="e.g. JFK, BOS, EWR" required></textarea>
-                                            <div class="form-text">Comma-separated airport codes.</div>
+                                            <div class="form-text">Comma-separated airport codes or <code>REGION:*</code> tokens (e.g. <code>REGION:EUROPE</code>).</div>
+                                            <div class="input-group input-group-sm mt-2">
+                                                <select class="form-select" id="pgOriginRegionSelect" disabled>
+                                                    <option value="">Add a region…</option>
+                                                </select>
+                                                <button class="btn btn-outline-secondary" type="button" id="pgOriginRegionAddBtn" disabled>Add</button>
+                                            </div>
                                         </div>
                                         <div class="mb-3">
                                             <label for="pgDestinations" class="form-label">Destinations</label>
                                             <textarea class="form-control" id="pgDestinations" rows="2" placeholder="e.g. LAX, SFO" required></textarea>
-                                            <div class="form-text">Comma-separated airport codes.</div>
+                                            <div class="form-text">Comma-separated airport codes or <code>REGION:*</code> tokens (e.g. <code>REGION:NORTH_AMERICA</code>).</div>
+                                            <div class="input-group input-group-sm mt-2">
+                                                <select class="form-select" id="pgDestinationRegionSelect" disabled>
+                                                    <option value="">Add a region…</option>
+                                                </select>
+                                                <button class="btn btn-outline-secondary" type="button" id="pgDestinationRegionAddBtn" disabled>Add</button>
+                                            </div>
                                         </div>
                                         <div class="row g-3 mb-3">
                                             <div class="col-md-6">

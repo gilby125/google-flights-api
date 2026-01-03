@@ -1,4 +1,5 @@
 const API_BASE = '/api/v1/admin';
+const META_BASE = '/api/v1';
 
 const bulkElements = {
     runsTable: document.getElementById('bulkRunsTable'),
@@ -70,6 +71,8 @@ async function initBulkPage() {
         });
     }
 
+    initBulkMacroTokenHelpers();
+
     await loadBulkRuns();
 }
 
@@ -100,6 +103,97 @@ function parseAirportList(input) {
         .split(/[\n,]/)
         .map(code => code.trim().toUpperCase())
         .filter(code => code.length > 0);
+}
+
+function initBulkMacroTokenHelpers() {
+    const originSelect = document.getElementById('bulkOriginRegionSelect');
+    const originAddBtn = document.getElementById('bulkOriginRegionAddBtn');
+    const destSelect = document.getElementById('bulkDestinationRegionSelect');
+    const destAddBtn = document.getElementById('bulkDestinationRegionAddBtn');
+
+    if (originAddBtn) {
+        originAddBtn.addEventListener('click', () => {
+            const token = originSelect?.value || '';
+            if (!token) return;
+            appendTokenToTextarea('bulkOrigins', token);
+        });
+    }
+
+    if (destAddBtn) {
+        destAddBtn.addEventListener('click', () => {
+            const token = destSelect?.value || '';
+            if (!token) return;
+            appendTokenToTextarea('bulkDestinations', token);
+        });
+    }
+
+    loadRegionsForBulk().catch(err => console.warn('Failed to load regions', err));
+}
+
+async function loadRegionsForBulk() {
+    const originSelect = document.getElementById('bulkOriginRegionSelect');
+    const originAddBtn = document.getElementById('bulkOriginRegionAddBtn');
+    const destSelect = document.getElementById('bulkDestinationRegionSelect');
+    const destAddBtn = document.getElementById('bulkDestinationRegionAddBtn');
+
+    if (!originSelect && !destSelect) return;
+
+    const response = await fetch(`${META_BASE}/regions`);
+    if (!response.ok) {
+        throw new Error(`Failed to load regions (HTTP ${response.status})`);
+    }
+
+    const regions = await response.json();
+    if (!Array.isArray(regions) || regions.length === 0) return;
+
+    populateRegionSelect(originSelect, regions);
+    populateRegionSelect(destSelect, regions);
+
+    if (originSelect) originSelect.disabled = false;
+    if (destSelect) destSelect.disabled = false;
+    if (originAddBtn) originAddBtn.disabled = false;
+    if (destAddBtn) destAddBtn.disabled = false;
+}
+
+function populateRegionSelect(selectEl, regions) {
+    if (!selectEl) return;
+
+    const currentValue = selectEl.value;
+    selectEl.innerHTML = '<option value="">Add a region…</option>';
+
+    regions.forEach(region => {
+        if (!region?.token) return;
+        const count = typeof region.airport_count === 'number' ? region.airport_count : null;
+        const samples = Array.isArray(region.sample_airports) ? region.sample_airports.slice(0, 3) : [];
+        const labelParts = [region.token];
+        if (count != null) labelParts.push(`(${count})`);
+        if (samples.length) labelParts.push(`— ${samples.join(', ')}`);
+
+        const option = document.createElement('option');
+        option.value = region.token;
+        option.textContent = labelParts.join(' ');
+        selectEl.appendChild(option);
+    });
+
+    if (currentValue) {
+        selectEl.value = currentValue;
+    }
+}
+
+function appendTokenToTextarea(textareaId, token) {
+    const textarea = document.getElementById(textareaId);
+    if (!textarea) return;
+
+    const normalized = String(token).trim().toUpperCase();
+    if (!normalized) return;
+
+    const existing = parseAirportList(textarea.value || '');
+    if (existing.includes(normalized)) {
+        return;
+    }
+
+    const next = existing.concat([normalized]);
+    textarea.value = next.join(', ');
 }
 
 function buildCronExpression(interval, timeValue) {

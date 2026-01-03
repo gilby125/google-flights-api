@@ -2447,12 +2447,14 @@ func DirectFlightSearch() gin.HandlerFunc {
 			segments := make([]map[string]interface{}, 0, len(offer.Flight))
 			airlineCodes := make([]string, 0, len(offer.Flight))
 			for _, flight := range offer.Flight {
+				airlineCode := macros.ExtractAirlineCodeFromFlightNumber(flight.FlightNumber)
 				segment := map[string]interface{}{
 					"departure_airport": flight.DepAirportCode,
 					"arrival_airport":   flight.ArrAirportCode,
 					"departure_time":    flight.DepTime.Format(time.RFC3339),
 					"arrival_time":      flight.ArrTime.Format(time.RFC3339),
 					"airline":           flight.AirlineName,
+					"airline_code":      airlineCode,
 					"flight_number":     flight.FlightNumber,
 					"duration":          int(flight.Duration.Minutes()),
 					"airplane":          flight.Airplane,
@@ -2461,8 +2463,8 @@ func DirectFlightSearch() gin.HandlerFunc {
 				segments = append(segments, segment)
 
 				// Extract airline code from flight number for tagging
-				if code := macros.ExtractAirlineCodeFromFlightNumber(flight.FlightNumber); code != "" {
-					airlineCodes = append(airlineCodes, code)
+				if airlineCode != "" {
+					airlineCodes = append(airlineCodes, airlineCode)
 				}
 			}
 
