@@ -21,8 +21,9 @@ services:
       MB_DB_PASS: ${METABASE_DB_PASSWORD:-changeme}
       JAVA_TIMEZONE: ${TZ:-UTC}
     ports:
-      # Bind Metabase to localhost by default; set TAILSCALE_BIND_IP to expose over Tailscale.
-      - "${TAILSCALE_BIND_IP:-127.0.0.1}:${METABASE_PORT:-3002}:3000"
+      # Bind to all interfaces by default so it is reachable on your LAN.
+      # Override with METABASE_BIND_IP (recommended) or TAILSCALE_BIND_IP.
+      - "${METABASE_BIND_IP:-${TAILSCALE_BIND_IP:-0.0.0.0}}:${METABASE_PORT:-3002}:3000"
     networks:
       - google_flights_master_default
     restart: unless-stopped

@@ -11,7 +11,7 @@ Two ways to run Metabase:
 docker compose -f deploy/metabase/docker-compose.yml up -d
 ```
 
-Metabase UI: `http://<host>:${METABASE_PORT:-3000}`
+Metabase UI: `http://<server-lan-ip>:${METABASE_PORT:-3002}`
 
 Note: on shared hosts, `3000` is often already taken (e.g. Forgejo). Consider setting `METABASE_PORT=3002`.
 
@@ -20,9 +20,10 @@ This standalone setup uses its own Postgres DB for Metabase's internal applicati
 - `METABASE_DB_PASSWORD` (recommended; default is `changeme`)
 - Optional: `METABASE_DB_NAME` (default `metabase`), `METABASE_DB_USER` (default `metabase`)
 
-By default this binds to `127.0.0.1`. To expose it over Tailscale, set:
+By default this binds to `0.0.0.0` (LAN reachable). You can restrict or choose an interface by setting:
 
-- `TAILSCALE_BIND_IP=100.87.196.33` (or whatever the host's Tailscale IP is)
+- `METABASE_BIND_IP=<server-lan-ip>` (LAN only) or `METABASE_BIND_IP=127.0.0.1` (host-only)
+- Or `TAILSCALE_BIND_IP=100.87.196.33` (Tailscale only)
 
 ## Start (overlay / same stack)
 

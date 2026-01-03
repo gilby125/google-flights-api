@@ -20,7 +20,7 @@ services:
       MB_DB_PASS: ${METABASE_DB_PASSWORD:-changeme}
       JAVA_TIMEZONE: ${TZ:-UTC}
     ports:
-      - "${TAILSCALE_BIND_IP:-127.0.0.1}:${METABASE_PORT:-3002}:3000"
+      - "${METABASE_BIND_IP:-${TAILSCALE_BIND_IP:-0.0.0.0}}:${METABASE_PORT:-3002}:3000"
     networks:
       - google_flights_master_default
     restart: unless-stopped
