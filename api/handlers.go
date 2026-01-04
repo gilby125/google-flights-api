@@ -2807,6 +2807,45 @@ type SweepConfigRequest struct {
 	TargetDurationHours int    `json:"target_duration_hours,omitempty"`
 	MinDelayMs          int    `json:"min_delay_ms,omitempty"`
 	Class               string `json:"class,omitempty"`
+	TripLengths         *[]int `json:"trip_lengths,omitempty"`
+}
+
+func normalizeContinuousSweepTripLengths(input []int) ([]int, error) {
+	if len(input) == 0 {
+		return nil, fmt.Errorf("trip_lengths cannot be empty")
+	}
+
+	seen := make(map[int]struct{}, len(input))
+	out := make([]int, 0, len(input))
+	for _, v := range input {
+		if v < 1 || v > 30 {
+			return nil, fmt.Errorf("trip_lengths values must be between 1 and 30 (got %d)", v)
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+
+	sort.Ints(out)
+	if len(out) > 30 {
+		return nil, fmt.Errorf("trip_lengths has too many values (max 30)")
+	}
+
+	return out, nil
+}
+
+func equalIntSlice(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // getContinuousSweepStatus returns the current status of the continuous sweep
@@ -2934,7 +2973,19 @@ func updateContinuousSweepConfig(workerManager *worker.Manager) gin.HandlerFunc 
 		}
 
 		// Start from the current config to avoid resetting unrelated fields.
-		newConfig := runner.GetConfig()
+		prevConfig := runner.GetConfig()
+		newConfig := prevConfig
+		tripLengthsChanged := false
+
+		if req.TripLengths != nil {
+			tripLengths, err := normalizeContinuousSweepTripLengths(*req.TripLengths)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			tripLengthsChanged = !equalIntSlice(tripLengths, prevConfig.TripLengths)
+			newConfig.TripLengths = tripLengths
+		}
 
 		// Apply updates
 		if req.PacingMode != "" {
@@ -2967,6 +3018,12 @@ func updateContinuousSweepConfig(workerManager *worker.Manager) gin.HandlerFunc 
 		}
 
 		runner.SetConfig(newConfig)
+		if tripLengthsChanged {
+			status := runner.GetStatus()
+			if status.IsRunning {
+				runner.RestartSweep()
+			}
+		}
 
 		c.JSON(http.StatusOK, gin.H{
 			"message": "Sweep configuration updated",

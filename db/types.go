@@ -349,6 +349,7 @@ type ContinuousSweepProgress struct {
 	LastError           sql.NullString
 	SweepStartedAt      sql.NullTime
 	LastUpdated         time.Time
+	TripLengths         []int
 	PacingMode          string // "adaptive" or "fixed"
 	TargetDurationHours int
 	MinDelayMs          int
@@ -385,6 +386,7 @@ type SweepStatusResponse struct {
 	CurrentDestination  string    `json:"current_destination"`
 	Class               string    `json:"class"`
 	Stops               string    `json:"stops"`
+	TripLengths         []int     `json:"trip_lengths"`
 	QueriesCompleted    int       `json:"queries_completed"`
 	ErrorsCount         int       `json:"errors_count"`
 	LastError           string    `json:"last_error,omitempty"`

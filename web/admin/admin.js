@@ -1068,10 +1068,32 @@ function parseAirportList(input) {
 }
 
 function parseNumberList(input) {
-    return input
-        .split(',')
-        .map(value => parseInt(value.trim(), 10))
-        .filter(value => !Number.isNaN(value) && Number.isFinite(value));
+    const text = String(input || '');
+    if (!text.trim()) return [];
+
+    const values = [];
+    const re = /(-?\d+)\s*(?:-\s*(-?\d+))?/g;
+    let match;
+    while ((match = re.exec(text)) !== null) {
+        const start = parseInt(match[1], 10);
+        if (Number.isNaN(start) || !Number.isFinite(start)) continue;
+
+        if (match[2] != null) {
+            const end = parseInt(match[2], 10);
+            if (Number.isNaN(end) || !Number.isFinite(end)) continue;
+
+            const step = start <= end ? 1 : -1;
+            for (let v = start; v !== end + step; v += step) {
+                values.push(v);
+            }
+        } else {
+            values.push(start);
+        }
+    }
+
+    return Array.from(new Set(values))
+        .filter(value => !Number.isNaN(value) && Number.isFinite(value))
+        .sort((a, b) => a - b);
 }
 
 function formatTripLengthRange(minVal, maxVal) {
@@ -1368,10 +1390,14 @@ function updateSweepStatusUI(status) {
 
     // Update config form with current values
     const sweepClass = document.getElementById('sweepClass');
+    const tripLengths = document.getElementById('sweepTripLengths');
     const pacingMode = document.getElementById('sweepPacingMode');
     const targetHours = document.getElementById('sweepTargetHours');
     const minDelay = document.getElementById('sweepMinDelay');
     if (sweepClass && status.class) sweepClass.value = status.class;
+    if (tripLengths && Array.isArray(status.trip_lengths) && status.trip_lengths.length) {
+        tripLengths.value = status.trip_lengths.join(',');
+    }
     if (pacingMode && status.pacing_mode) pacingMode.value = status.pacing_mode;
     if (targetHours && status.target_duration_hours) targetHours.value = status.target_duration_hours;
     if (minDelay && status.current_delay_ms) minDelay.value = status.current_delay_ms;
@@ -1558,22 +1584,34 @@ async function updateSweepConfig(event) {
     event.preventDefault();
 
     const cabinClass = document.getElementById('sweepClass')?.value;
+    const tripLengthsRaw = document.getElementById('sweepTripLengths')?.value || '';
+    const tripLengths = parseNumberList(tripLengthsRaw);
     const pacingMode = document.getElementById('sweepPacingMode')?.value;
     const targetHours = parseInt(document.getElementById('sweepTargetHours')?.value || '24', 10);
     const minDelay = parseInt(document.getElementById('sweepMinDelay')?.value || '3000', 10);
 
+    if (tripLengthsRaw.trim() !== '' && tripLengths.length === 0) {
+        showAlert('Trip Lengths must be a list (e.g. 3,5,7) or range (e.g. 3-14).', 'danger');
+        return;
+    }
+
     try {
+        const payload = {
+            class: cabinClass,
+            pacing_mode: pacingMode,
+            target_duration_hours: targetHours,
+            min_delay_ms: minDelay,
+        };
+        if (tripLengthsRaw.trim() !== '') {
+            payload.trip_lengths = tripLengths;
+        }
+
         const response = await fetch(`${ENDPOINTS.CONTINUOUS_SWEEP}/config`, {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({
-                class: cabinClass,
-                pacing_mode: pacingMode,
-                target_duration_hours: targetHours,
-                min_delay_ms: minDelay
-            })
+            body: JSON.stringify(payload)
         });
 
         if (!response.ok) {

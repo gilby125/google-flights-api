@@ -28,6 +28,9 @@ This document formalizes the public contract for the Google Flights API service 
 - `POST /api/v1/admin/jobs`: Creates a scheduled job. Body includes `name`, `cron`, and job template. Returns `201` with job metadata.
 - `POST /api/v1/admin/jobs/:id/run|enable|disable`: Run immediately or toggle job state; success returns updated job record.
 - `GET /api/v1/admin/workers` and `GET /api/v1/admin/queue`: Surface worker pool health and queue depth metrics for dashboards.
+- Continuous sweep (admin UI support):
+  - `GET /api/v1/admin/continuous-sweep/status`: Returns current sweep status, including `trip_lengths` (nights).
+  - `PUT /api/v1/admin/continuous-sweep/config`: Updates sweep config. Supported keys include `trip_lengths` (array of ints, 1–30), `class`, `pacing_mode`, `target_duration_hours`, `min_delay_ms`.
 
 ## Legacy Endpoints
 - `/api/search` (POST) executes an immediate search without queueing; response includes raw flight offers. Reserved for internal tooling—external clients should prefer the queued endpoints.

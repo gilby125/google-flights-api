@@ -309,6 +309,7 @@ func (r *ContinuousSweepRunner) GetStatus() db.SweepStatusResponse {
 		TargetDurationHours: r.config.TargetDurationHours,
 		Class:               r.config.Class,
 		Stops:               r.config.Stops,
+		TripLengths:         append([]int(nil), r.config.TripLengths...),
 	}
 
 	if status.TotalRoutes > 0 {
@@ -645,6 +646,7 @@ func (r *ContinuousSweepRunner) saveProgress(ctx context.Context) {
 		LastError:           sql.NullString{String: r.lastError, Valid: r.lastError != ""},
 		SweepStartedAt:      sql.NullTime{Time: r.startTime, Valid: !r.startTime.IsZero()},
 		LastUpdated:         time.Now(),
+		TripLengths:         append([]int(nil), r.config.TripLengths...),
 		PacingMode:          string(r.config.PacingMode),
 		TargetDurationHours: r.config.TargetDurationHours,
 		MinDelayMs:          r.config.MinDelayMs,
@@ -694,6 +696,9 @@ func (r *ContinuousSweepRunner) restoreProgress(ctx context.Context) error {
 	}
 	if progress.SweepStartedAt.Valid {
 		r.startTime = progress.SweepStartedAt.Time
+	}
+	if len(progress.TripLengths) > 0 {
+		r.config.TripLengths = append([]int(nil), progress.TripLengths...)
 	}
 	r.config.PacingMode = PacingMode(progress.PacingMode)
 	if progress.TargetDurationHours > 0 {

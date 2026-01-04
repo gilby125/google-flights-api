@@ -1032,8 +1032,8 @@ func (p *PostgresDBImpl) SaveContinuousSweepProgress(ctx context.Context, progre
 		`INSERT INTO continuous_sweep_progress
 			(id, sweep_number, route_index, total_routes, current_origin, current_destination,
 			 queries_completed, errors_count, last_error, sweep_started_at, last_updated,
-			 pacing_mode, target_duration_hours, min_delay_ms, is_running, is_paused, international_only)
-		 VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), $10, $11, $12, $13, $14, $15)
+			 trip_lengths, pacing_mode, target_duration_hours, min_delay_ms, is_running, is_paused, international_only)
+		 VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), $10, $11, $12, $13, $14, $15, $16)
 		 ON CONFLICT (id) DO UPDATE SET
 			sweep_number = $1,
 			route_index = $2,
@@ -1045,12 +1045,13 @@ func (p *PostgresDBImpl) SaveContinuousSweepProgress(ctx context.Context, progre
 			last_error = $8,
 			sweep_started_at = $9,
 			last_updated = NOW(),
-			pacing_mode = $10,
-			target_duration_hours = $11,
-			min_delay_ms = $12,
-			is_running = $13,
-			is_paused = $14,
-			international_only = $15`,
+			trip_lengths = $10,
+			pacing_mode = $11,
+			target_duration_hours = $12,
+			min_delay_ms = $13,
+			is_running = $14,
+			is_paused = $15,
+			international_only = $16`,
 		progress.SweepNumber,
 		progress.RouteIndex,
 		progress.TotalRoutes,
@@ -1060,6 +1061,7 @@ func (p *PostgresDBImpl) SaveContinuousSweepProgress(ctx context.Context, progre
 		progress.ErrorsCount,
 		progress.LastError,
 		progress.SweepStartedAt,
+		pq.Array(progress.TripLengths),
 		progress.PacingMode,
 		progress.TargetDurationHours,
 		progress.MinDelayMs,
@@ -1076,10 +1078,11 @@ func (p *PostgresDBImpl) SaveContinuousSweepProgress(ctx context.Context, progre
 // GetContinuousSweepProgress retrieves the current continuous sweep progress
 func (p *PostgresDBImpl) GetContinuousSweepProgress(ctx context.Context) (*ContinuousSweepProgress, error) {
 	var progress ContinuousSweepProgress
+	var tripLengths pq.Int64Array
 	err := p.db.QueryRowContext(ctx,
 		`SELECT id, sweep_number, route_index, total_routes, current_origin, current_destination,
 		        queries_completed, errors_count, last_error, sweep_started_at, last_updated,
-		        pacing_mode, target_duration_hours, min_delay_ms, is_running, is_paused,
+		        COALESCE(trip_lengths, '{7,14}'), pacing_mode, target_duration_hours, min_delay_ms, is_running, is_paused,
 		        COALESCE(international_only, TRUE)
 		 FROM continuous_sweep_progress
 		 WHERE id = 1`,
@@ -1095,6 +1098,7 @@ func (p *PostgresDBImpl) GetContinuousSweepProgress(ctx context.Context) (*Conti
 		&progress.LastError,
 		&progress.SweepStartedAt,
 		&progress.LastUpdated,
+		&tripLengths,
 		&progress.PacingMode,
 		&progress.TargetDurationHours,
 		&progress.MinDelayMs,
@@ -1116,10 +1120,17 @@ func (p *PostgresDBImpl) GetContinuousSweepProgress(ctx context.Context) (*Conti
 				IsRunning:           false,
 				IsPaused:            false,
 				InternationalOnly:   true,
+				TripLengths:         []int{7, 14},
 			}, nil
 		}
 		return nil, fmt.Errorf("failed to get continuous sweep progress: %w", err)
 	}
+
+	progress.TripLengths = make([]int, len(tripLengths))
+	for i, v := range tripLengths {
+		progress.TripLengths[i] = int(v)
+	}
+
 	return &progress, nil
 }
 
@@ -1710,6 +1721,7 @@ func (p *PostgresDBImpl) InitSchema() error {
             last_error TEXT,
             sweep_started_at TIMESTAMP WITH TIME ZONE,
             last_updated TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            trip_lengths INTEGER[] DEFAULT '{7,14}',
             pacing_mode VARCHAR(20) DEFAULT 'adaptive',
             target_duration_hours INTEGER DEFAULT 24,
             min_delay_ms INTEGER DEFAULT 3000,
@@ -1720,6 +1732,14 @@ func (p *PostgresDBImpl) InitSchema() error {
     `)
 	if err != nil {
 		return fmt.Errorf("failed to create continuous_sweep_progress table: %w", err)
+	}
+
+	_, err = p.db.Exec(`
+        ALTER TABLE continuous_sweep_progress
+        ADD COLUMN IF NOT EXISTS trip_lengths INTEGER[] DEFAULT '{7,14}'
+    `)
+	if err != nil {
+		return fmt.Errorf("failed to add trip_lengths to continuous_sweep_progress: %w", err)
 	}
 
 	// Insert default progress row if not exists
