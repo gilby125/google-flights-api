@@ -383,6 +383,8 @@ type SweepStatusResponse struct {
 	ProgressPercent     float64   `json:"progress_percent"`
 	CurrentOrigin       string    `json:"current_origin"`
 	CurrentDestination  string    `json:"current_destination"`
+	Class               string    `json:"class"`
+	Stops               string    `json:"stops"`
 	QueriesCompleted    int       `json:"queries_completed"`
 	ErrorsCount         int       `json:"errors_count"`
 	LastError           string    `json:"last_error,omitempty"`

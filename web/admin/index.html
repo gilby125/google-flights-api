@@ -245,14 +245,24 @@
                                 <div class="card-header bg-white">
                                     <i class="bi bi-gear me-2"></i>Configuration
                                 </div>
-                                <div class="card-body">
-                                    <form id="sweepConfigForm">
-                                        <div class="mb-3">
-                                            <label class="form-label">Pacing Mode</label>
-                                            <select class="form-select" id="sweepPacingMode">
-                                                <option value="adaptive">Adaptive (1 sweep / 24h)</option>
-                                                <option value="fixed">Fixed (3s delay)</option>
-                                            </select>
+	                                <div class="card-body">
+	                                    <form id="sweepConfigForm">
+	                                        <div class="mb-3">
+	                                            <label class="form-label">Cabin Class</label>
+	                                            <select class="form-select" id="sweepClass">
+	                                                <option value="economy" selected>Economy</option>
+	                                                <option value="premium_economy">Premium Economy</option>
+	                                                <option value="business">Business</option>
+	                                                <option value="first">First</option>
+	                                            </select>
+	                                            <div class="form-text">Applies to new continuous price graph jobs as they are enqueued.</div>
+	                                        </div>
+	                                        <div class="mb-3">
+	                                            <label class="form-label">Pacing Mode</label>
+	                                            <select class="form-select" id="sweepPacingMode">
+	                                                <option value="adaptive">Adaptive (1 sweep / 24h)</option>
+	                                                <option value="fixed">Fixed (3s delay)</option>
+	                                            </select>
                                             <div class="form-text">Adaptive auto-calculates delay for 1 sweep per day.</div>
                                         </div>
                                         <div class="mb-3">

@@ -793,6 +793,9 @@ func (m *Manager) processContinuousPriceGraph(ctx context.Context, worker *Worke
 	var cheapest *flights.Offer
 	for i := range offers {
 		price := offers[i].Price
+		if price <= 0 {
+			continue
+		}
 		if cheapest == nil || price < cheapest.Price {
 			cheapest = &offers[i]
 		}
@@ -1539,6 +1542,20 @@ func (m *Manager) processBulkSearchCheapFirst(ctx context.Context, worker *Worke
 				continue
 			}
 
+			// Price=0 means price unavailable; skip these to avoid treating them as "free".
+			filtered := priceOffers[:0]
+			for _, offer := range priceOffers {
+				if offer.Price <= 0 {
+					continue
+				}
+				filtered = append(filtered, offer)
+			}
+			priceOffers = filtered
+			if len(priceOffers) == 0 {
+				log.Printf("[CheapFirst] No priced offers found for %s (all offers were price=0)", routeKey)
+				continue
+			}
+
 			// Sort offers by price to find top N cheapest dates
 			sort.Slice(priceOffers, func(i, j int) bool {
 				return priceOffers[i].Price < priceOffers[j].Price
@@ -1845,6 +1862,10 @@ func (m *Manager) processPriceGraphSweep(ctx context.Context, worker *Worker, se
 				}
 
 				for _, offer := range offers {
+					// Price=0 means price unavailable; skip these rows.
+					if offer.Price <= 0 {
+						continue
+					}
 					distanceMiles, costPerMile := calculateDistanceAndCostPerMile(origin, destination, offer.Price)
 					record := db.PriceGraphResultRecord{
 						SweepID:       sweepID,

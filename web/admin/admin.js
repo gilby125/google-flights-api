@@ -1282,18 +1282,33 @@ function updateSweepStatusUI(status) {
     const statusBadge = document.getElementById('sweepStatusBadge');
     const statusText = document.getElementById('sweepStatusText');
     if (statusBadge && statusText) {
+        const cabinLabel = (() => {
+            switch (status.class) {
+                case 'economy':
+                    return 'Economy';
+                case 'premium_economy':
+                    return 'Premium Economy';
+                case 'business':
+                    return 'Business';
+                case 'first':
+                    return 'First';
+                default:
+                    return null;
+            }
+        })();
         if (status.is_paused) {
             statusBadge.className = 'badge bg-warning';
             statusBadge.textContent = 'Paused';
-            statusText.textContent = 'Sweep is paused';
+            statusText.textContent = cabinLabel ? `Sweep is paused • ${cabinLabel}` : 'Sweep is paused';
         } else if (status.is_running) {
             statusBadge.className = 'badge bg-success';
             statusBadge.textContent = 'Running';
-            statusText.textContent = status.pacing_mode === 'adaptive' ? 'Adaptive mode' : 'Fixed delay mode';
+            const modeLabel = status.pacing_mode === 'adaptive' ? 'Adaptive mode' : 'Fixed delay mode';
+            statusText.textContent = cabinLabel ? `${modeLabel} • ${cabinLabel}` : modeLabel;
         } else {
             statusBadge.className = 'badge bg-secondary';
             statusBadge.textContent = 'Stopped';
-            statusText.textContent = 'Sweep is not running';
+            statusText.textContent = cabinLabel ? `Sweep is not running • ${cabinLabel}` : 'Sweep is not running';
         }
     }
 
@@ -1352,9 +1367,11 @@ function updateSweepStatusUI(status) {
     updateSweepButtonStates(status);
 
     // Update config form with current values
+    const sweepClass = document.getElementById('sweepClass');
     const pacingMode = document.getElementById('sweepPacingMode');
     const targetHours = document.getElementById('sweepTargetHours');
     const minDelay = document.getElementById('sweepMinDelay');
+    if (sweepClass && status.class) sweepClass.value = status.class;
     if (pacingMode && status.pacing_mode) pacingMode.value = status.pacing_mode;
     if (targetHours && status.target_duration_hours) targetHours.value = status.target_duration_hours;
     if (minDelay && status.current_delay_ms) minDelay.value = status.current_delay_ms;
@@ -1540,6 +1557,7 @@ async function restartCurrentSweep() {
 async function updateSweepConfig(event) {
     event.preventDefault();
 
+    const cabinClass = document.getElementById('sweepClass')?.value;
     const pacingMode = document.getElementById('sweepPacingMode')?.value;
     const targetHours = parseInt(document.getElementById('sweepTargetHours')?.value || '24', 10);
     const minDelay = parseInt(document.getElementById('sweepMinDelay')?.value || '3000', 10);
@@ -1551,6 +1569,7 @@ async function updateSweepConfig(event) {
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
+                class: cabinClass,
                 pacing_mode: pacingMode,
                 target_duration_hours: targetHours,
                 min_delay_ms: minDelay

@@ -2806,6 +2806,7 @@ type SweepConfigRequest struct {
 	PacingMode          string `json:"pacing_mode,omitempty"`
 	TargetDurationHours int    `json:"target_duration_hours,omitempty"`
 	MinDelayMs          int    `json:"min_delay_ms,omitempty"`
+	Class               string `json:"class,omitempty"`
 }
 
 // getContinuousSweepStatus returns the current status of the continuous sweep
@@ -2932,17 +2933,8 @@ func updateContinuousSweepConfig(workerManager *worker.Manager) gin.HandlerFunc 
 			return
 		}
 
-		// Get current config and update fields
-		currentStatus := runner.GetStatus()
-		newConfig := worker.ContinuousSweepConfig{
-			TripLengths:         []int{7, 14},
-			DepartureWindowDays: 30,
-			Class:               "economy",
-			Stops:               "any",
-			Adults:              1,
-			Currency:            "USD",
-			InternationalOnly:   true,
-		}
+		// Start from the current config to avoid resetting unrelated fields.
+		newConfig := runner.GetConfig()
 
 		// Apply updates
 		if req.PacingMode != "" {
@@ -2954,20 +2946,24 @@ func updateContinuousSweepConfig(workerManager *worker.Manager) gin.HandlerFunc 
 				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid pacing_mode. Use 'adaptive' or 'fixed'"})
 				return
 			}
-		} else {
-			newConfig.PacingMode = worker.PacingMode(currentStatus.PacingMode)
 		}
 
 		if req.TargetDurationHours > 0 {
 			newConfig.TargetDurationHours = req.TargetDurationHours
-		} else {
-			newConfig.TargetDurationHours = currentStatus.TargetDurationHours
 		}
 
 		if req.MinDelayMs > 0 {
 			newConfig.MinDelayMs = req.MinDelayMs
-		} else {
-			newConfig.MinDelayMs = currentStatus.CurrentDelayMs
+		}
+
+		if req.Class != "" {
+			switch req.Class {
+			case "economy", "premium_economy", "business", "first":
+				newConfig.Class = req.Class
+			default:
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid class. Use 'economy', 'premium_economy', 'business', or 'first'"})
+				return
+			}
 		}
 
 		runner.SetConfig(newConfig)

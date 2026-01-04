@@ -284,6 +284,13 @@ func (r *ContinuousSweepRunner) SetConfig(config ContinuousSweepConfig) {
 	r.config = config
 }
 
+// GetConfig returns a copy of the current configuration.
+func (r *ContinuousSweepRunner) GetConfig() ContinuousSweepConfig {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.config
+}
+
 // GetStatus returns the current status
 func (r *ContinuousSweepRunner) GetStatus() db.SweepStatusResponse {
 	r.mu.RLock()
@@ -300,6 +307,8 @@ func (r *ContinuousSweepRunner) GetStatus() db.SweepStatusResponse {
 		LastError:           r.lastError,
 		PacingMode:          string(r.config.PacingMode),
 		TargetDurationHours: r.config.TargetDurationHours,
+		Class:               r.config.Class,
+		Stops:               r.config.Stops,
 	}
 
 	if status.TotalRoutes > 0 {
