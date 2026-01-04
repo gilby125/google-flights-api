@@ -845,6 +845,21 @@ func (m *Manager) processContinuousPriceGraph(ctx context.Context, worker *Worke
 		return err
 	}
 
+	// Sync price point to Neo4j for graph analytics (idempotent via MERGE)
+	if worker.neo4jDB != nil {
+		dateStr := cheapest.StartDate.Format("2006-01-02")
+		if syncErr := worker.neo4jDB.AddPricePoint(
+			payload.Origin,
+			payload.Destination,
+			dateStr,
+			cheapest.Price,
+			"", // No specific airline for price graph results
+		); syncErr != nil {
+			// Log but don't fail - Postgres is the source of truth
+			log.Printf("Warning: failed to sync price point to Neo4j for %s->%s: %v", payload.Origin, payload.Destination, syncErr)
+		}
+	}
+
 	return nil
 }
 
@@ -1907,6 +1922,14 @@ func (m *Manager) processPriceGraphSweep(ctx context.Context, worker *Worker, se
 						continue
 					}
 					resultsInserted++
+
+					// Sync price point to Neo4j for graph analytics (idempotent via MERGE)
+					if m.neo4jDB != nil {
+						dateStr := offer.StartDate.Format("2006-01-02")
+						if syncErr := m.neo4jDB.AddPricePoint(origin, destination, dateStr, offer.Price, ""); syncErr != nil {
+							log.Printf("Warning: failed to sync price point to Neo4j for %s->%s: %v", origin, destination, syncErr)
+						}
+					}
 				}
 
 				select {
