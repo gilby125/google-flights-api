@@ -65,7 +65,7 @@ async function initAdminPanel() {
     if (elements.exportResultsBtn) {
         elements.exportResultsBtn.addEventListener('click', exportPriceGraphResults);
     }
-    
+
     // Initialize Bootstrap modals
     const newJobModalEl = document.getElementById('newJobModal');
     if (newJobModalEl) {
@@ -76,7 +76,7 @@ async function initAdminPanel() {
     const futureDate = new Date();
     futureDate.setDate(futureDate.getDate() + 30);
     const dateString = futureDate.toISOString().split('T')[0];
-    
+
     const dateStartEl = document.getElementById('dateStart');
     const dateEndEl = document.getElementById('dateEnd');
     if (dateStartEl) dateStartEl.value = dateString;
@@ -102,8 +102,37 @@ async function initAdminPanel() {
     // Load initial data
     await refreshData();
 
-    // Set up auto-refresh every 30 seconds
-    setInterval(refreshData, 30000);
+    // Set up real-time updates via Server-Sent Events for workers
+    initEventSource();
+
+    // Keep periodic refresh for non-worker data (jobs, queue, sweeps)
+    setInterval(refreshNonWorkerData, 30000);
+}
+
+// Refresh non-worker data (jobs, queue, counts, sweeps) - workers are updated via SSE
+async function refreshNonWorkerData() {
+    try {
+        await Promise.allSettled([
+            loadJobs().catch(err => {
+                console.error('Error loading jobs:', err);
+                if (elements.jobsCount) elements.jobsCount.textContent = '?';
+            }),
+            loadQueueStatus().catch(err => {
+                console.error('Error loading queue:', err);
+                if (elements.queueSize) elements.queueSize.textContent = '?';
+            }),
+            loadSearchCounts().catch(err => {
+                console.error('Error loading search counts:', err);
+                if (elements.searchesCount) elements.searchesCount.textContent = '?';
+            }),
+            loadPriceGraphSweeps().catch(err => {
+                console.error('Error loading price graph sweeps:', err);
+                if (elements.sweepsStatus) elements.sweepsStatus.textContent = 'Failed to load sweeps';
+            })
+        ]);
+    } catch (error) {
+        console.error('Error refreshing non-worker data:', error);
+    }
 }
 
 // Refresh all data
@@ -133,7 +162,7 @@ async function refreshData() {
                 if (elements.sweepsStatus) elements.sweepsStatus.textContent = 'Failed to load sweeps';
             })
         ];
-        
+
         // Wait for all to complete (success or failure)
         await Promise.allSettled(loadPromises);
         console.log('Data refresh completed');
@@ -141,6 +170,99 @@ async function refreshData() {
         console.error('Error refreshing data:', error);
         showAlert('Some data could not be loaded. Check console for details.', 'warning');
     }
+}
+
+// Initialize Server-Sent Events for real-time updates
+function initEventSource() {
+    const eventSource = new EventSource(`${API_BASE}/admin/events`);
+
+    eventSource.addEventListener('worker-status', (e) => {
+        try {
+            const workers = JSON.parse(e.data);
+            updateWorkersUI(workers);
+        } catch (error) {
+            console.error('Error parsing worker-status event:', error);
+        }
+    });
+
+    eventSource.onerror = (error) => {
+        console.warn('SSE connection error, will auto-reconnect:', error);
+        // EventSource automatically reconnects
+    };
+
+    eventSource.onopen = () => {
+        console.log('SSE connection established');
+    };
+
+    // Store reference for cleanup if needed
+    window.adminEventSource = eventSource;
+}
+
+// Update workers UI with new data (extracted from loadWorkers)
+function updateWorkersUI(workers) {
+    if (!elements.workersTable) return;
+
+    // Convert worker status object to workers array if needed
+    if (!Array.isArray(workers)) {
+        if (workers.status === 'running') {
+            workers = Array.from({ length: 5 }, (_, i) => ({
+                id: i + 1,
+                status: 'active',
+                current_job: null,
+                processed_jobs: 0,
+                uptime: 0
+            }));
+        } else {
+            workers = [];
+        }
+    }
+
+    // Update workers count (treat processing as active)
+    const activeWorkers = workers.filter(w => w.status === 'active' || w.status === 'processing').length;
+    if (elements.workersCount) {
+        elements.workersCount.textContent = activeWorkers;
+    }
+
+    // Clear table
+    elements.workersTable.innerHTML = '';
+
+    // Add workers to table
+    workers.forEach(worker => {
+        const row = document.createElement('tr');
+        const workerId = Number.isInteger(worker.id) ? worker.id : escapeHtml(worker.id);
+        const workerStatus = escapeHtml(worker.status);
+        const currentJob = escapeHtml(worker.current_job || 'None');
+        const processedJobs = Number.isInteger(worker.processed_jobs) ? worker.processed_jobs : 0;
+
+        const source = escapeHtml(worker.source || '');
+        const hostname = escapeHtml(worker.hostname || '');
+        const concurrency = Number.isInteger(worker.concurrency) ? worker.concurrency : null;
+        const heartbeatAgeSeconds = Number.isInteger(worker.heartbeat_age_seconds) ? worker.heartbeat_age_seconds : null;
+
+        let idCell = `${workerId}`;
+        if (source === 'remote') {
+            idCell += ' <span class="badge bg-info ms-1">remote</span>';
+        }
+        const metaParts = [];
+        if (hostname) metaParts.push(hostname);
+        if (concurrency != null) metaParts.push(`${concurrency}x`);
+        if (heartbeatAgeSeconds != null) metaParts.push(`${heartbeatAgeSeconds}s ago`);
+        if (metaParts.length) {
+            idCell += `<br><small class="text-muted">${metaParts.join(' • ')}</small>`;
+        }
+        row.innerHTML = `
+            <td>${idCell}</td>
+            <td>
+                <span class="badge ${(worker.status === 'active' || worker.status === 'processing') ? 'bg-success' : 'bg-secondary'}">
+                    ${workerStatus}
+                </span>
+            </td>
+            <td>${currentJob}</td>
+            <td>${processedJobs}</td>
+            <td>${formatDuration(worker.uptime)}</td>
+        `;
+        elements.workersTable.appendChild(row);
+    });
 }
 
 // Load jobs data
@@ -151,7 +273,7 @@ async function loadJobs() {
     // Handle potential duplicate response format using safe parsing
     const responseText = await response.text();
     const jobs = safeParseJSON(responseText, []);
-    
+
     // Ensure we have an array
     if (!Array.isArray(jobs)) {
         console.warn('Jobs response is not an array:', jobs);
@@ -222,95 +344,35 @@ async function loadJobs() {
 async function loadWorkers() {
     const response = await fetch(ENDPOINTS.WORKERS);
     if (!response.ok) throw new Error('Failed to load workers');
-    
-    // Handle potential duplicate response format using safe parsing
+
     const responseText = await response.text();
-    let workers = safeParseJSON(responseText, {});
-    
-    // Convert worker status object to workers array if needed
-    if (!Array.isArray(workers)) {
-        if (workers.status === 'running') {
-            workers = Array.from({length: 5}, (_, i) => ({
-                id: i + 1,
-                status: 'active',
-                current_job: null,
-                processed_jobs: 0,
-                uptime: 0
-            }));
-        } else {
-            workers = [];
-        }
-    }
-    
-    // Update workers count (treat processing as active)
-    const activeWorkers = workers.filter(w => w.status === 'active' || w.status === 'processing').length;
-    elements.workersCount.textContent = activeWorkers;
-    
-    // Clear table
-    elements.workersTable.innerHTML = '';
-    
-    // Add workers to table
-    workers.forEach(worker => {
-        const row = document.createElement('tr');
-        const workerId = Number.isInteger(worker.id) ? worker.id : escapeHtml(worker.id);
-        const workerStatus = escapeHtml(worker.status);
-        const currentJob = escapeHtml(worker.current_job || 'None');
-        const processedJobs = Number.isInteger(worker.processed_jobs) ? worker.processed_jobs : 0;
-
-        const source = escapeHtml(worker.source || '');
-        const hostname = escapeHtml(worker.hostname || '');
-        const concurrency = Number.isInteger(worker.concurrency) ? worker.concurrency : null;
-        const heartbeatAgeSeconds = Number.isInteger(worker.heartbeat_age_seconds) ? worker.heartbeat_age_seconds : null;
-
-        let idCell = `${workerId}`;
-        if (source === 'remote') {
-            idCell += ' <span class="badge bg-info ms-1">remote</span>';
-        }
-        const metaParts = [];
-        if (hostname) metaParts.push(hostname);
-        if (concurrency != null) metaParts.push(`${concurrency}x`);
-        if (heartbeatAgeSeconds != null) metaParts.push(`${heartbeatAgeSeconds}s ago`);
-        if (metaParts.length) {
-            idCell += `<br><small class="text-muted">${metaParts.join(' • ')}</small>`;
-        }
-        row.innerHTML = `
-            <td>${idCell}</td>
-            <td>
-                <span class="badge ${(worker.status === 'active' || worker.status === 'processing') ? 'bg-success' : 'bg-secondary'}">
-                    ${workerStatus}
-                </span>
-            </td>
-            <td>${currentJob}</td>
-            <td>${processedJobs}</td>
-            <td>${formatDuration(worker.uptime)}</td>
-        `;
-        elements.workersTable.appendChild(row);
-    });
+    const workers = safeParseJSON(responseText, []);
+    updateWorkersUI(workers);
 }
 
 // Load queue status
 async function loadQueueStatus() {
     const response = await fetch(ENDPOINTS.QUEUE);
     if (!response.ok) throw new Error('Failed to load queue status');
-    
+
     // Handle potential duplicate response format using safe parsing
     const responseText = await response.text();
     const queues = safeParseJSON(responseText, {});
-    
+
     // Ensure we have an object
     if (typeof queues !== 'object' || Array.isArray(queues)) {
         console.warn('Queue response is not an object:', queues);
         return;
     }
-    
+
     // Update queue size
     let totalPending = 0;
     Object.values(queues).forEach(q => totalPending += q.pending || 0);
     elements.queueSize.textContent = totalPending;
-    
+
     // Clear table
     elements.queueTable.innerHTML = '';
-    
+
     // Add queues to table
     Object.entries(queues).forEach(([name, stats]) => {
         const row = document.createElement('tr');
@@ -342,12 +404,12 @@ async function loadSearchCounts() {
                 }
             });
             if (!response.ok) throw new Error(`HTTP ${response.status}: Failed to load search counts`);
-            
+
             const data = await response.json();
             elements.searchesCount.textContent = data.total || 0;
             return; // Success, exit retry loop
         } catch (error) {
-            console.error(`Error loading search counts (${4-retries}/3):`, error);
+            console.error(`Error loading search counts (${4 - retries}/3):`, error);
             retries--;
             if (retries > 0) {
                 // Wait before retry
@@ -650,10 +712,10 @@ async function saveJob() {
     const time = document.getElementById('time').value;
     const interval = document.getElementById('interval').value;
     const [hour, minute] = time.split(':');
-    
+
     // Generate cron expression based on interval and time
     let cronExpression;
-    switch(interval) {
+    switch (interval) {
         case 'daily':
             cronExpression = `${minute} ${hour} * * *`;
             break;
@@ -760,12 +822,12 @@ async function runJob(jobId) {
         const response = await fetch(`${ENDPOINTS.JOBS}/${jobId}/run`, {
             method: 'POST'
         });
-        
+
         if (!response.ok) {
             const error = await response.json();
             throw new Error(error.error || 'Failed to run job');
         }
-        
+
         showAlert('Job started successfully!', 'success');
         await refreshData();
     } catch (error) {
@@ -780,12 +842,12 @@ async function enableJob(jobId) {
         const response = await fetch(`${ENDPOINTS.JOBS}/${jobId}/enable`, {
             method: 'POST'
         });
-        
+
         if (!response.ok) {
             const error = await response.json();
             throw new Error(error.error || 'Failed to enable job');
         }
-        
+
         showAlert('Job enabled successfully!', 'success');
         await loadJobs();
     } catch (error) {
@@ -800,12 +862,12 @@ async function disableJob(jobId) {
         const response = await fetch(`${ENDPOINTS.JOBS}/${jobId}/disable`, {
             method: 'POST'
         });
-        
+
         if (!response.ok) {
             const error = await response.json();
             throw new Error(error.error || 'Failed to disable job');
         }
-        
+
         showAlert('Job disabled successfully!', 'success');
         await loadJobs();
     } catch (error) {
@@ -819,17 +881,17 @@ async function deleteJob(jobId) {
     if (!confirm('Are you sure you want to delete this job?')) {
         return;
     }
-    
+
     try {
         const response = await fetch(`${ENDPOINTS.JOBS}/${jobId}`, {
             method: 'DELETE'
         });
-        
+
         if (!response.ok) {
             const error = await response.json();
             throw new Error(error.error || 'Failed to delete job');
         }
-        
+
         showAlert('Job deleted successfully!', 'success');
         await loadJobs();
     } catch (error) {
@@ -842,11 +904,11 @@ async function deleteJob(jobId) {
 function formatDuration(seconds) {
     if (seconds == null) return 'N/A';
     if (seconds < 0) seconds = 0;
-    
+
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
     const secs = Math.floor(seconds % 60);
-    
+
     return `${hours}h ${minutes}m ${secs}s`;
 }
 
@@ -866,11 +928,11 @@ function showAlert(message, type = 'info') {
     closeBtn.setAttribute('data-bs-dismiss', 'alert');
     closeBtn.setAttribute('aria-label', 'Close');
     alertDiv.appendChild(closeBtn);
-    
+
     // Insert at the top of the main content
     const main = document.querySelector('main');
     main.insertBefore(alertDiv, main.firstChild);
-    
+
     // Auto-dismiss after 5 seconds
     setTimeout(() => {
         alertDiv.classList.remove('show');
@@ -883,18 +945,18 @@ function updateCronPreview() {
     const timeInput = document.getElementById('time');
     const intervalInput = document.getElementById('interval');
     const cronPreview = document.getElementById('cronPreview');
-    
+
     if (!timeInput || !intervalInput || !cronPreview) return;
-    
+
     const time = timeInput.value;
     const interval = intervalInput.value;
-    
+
     if (!time) return;
-    
+
     const [hour, minute] = time.split(':');
-    
+
     let cronExpression;
-    switch(interval) {
+    switch (interval) {
         case 'daily':
             cronExpression = `${minute} ${hour} * * *`;
             break;
@@ -907,7 +969,7 @@ function updateCronPreview() {
         default:
             cronExpression = `${minute} ${hour} * * *`;
     }
-    
+
     cronPreview.textContent = cronExpression;
 }
 
@@ -920,20 +982,20 @@ function toggleDateMode() {
     const dateEndInput = document.getElementById('dateEnd');
     const daysFromExecutionInput = document.getElementById('daysFromExecution');
     const searchWindowDaysInput = document.getElementById('searchWindowDays');
-    
+
     if (!dynamicDatesCheckbox || !staticDateFields || !dynamicDateFields) return;
-    
+
     const isDynamic = dynamicDatesCheckbox.checked;
-    
+
     if (isDynamic) {
         // Show dynamic fields, hide static fields
         staticDateFields.style.display = 'none';
         dynamicDateFields.style.display = 'block';
-        
+
         // Remove required attribute from static date fields
         if (dateStartInput) dateStartInput.removeAttribute('required');
         if (dateEndInput) dateEndInput.removeAttribute('required');
-        
+
         // Add required attribute to dynamic fields
         if (daysFromExecutionInput) daysFromExecutionInput.setAttribute('required', 'required');
         if (searchWindowDaysInput) searchWindowDaysInput.setAttribute('required', 'required');
@@ -941,11 +1003,11 @@ function toggleDateMode() {
         // Show static fields, hide dynamic fields
         staticDateFields.style.display = 'block';
         dynamicDateFields.style.display = 'none';
-        
+
         // Add required attribute to static date fields
         if (dateStartInput) dateStartInput.setAttribute('required', 'required');
         if (dateEndInput) dateEndInput.setAttribute('required', 'required');
-        
+
         // Remove required attribute from dynamic fields
         if (daysFromExecutionInput) daysFromExecutionInput.removeAttribute('required');
         if (searchWindowDaysInput) searchWindowDaysInput.removeAttribute('required');
@@ -1186,7 +1248,7 @@ function safeParseJSON(responseText, fallbackValue = null) {
         return JSON.parse(responseText);
     } catch (e) {
         console.warn('Initial JSON parse failed, trying fallback methods:', e.message);
-        
+
         // Try to handle duplicate JSON objects like {"a":1}{"b":2}
         try {
             const jsonObjects = responseText.match(/\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g);
@@ -1198,7 +1260,7 @@ function safeParseJSON(responseText, fallbackValue = null) {
         } catch (e2) {
             console.warn('Duplicate object parsing failed:', e2.message);
         }
-        
+
         // Try to handle array format like [][{data}]
         try {
             const arrayMatch = responseText.match(/\]\[(.+)\]$/);
@@ -1208,7 +1270,7 @@ function safeParseJSON(responseText, fallbackValue = null) {
         } catch (e3) {
             console.warn('Array format parsing failed:', e3.message);
         }
-        
+
         // Try to extract any valid JSON from the response
         try {
             const jsonMatch = responseText.match(/(\[.*\]|\{.*\})/);
@@ -1218,7 +1280,7 @@ function safeParseJSON(responseText, fallbackValue = null) {
         } catch (e4) {
             console.warn('Pattern matching failed:', e4.message);
         }
-        
+
         console.error('All JSON parsing methods failed for response:', responseText);
         return fallbackValue;
     }

@@ -157,6 +157,9 @@ func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Ne
 			admin.GET("/workers", GetWorkerStatus(workerManager, redisClient, cfg.WorkerConfig))
 			admin.GET("/queue", GetQueueStatus(queue))
 
+			// Real-time events via Server-Sent Events
+			admin.GET("/events", GetAdminEvents(workerManager, redisClient, cfg.WorkerConfig))
+
 			// Continuous sweep endpoints
 			admin.GET("/continuous-sweep/status", getContinuousSweepStatus(workerManager))
 			admin.POST("/continuous-sweep/start", startContinuousSweep(workerManager, postgresDB, cfg))
