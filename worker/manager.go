@@ -846,9 +846,9 @@ func (m *Manager) processContinuousPriceGraph(ctx context.Context, worker *Worke
 	}
 
 	// Sync price point to Neo4j for graph analytics (idempotent via MERGE)
-	if worker.neo4jDB != nil {
+	if m.neo4jDB != nil {
 		dateStr := cheapest.StartDate.Format("2006-01-02")
-		if syncErr := worker.neo4jDB.AddPricePoint(
+		if syncErr := m.neo4jDB.AddPricePoint(
 			payload.Origin,
 			payload.Destination,
 			dateStr,
