@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/gilby125/google-flights-api/iata"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -58,7 +59,7 @@ func (p *PostgresDBImpl) seedAirlines() error {
 // SeedNeo4jData seeds the Neo4j database with airports from the iata package.
 // This is IDEMPOTENT - uses MERGE to create or update nodes.
 func (n *Neo4jDB) SeedNeo4jData(ctx context.Context, postgresDB PostgresDB) error {
-	log.Println("Seeding Neo4j with airport data from iata package...")
+	log.Println("Seeding Neo4j airports (Postgres preferred; iata fallback)...")
 
 	// Get airport count first
 	session := n.driver.NewSession(neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
@@ -77,17 +78,41 @@ func (n *Neo4jDB) SeedNeo4jData(ctx context.Context, postgresDB PostgresDB) erro
 	}
 	session.Close()
 
-	// Query airports from Postgres (which has full data from migration)
-	rows, err := postgresDB.Search(ctx, `
+	// Query airports from Postgres (which should have full data after migrations).
+	// Some older schemas may not have the optional `icao` column; fall back gracefully.
+	queryWithICAO := `
 		SELECT code, COALESCE(icao, ''), COALESCE(name, ''), COALESCE(city, ''), 
 		       COALESCE(state, ''), COALESCE(country, ''), 
 		       COALESCE(latitude, 0), COALESCE(longitude, 0),
 		       COALESCE(elevation_ft, 0), COALESCE(timezone, '')
 		FROM airports 
 		WHERE latitude != 0 AND longitude != 0
-	`)
+	`
+	queryWithoutICAO := `
+		SELECT code, COALESCE(name, ''), COALESCE(city, ''), 
+		       COALESCE(state, ''), COALESCE(country, ''), 
+		       COALESCE(latitude, 0), COALESCE(longitude, 0),
+		       COALESCE(elevation_ft, 0), COALESCE(timezone, '')
+		FROM airports 
+		WHERE latitude != 0 AND longitude != 0
+	`
+
+	cols, err := postgresAirportColumns(ctx, postgresDB)
 	if err != nil {
-		return fmt.Errorf("failed to query airports from Postgres: %w", err)
+		log.Printf("Warning: failed to inspect Postgres airports schema (%v); seeding from iata package instead", err)
+		return n.seedAirportsFromIATA(ctx)
+	}
+	hasICAO := containsStringFold(cols, "icao")
+
+	query := queryWithoutICAO
+	if hasICAO {
+		query = queryWithICAO
+	}
+
+	rows, err := postgresDB.Search(ctx, query)
+	if err != nil {
+		log.Printf("Warning: failed to query airports from Postgres (%v); seeding from iata package instead", err)
+		return n.seedAirportsFromIATA(ctx)
 	}
 	defer rows.Close()
 
@@ -97,8 +122,15 @@ func (n *Neo4jDB) SeedNeo4jData(ctx context.Context, postgresDB PostgresDB) erro
 		var code, icao, name, city, state, country, timezone string
 		var lat, lon float64
 		var elevation int
-		if err := rows.Scan(&code, &icao, &name, &city, &state, &country, &lat, &lon, &elevation, &timezone); err != nil {
-			return fmt.Errorf("failed to scan airport row: %w", err)
+		if hasICAO {
+			if err := rows.Scan(&code, &icao, &name, &city, &state, &country, &lat, &lon, &elevation, &timezone); err != nil {
+				return fmt.Errorf("failed to scan airport row: %w", err)
+			}
+		} else {
+			icao = ""
+			if err := rows.Scan(&code, &name, &city, &state, &country, &lat, &lon, &elevation, &timezone); err != nil {
+				return fmt.Errorf("failed to scan airport row: %w", err)
+			}
 		}
 		airports = append(airports, map[string]interface{}{
 			"code":      code,
@@ -112,6 +144,9 @@ func (n *Neo4jDB) SeedNeo4jData(ctx context.Context, postgresDB PostgresDB) erro
 			"elevation": elevation,
 			"timezone":  timezone,
 		})
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate airports rows: %w", err)
 	}
 
 	if len(airports) == 0 {
@@ -195,6 +230,29 @@ func (n *Neo4jDB) seedAirportsFromIATA(ctx context.Context) error {
 
 	log.Printf("Neo4j seeding from iata package complete: %d airports", count)
 	return nil
+}
+
+func postgresAirportColumns(ctx context.Context, postgresDB PostgresDB) ([]string, error) {
+	rows, err := postgresDB.Search(ctx, "SELECT * FROM airports LIMIT 0")
+	if err != nil {
+		return nil, fmt.Errorf("query airports columns: %w", err)
+	}
+	defer rows.Close()
+
+	cols, err := rows.Columns()
+	if err != nil {
+		return nil, fmt.Errorf("read airports columns: %w", err)
+	}
+	return cols, nil
+}
+
+func containsStringFold(haystack []string, needle string) bool {
+	for _, s := range haystack {
+		if strings.EqualFold(s, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 // getKnownIATACodes returns a list of common IATA codes to seed

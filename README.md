@@ -63,11 +63,11 @@ After the database containers are running, you may need to seed the database wit
     docker-compose logs postgres
     docker-compose logs neo4j
     ```
-2.  **Run Seeding Script:** Execute the seeding script within the `api` container:
+2.  **Run Bootstrap (migrations + airports seed):** The runtime image is distroless (no shell/Go toolchain), so you should use the built-in bootstrap mode:
     ```bash
-    docker-compose exec api go run db/seed.go
+    docker compose run --rm api -bootstrap
     ```
-    This script will populate the databases with necessary initial data (e.g., airport codes, etc.). Check the script's output for any errors.
+    This applies embedded PostgreSQL migrations and ensures the `airports` reference table is populated.
 
 ### Building and Running
 

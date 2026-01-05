@@ -33,6 +33,37 @@ func main() {
 			os.Exit(0)
 		}
 
+		if arg == "-bootstrap" {
+			cfg, err := config.Load()
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+
+			logger.Init(logger.Config{
+				Level:  cfg.LoggingConfig.Level,
+				Format: cfg.LoggingConfig.Format,
+			})
+
+			connStr := db.BuildPostgresConnString(cfg.PostgresConfig)
+
+			logger.Info("Bootstrapping Postgres (migrations + airport seed)...")
+			if err := db.RunMigrations(connStr); err != nil {
+				logger.Error(err, "Bootstrap failed: migrations")
+				os.Exit(1)
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+			defer cancel()
+			if err := db.EnsurePostgresAirportsSeeded(ctx, connStr); err != nil {
+				logger.Error(err, "Bootstrap failed: seed airports")
+				os.Exit(1)
+			}
+
+			logger.Info("Bootstrap complete")
+			os.Exit(0)
+		}
+
 		if arg == "-health-check-worker" {
 			cfg, err := config.Load()
 			if err != nil {
@@ -163,8 +194,15 @@ func main() {
 	// Initialize database schemas (migrations) and Neo4j constraints/indexes
 	if cfg.InitSchema {
 		logger.Info("Running database migrations...")
-		if err := db.RunMigrations(db.BuildPostgresConnString(cfg.PostgresConfig)); err != nil {
+		connStr := db.BuildPostgresConnString(cfg.PostgresConfig)
+		if err := db.RunMigrations(connStr); err != nil {
 			logger.Fatal(err, "Failed to run PostgreSQL migrations")
+		}
+
+		// Airports are reference data used across the app. If they're missing (e.g. a wiped DB),
+		// re-seed them even if the migration was previously recorded as applied.
+		if err := db.EnsurePostgresAirportsSeeded(context.Background(), connStr); err != nil {
+			logger.Fatal(err, "Failed to seed airports in PostgreSQL")
 		}
 
 		if neo4jDB != nil {
@@ -178,6 +216,11 @@ func main() {
 
 	// Seed Neo4j with data from PostgreSQL
 	if cfg.SeedNeo4j {
+		// If Postgres airports are empty, seed them so Neo4j gets complete airport data.
+		if err := db.EnsurePostgresAirportsSeeded(context.Background(), db.BuildPostgresConnString(cfg.PostgresConfig)); err != nil {
+			logger.Warn("Failed to seed airports in PostgreSQL; Neo4j seeding may fall back to iata subset", "error", err)
+		}
+
 		if neo4jDB == nil {
 			logger.Fatal(fmt.Errorf("neo4j is disabled"), "SEED_NEO4J=true requires Neo4jEnabled=true")
 		}
