@@ -51,8 +51,9 @@ func (h *sseHub) run() {
 		case client := <-h.register:
 			h.mu.Lock()
 			h.clients[client.id] = client
+			total := len(h.clients)
 			h.mu.Unlock()
-			log.Printf("SSE client connected: %s (total: %d)", client.id, len(h.clients))
+			log.Printf("SSE client connected: %s (total: %d)", client.id, total)
 
 		case client := <-h.unregister:
 			h.mu.Lock()
@@ -60,8 +61,9 @@ func (h *sseHub) run() {
 				delete(h.clients, client.id)
 				close(client.messages)
 			}
+			total := len(h.clients)
 			h.mu.Unlock()
-			log.Printf("SSE client disconnected: %s (total: %d)", client.id, len(h.clients))
+			log.Printf("SSE client disconnected: %s (total: %d)", client.id, total)
 
 		case message := <-h.broadcast:
 			h.mu.RLock()
@@ -186,7 +188,11 @@ func GetAdminEvents(workerManager WorkerStatusProvider, redisClient *redis.Clien
 					}
 
 					if data, err := json.Marshal(out); err == nil {
-						h.broadcast <- sseMessage{event: "worker-status", data: data}
+						// Send to this client only (avoid N-clients causing N^2 broadcasts).
+						select {
+						case client.messages <- sseMessage{event: "worker-status", data: data}:
+						default:
+						}
 					}
 				}
 			}
