@@ -1,0 +1,22 @@
+services:
+  neodash:
+    image: neo4jlabs/neodash:latest
+    container_name: neodash
+    ports:
+      - "5005:5005"
+    environment:
+      ssoEnabled: "false"
+      standalone: "true"
+      standaloneProtocol: "bolt"
+      standaloneHost: "192.168.1.200"
+      standalonePort: "7687"
+      standaloneDatabase: "neo4j"
+      standaloneUsername: "neo4j"
+      standalonePassword: "a8sE7bx3okQCOtgicLRr6JbTurPAvQ73"
+    networks:
+      - google_flights_master_default
+    restart: unless-stopped
+
+networks:
+  google_flights_master_default:
+    external: true

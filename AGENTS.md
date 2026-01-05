@@ -29,3 +29,6 @@
 - Unit tests in `test/unit/`, integration in `test/integration/`, E2E in `test/e2e/`
 - Use `skipUnlessIntegration(t)` for tests requiring external services
 - Reset Playwright state between tests, avoid parallel mode unless isolated
+
+## Operational Safety
+- Do not deploy, restart, stop, or modify live services via CLI. Only deploy through the approved UI when explicitly instructed by the user.
