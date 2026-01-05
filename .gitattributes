@@ -2,5 +2,5 @@
 *.sh text eol=lf
 supabase_installer.sh text eol=lf
 
-# Ensure these executables use LF
-flight-api text eol=lf
+# Binary files - do not convert line endings
+flight-api binary
