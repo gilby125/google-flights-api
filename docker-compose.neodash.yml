@@ -5,9 +5,16 @@ services:
     ports:
       - "5005:5005"
     environment:
-      - ssoEnabled=false
-      - standalone=false
-      - NEODASH_EDIT_MODE=true
+      ssoEnabled: "false"
+      standalone: "true"
+      standaloneProtocol: "bolt"
+      standaloneHost: "192.168.1.200"
+      standalonePort: "7687"
+      standaloneDatabase: "neo4j"
+      standaloneUsername: "neo4j"
+      standalonePassword: "a8sE7bx3okQCOtgicLRr6JbTurPAvQ73"
+      # Explicitly enable edit mode so the "+" button is visible
+      NEODASH_EDIT_MODE: "true"
     networks:
       - google_flights_master_default
     restart: unless-stopped
