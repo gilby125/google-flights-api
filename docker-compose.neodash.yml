@@ -5,16 +5,19 @@ services:
     ports:
       - "5005:5005"
     environment:
-      ssoEnabled: "false"
-      standalone: "true"
-      standaloneProtocol: "bolt"
-      standaloneHost: "192.168.1.200"
-      standalonePort: "7687"
-      standaloneDatabase: "neo4j"
-      standaloneUsername: "neo4j"
-      standalonePassword: "a8sE7bx3okQCOtgicLRr6JbTurPAvQ73"
-      # Explicitly enable edit mode so the "+" button is visible
+      # Use official NEODASH_ prefix for all variables to ensure correct parsing
+      NEODASH_SSO_ENABLED: "false"
+      NEODASH_STANDALONE: "true"
+      NEODASH_STANDALONE_PROTOCOL: "bolt"
+      NEODASH_STANDALONE_HOST: "192.168.1.200"
+      NEODASH_STANDALONE_PORT: "7687"
+      NEODASH_STANDALONE_DATABASE: "neo4j"
+      NEODASH_STANDALONE_USERNAME: "neo4j"
+      NEODASH_STANDALONE_PASSWORD: "a8sE7bx3okQCOtgicLRr6JbTurPAvQ73"
+      # This flag is critical for showing the "+" button and pencil icon
       NEODASH_EDIT_MODE: "true"
+      # Allow users to save/load from the database
+      NEODASH_DASHBOARD_STORAGE: "database"
     networks:
       - google_flights_master_default
     restart: unless-stopped
