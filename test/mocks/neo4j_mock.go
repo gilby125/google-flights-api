@@ -58,5 +58,32 @@ func (m *MockNeo4jDatabase) InitSchema() error {
 	return args.Error(0)
 }
 
+// FindCheapestPath mocks the FindCheapestPath method
+func (m *MockNeo4jDatabase) FindCheapestPath(ctx context.Context, origin, dest string, maxHops int, maxPrice float64) ([]db.PathResult, error) {
+	args := m.Called(ctx, origin, dest, maxHops, maxPrice)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]db.PathResult), args.Error(1)
+}
+
+// FindConnections mocks the FindConnections method
+func (m *MockNeo4jDatabase) FindConnections(ctx context.Context, origin string, maxHops int, maxPrice float64) ([]db.Connection, error) {
+	args := m.Called(ctx, origin, maxHops, maxPrice)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]db.Connection), args.Error(1)
+}
+
+// GetRouteStats mocks the GetRouteStats method
+func (m *MockNeo4jDatabase) GetRouteStats(ctx context.Context, origin, dest string) (*db.RouteStats, error) {
+	args := m.Called(ctx, origin, dest)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*db.RouteStats), args.Error(1)
+}
+
 // Ensure MockNeo4jDatabase implements the interface
 var _ db.Neo4jDatabase = (*MockNeo4jDatabase)(nil)

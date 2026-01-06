@@ -3,11 +3,12 @@ package mocks
 import (
 	"context"
 
-	"errors"                                    // Added import
+	"errors"  // Added import
+	"reflect" // Added for Scan simulation
+
 	"github.com/gilby125/google-flights-api/db" // Added db import for Neo4jResult interface
 	"github.com/gilby125/google-flights-api/queue"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j" // Added neo4j import
-	"reflect"                                   // Added for Scan simulation
 
 	"github.com/stretchr/testify/mock"
 )
@@ -231,6 +232,30 @@ func (m *MockNeo4jDB) ExecuteReadQuery(ctx context.Context, query string, params
 func (m *MockNeo4jDB) InitSchema() error {
 	args := m.Called()
 	return args.Error(0)
+}
+
+func (m *MockNeo4jDB) FindCheapestPath(ctx context.Context, origin, dest string, maxHops int, maxPrice float64) ([]db.PathResult, error) {
+	args := m.Called(ctx, origin, dest, maxHops, maxPrice)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]db.PathResult), args.Error(1)
+}
+
+func (m *MockNeo4jDB) FindConnections(ctx context.Context, origin string, maxHops int, maxPrice float64) ([]db.Connection, error) {
+	args := m.Called(ctx, origin, maxHops, maxPrice)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]db.Connection), args.Error(1)
+}
+
+func (m *MockNeo4jDB) GetRouteStats(ctx context.Context, origin, dest string) (*db.RouteStats, error) {
+	args := m.Called(ctx, origin, dest)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*db.RouteStats), args.Error(1)
 }
 
 // Ensure MockNeo4jDB implements db.Neo4jDatabase

@@ -17,8 +17,11 @@ type Neo4jDatabase interface {
 	CreateAirline(code, name, country string) error
 	Close() error
 	ExecuteReadQuery(ctx context.Context, query string, params map[string]interface{}) (Neo4jResult, error)
-	// GetDriver() neo4j.Driver // Remove direct driver access
 	InitSchema() error
+	// Graph traversal methods
+	FindCheapestPath(ctx context.Context, origin, dest string, maxHops int, maxPrice float64) ([]PathResult, error)
+	FindConnections(ctx context.Context, origin string, maxHops int, maxPrice float64) ([]Connection, error)
+	GetRouteStats(ctx context.Context, origin, dest string) (*RouteStats, error)
 }
 
 // Neo4jSession defines the interface for a Neo4j session (read operations)
@@ -33,6 +36,41 @@ type Neo4jResult interface {
 	Record() *neo4j.Record
 	Err() error
 	Close() error // Close the result and underlying session
+}
+
+// PathResult represents a multi-hop route path with total cost
+type PathResult struct {
+	Stops      []string  `json:"stops"`       // Airport codes in order
+	TotalPrice float64   `json:"total_price"` // Sum of leg prices
+	Legs       []LegInfo `json:"legs"`        // Details per leg
+}
+
+// LegInfo contains pricing info for a single leg
+type LegInfo struct {
+	Origin      string  `json:"origin"`
+	Destination string  `json:"destination"`
+	Price       float64 `json:"price"`
+	Airline     string  `json:"airline,omitempty"`
+}
+
+// Connection represents a reachable destination from an origin
+type Connection struct {
+	Airport      string  `json:"airport"`       // Destination airport code
+	Name         string  `json:"name"`          // Airport name
+	Country      string  `json:"country"`       // Country code
+	CheapestPath float64 `json:"cheapest_path"` // Cheapest total price to reach
+	Hops         int     `json:"hops"`          // Number of stops
+}
+
+// RouteStats contains aggregated statistics for a route
+type RouteStats struct {
+	Origin      string   `json:"origin"`
+	Destination string   `json:"destination"`
+	MinPrice    float64  `json:"min_price"`
+	MaxPrice    float64  `json:"max_price"`
+	AvgPrice    float64  `json:"avg_price"`
+	PricePoints int      `json:"price_points"` // Number of observations
+	Airlines    []string `json:"airlines"`     // Airlines serving the route
 }
 
 // Ensure neo4j.Session implements Neo4jSession (adjust if methods differ slightly)
@@ -281,6 +319,233 @@ func (n *Neo4jDB) AddPricePoint(originCode, destCode string, date string, price 
 		return fmt.Errorf("failed to add price point for %s->%s on %s (%s): %w", originCode, destCode, date, airlineCode, err)
 	}
 	return nil
+}
+
+// FindCheapestPath finds the cheapest multi-hop paths between two airports
+func (n *Neo4jDB) FindCheapestPath(ctx context.Context, origin, dest string, maxHops int, maxPrice float64) ([]PathResult, error) {
+	session := n.driver.NewSession(neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
+	defer session.Close()
+
+	// Build dynamic hop range based on maxHops
+	query := fmt.Sprintf(`
+		MATCH path = (a:Airport {code: $origin})-[:PRICE_POINT*1..%d]->(b:Airport {code: $dest})
+		WITH path, 
+		     [n IN nodes(path) | n.code] AS stops,
+		     reduce(total = 0.0, r IN relationships(path) | total + r.price) AS totalPrice,
+		     [r IN relationships(path) | {origin: startNode(r).code, dest: endNode(r).code, price: r.price, airline: r.airline}] AS legs
+		WHERE totalPrice <= $maxPrice
+		RETURN stops, totalPrice, legs
+		ORDER BY totalPrice
+		LIMIT 10
+	`, maxHops)
+
+	result, err := session.Run(query, map[string]interface{}{
+		"origin":   origin,
+		"dest":     dest,
+		"maxPrice": maxPrice,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to find cheapest path: %w", err)
+	}
+
+	var paths []PathResult
+	for result.Next() {
+		record := result.Record()
+
+		stopsVal, _ := record.Get("stops")
+		stops := []string{}
+		if stopsArr, ok := stopsVal.([]interface{}); ok {
+			for _, s := range stopsArr {
+				if str, ok := s.(string); ok {
+					stops = append(stops, str)
+				}
+			}
+		}
+
+		totalPrice, _ := record.Get("totalPrice")
+		price := 0.0
+		if p, ok := totalPrice.(float64); ok {
+			price = p
+		}
+
+		legsVal, _ := record.Get("legs")
+		legs := []LegInfo{}
+		if legsArr, ok := legsVal.([]interface{}); ok {
+			for _, l := range legsArr {
+				if legMap, ok := l.(map[string]interface{}); ok {
+					leg := LegInfo{}
+					if o, ok := legMap["origin"].(string); ok {
+						leg.Origin = o
+					}
+					if d, ok := legMap["dest"].(string); ok {
+						leg.Destination = d
+					}
+					if p, ok := legMap["price"].(float64); ok {
+						leg.Price = p
+					}
+					if a, ok := legMap["airline"].(string); ok {
+						leg.Airline = a
+					}
+					legs = append(legs, leg)
+				}
+			}
+		}
+
+		paths = append(paths, PathResult{
+			Stops:      stops,
+			TotalPrice: price,
+			Legs:       legs,
+		})
+	}
+
+	if err := result.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating path results: %w", err)
+	}
+
+	return paths, nil
+}
+
+// FindConnections finds all reachable destinations from an origin within budget
+func (n *Neo4jDB) FindConnections(ctx context.Context, origin string, maxHops int, maxPrice float64) ([]Connection, error) {
+	session := n.driver.NewSession(neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
+	defer session.Close()
+
+	query := fmt.Sprintf(`
+		MATCH path = (a:Airport {code: $origin})-[:PRICE_POINT*1..%d]->(dest:Airport)
+		WHERE a <> dest
+		WITH dest, path,
+		     reduce(total = 0.0, r IN relationships(path) | total + r.price) AS totalPrice,
+		     length(path) AS hops
+		WHERE totalPrice <= $maxPrice
+		RETURN DISTINCT dest.code AS airport, dest.name AS name, dest.country AS country,
+		       min(totalPrice) AS cheapestPath, min(hops) AS hops
+		ORDER BY cheapestPath
+		LIMIT 100
+	`, maxHops)
+
+	result, err := session.Run(query, map[string]interface{}{
+		"origin":   origin,
+		"maxPrice": maxPrice,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to find connections: %w", err)
+	}
+
+	var connections []Connection
+	for result.Next() {
+		record := result.Record()
+
+		airport, _ := record.Get("airport")
+		name, _ := record.Get("name")
+		country, _ := record.Get("country")
+		cheapest, _ := record.Get("cheapestPath")
+		hops, _ := record.Get("hops")
+
+		conn := Connection{}
+		if a, ok := airport.(string); ok {
+			conn.Airport = a
+		}
+		if n, ok := name.(string); ok {
+			conn.Name = n
+		}
+		if c, ok := country.(string); ok {
+			conn.Country = c
+		}
+		if p, ok := cheapest.(float64); ok {
+			conn.CheapestPath = p
+		}
+		if h, ok := hops.(int64); ok {
+			conn.Hops = int(h)
+		}
+
+		connections = append(connections, conn)
+	}
+
+	if err := result.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating connection results: %w", err)
+	}
+
+	return connections, nil
+}
+
+// GetRouteStats returns aggregated price statistics for a specific route
+func (n *Neo4jDB) GetRouteStats(ctx context.Context, origin, dest string) (*RouteStats, error) {
+	session := n.driver.NewSession(neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
+	defer session.Close()
+
+	query := `
+		MATCH (a:Airport {code: $origin})-[r:PRICE_POINT]->(b:Airport {code: $dest})
+		WITH a, b, collect(r) AS pricePoints
+		RETURN a.code AS origin, b.code AS destination,
+		       min([p IN pricePoints | p.price]) AS minPrice,
+		       max([p IN pricePoints | p.price]) AS maxPrice,
+		       avg([p IN pricePoints | p.price]) AS avgPrice,
+		       size(pricePoints) AS pricePointCount,
+		       [p IN pricePoints | p.airline] AS airlines
+	`
+
+	result, err := session.Run(query, map[string]interface{}{
+		"origin": origin,
+		"dest":   dest,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get route stats: %w", err)
+	}
+
+	if !result.Next() {
+		return nil, nil // No route found
+	}
+
+	record := result.Record()
+	stats := &RouteStats{}
+
+	if o, ok := record.Get("origin"); ok {
+		if str, ok := o.(string); ok {
+			stats.Origin = str
+		}
+	}
+	if d, ok := record.Get("destination"); ok {
+		if str, ok := d.(string); ok {
+			stats.Destination = str
+		}
+	}
+	if p, ok := record.Get("minPrice"); ok {
+		if f, ok := p.(float64); ok {
+			stats.MinPrice = f
+		}
+	}
+	if p, ok := record.Get("maxPrice"); ok {
+		if f, ok := p.(float64); ok {
+			stats.MaxPrice = f
+		}
+	}
+	if p, ok := record.Get("avgPrice"); ok {
+		if f, ok := p.(float64); ok {
+			stats.AvgPrice = f
+		}
+	}
+	if c, ok := record.Get("pricePointCount"); ok {
+		if i, ok := c.(int64); ok {
+			stats.PricePoints = int(i)
+		}
+	}
+	if a, ok := record.Get("airlines"); ok {
+		if arr, ok := a.([]interface{}); ok {
+			seen := make(map[string]bool)
+			for _, v := range arr {
+				if str, ok := v.(string); ok && str != "" && !seen[str] {
+					stats.Airlines = append(stats.Airlines, str)
+					seen[str] = true
+				}
+			}
+		}
+	}
+
+	if err := result.Err(); err != nil {
+		return nil, fmt.Errorf("error reading route stats: %w", err)
+	}
+
+	return stats, nil
 }
 
 // Ensure Neo4jDB implements Neo4jDatabase

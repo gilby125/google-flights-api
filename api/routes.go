@@ -130,6 +130,14 @@ func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Ne
 		// Price history routes
 		v1.GET("/price-history/:origin/:destination", getPriceHistory(neo4jDB))
 
+		// Graph traversal routes (Neo4j-powered)
+		graph := v1.Group("/graph")
+		{
+			graph.GET("/path", GetCheapestPath(neo4jDB))
+			graph.GET("/connections", GetConnections(neo4jDB))
+			graph.GET("/route-stats", GetRouteStats(neo4jDB))
+		}
+
 		// Admin routes (with optional authentication)
 		admin := v1.Group("/admin")
 		admin.Use(middleware.AdminAuth(cfg.AdminAuthConfig))
