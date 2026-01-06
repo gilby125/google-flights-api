@@ -1,23 +1,16 @@
 services:
   neodash:
-    image: neo4jlabs/neodash:latest
-    container_name: neodash
+    image: neo4jlabs/neodash:2.4.9
     ports:
       - "5005:5005"
     environment:
-      # Use official NEODASH_ prefix for all variables to ensure correct parsing
-      NEODASH_SSO_ENABLED: "false"
-      NEODASH_STANDALONE: "true"
-      NEODASH_STANDALONE_PROTOCOL: "bolt"
-      NEODASH_STANDALONE_HOST: "192.168.1.200"
-      NEODASH_STANDALONE_PORT: "7687"
-      NEODASH_STANDALONE_DATABASE: "neo4j"
-      NEODASH_STANDALONE_USERNAME: "neo4j"
-      NEODASH_STANDALONE_PASSWORD: "a8sE7bx3okQCOtgicLRr6JbTurPAvQ73"
-      # This flag is critical for showing the "+" button and pencil icon
-      NEODASH_EDIT_MODE: "true"
-      # Allow users to save/load from the database
-      NEODASH_DASHBOARD_STORAGE: "database"
+      - NEODASH_STANDALONE=false
+      - NEODASH_EDIT_MODE=true
+      - NEODASH_READ_ONLY=false
+      - NEODASH_SSO_ENABLED=false
+      - NEODASH_BOLT_URL=bolt://192.168.1.200:7687
+      - NEODASH_NEO4J_USER=neo4j
+      - NEODASH_NEO4J_PASSWORD=${NEO4J_PASSWORD}
     networks:
       - google_flights_master_default
     restart: unless-stopped

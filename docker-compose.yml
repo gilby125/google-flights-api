@@ -81,18 +81,6 @@ services:
       - neo4jimport:/var/lib/neo4j/import
     restart: unless-stopped
 
-  neodash:
-    image: neo4jlabs/neodash:latest
-    environment:
-      # Connect to Neo4j automatically
-      ssoEnabled: "false"
-      standalone: "false"
-    depends_on:
-      - neo4j
-    ports:
-      - "5005:5005"
-    restart: unless-stopped
-
 volumes:
   pgdata:
   redisdata:
