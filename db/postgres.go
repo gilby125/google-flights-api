@@ -69,6 +69,17 @@ type PostgresDB interface {
 	InsertContinuousSweepStats(ctx context.Context, stats ContinuousSweepStats) error
 	ListContinuousSweepStats(ctx context.Context, limit int) ([]ContinuousSweepStats, error)
 	ListContinuousSweepResults(ctx context.Context, filters ContinuousSweepResultsFilter) ([]PriceGraphResultRecord, error)
+
+	// Deal detection methods
+	GetRouteBaseline(ctx context.Context, origin, dest string, tripLength int, class string) (*RouteBaseline, error)
+	UpsertRouteBaseline(ctx context.Context, baseline RouteBaseline) error
+	GetPriceHistoryForRoute(ctx context.Context, origin, dest string, tripLength int, class string, windowDays int) ([]float64, error)
+	InsertDetectedDeal(ctx context.Context, deal DetectedDeal) (int, error)
+	UpsertDetectedDeal(ctx context.Context, deal DetectedDeal) error
+	GetDetectedDealByFingerprint(ctx context.Context, fingerprint string) (*DetectedDeal, error)
+	ListActiveDeals(ctx context.Context, filter DealFilter) ([]DetectedDeal, error)
+	ExpireOldDeals(ctx context.Context) (int64, error)
+	InsertDealAlert(ctx context.Context, alert DealAlert) (int, error)
 }
 
 // Tx defines the interface for database transactions
@@ -1286,6 +1297,268 @@ func (p *PostgresDBImpl) ListContinuousSweepResults(ctx context.Context, filters
 	}
 
 	return results, nil
+}
+
+// --- Deal Detection Methods ---
+
+// GetRouteBaseline retrieves price baseline for a route
+func (p *PostgresDBImpl) GetRouteBaseline(ctx context.Context, origin, dest string, tripLength int, class string) (*RouteBaseline, error) {
+	var baseline RouteBaseline
+	err := p.db.QueryRowContext(ctx,
+		`SELECT id, origin, destination, trip_length, class, sample_count,
+		        mean_price, median_price, stddev_price, min_price, max_price,
+		        p10_price, p25_price, p75_price, p90_price,
+		        window_start, window_end, updated_at, created_at
+		 FROM route_baselines
+		 WHERE origin = $1 AND destination = $2 AND trip_length = $3 AND class = $4`,
+		origin, dest, tripLength, class,
+	).Scan(
+		&baseline.ID, &baseline.Origin, &baseline.Destination, &baseline.TripLength, &baseline.Class,
+		&baseline.SampleCount, &baseline.MeanPrice, &baseline.MedianPrice, &baseline.StddevPrice,
+		&baseline.MinPrice, &baseline.MaxPrice, &baseline.P10Price, &baseline.P25Price,
+		&baseline.P75Price, &baseline.P90Price, &baseline.WindowStart, &baseline.WindowEnd,
+		&baseline.UpdatedAt, &baseline.CreatedAt,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get route baseline: %w", err)
+	}
+	return &baseline, nil
+}
+
+// UpsertRouteBaseline inserts or updates a route baseline
+func (p *PostgresDBImpl) UpsertRouteBaseline(ctx context.Context, baseline RouteBaseline) error {
+	_, err := p.db.ExecContext(ctx,
+		`INSERT INTO route_baselines (origin, destination, trip_length, class, sample_count,
+		                              mean_price, median_price, stddev_price, min_price, max_price,
+		                              p10_price, p25_price, p75_price, p90_price,
+		                              window_start, window_end, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW())
+		 ON CONFLICT (origin, destination, trip_length, class) DO UPDATE SET
+		    sample_count = $5, mean_price = $6, median_price = $7, stddev_price = $8,
+		    min_price = $9, max_price = $10, p10_price = $11, p25_price = $12,
+		    p75_price = $13, p90_price = $14, window_start = $15, window_end = $16, updated_at = NOW()`,
+		baseline.Origin, baseline.Destination, baseline.TripLength, baseline.Class,
+		baseline.SampleCount, baseline.MeanPrice, baseline.MedianPrice, baseline.StddevPrice,
+		baseline.MinPrice, baseline.MaxPrice, baseline.P10Price, baseline.P25Price,
+		baseline.P75Price, baseline.P90Price, baseline.WindowStart, baseline.WindowEnd,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to upsert route baseline: %w", err)
+	}
+	return nil
+}
+
+// GetPriceHistoryForRoute retrieves historical prices for baseline calculation
+func (p *PostgresDBImpl) GetPriceHistoryForRoute(ctx context.Context, origin, dest string, tripLength int, class string, windowDays int) ([]float64, error) {
+	rows, err := p.db.QueryContext(ctx,
+		`SELECT price FROM price_graph_results
+		 WHERE origin = $1 AND destination = $2 
+		   AND (trip_length = $3 OR $3 = 0)
+		   AND class = $4
+		   AND queried_at >= NOW() - INTERVAL '1 day' * $5
+		   AND price > 0
+		 ORDER BY queried_at DESC`,
+		origin, dest, tripLength, class, windowDays,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get price history: %w", err)
+	}
+	defer rows.Close()
+
+	var prices []float64
+	for rows.Next() {
+		var price float64
+		if err := rows.Scan(&price); err != nil {
+			return nil, fmt.Errorf("failed to scan price: %w", err)
+		}
+		prices = append(prices, price)
+	}
+	return prices, nil
+}
+
+// InsertDetectedDeal inserts a new detected deal
+func (p *PostgresDBImpl) InsertDetectedDeal(ctx context.Context, deal DetectedDeal) (int, error) {
+	var id int
+	err := p.db.QueryRowContext(ctx,
+		`INSERT INTO detected_deals (origin, destination, departure_date, return_date, trip_length,
+		                             price, currency, baseline_mean, baseline_median, discount_percent,
+		                             deal_score, deal_classification, distance_miles, cost_per_mile,
+		                             cabin_class, source_type, source_id, search_url, deal_fingerprint,
+		                             first_seen_at, last_seen_at, times_seen, status, verified,
+		                             verified_price, verified_at, expires_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19,
+		         $20, $21, $22, $23, $24, $25, $26, $27)
+		 RETURNING id`,
+		deal.Origin, deal.Destination, deal.DepartureDate, deal.ReturnDate, deal.TripLength,
+		deal.Price, deal.Currency, deal.BaselineMean, deal.BaselineMedian, deal.DiscountPercent,
+		deal.DealScore, deal.DealClassification, deal.DistanceMiles, deal.CostPerMile,
+		deal.CabinClass, deal.SourceType, deal.SourceID, deal.SearchURL, deal.DealFingerprint,
+		deal.FirstSeenAt, deal.LastSeenAt, deal.TimesSeen, deal.Status, deal.Verified,
+		deal.VerifiedPrice, deal.VerifiedAt, deal.ExpiresAt,
+	).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("failed to insert detected deal: %w", err)
+	}
+	return id, nil
+}
+
+// UpsertDetectedDeal inserts or updates a deal (for deduplication)
+func (p *PostgresDBImpl) UpsertDetectedDeal(ctx context.Context, deal DetectedDeal) error {
+	_, err := p.db.ExecContext(ctx,
+		`INSERT INTO detected_deals (origin, destination, departure_date, return_date, trip_length,
+		                             price, currency, baseline_mean, baseline_median, discount_percent,
+		                             deal_score, deal_classification, distance_miles, cost_per_mile,
+		                             cabin_class, source_type, source_id, search_url, deal_fingerprint,
+		                             first_seen_at, last_seen_at, times_seen, status, expires_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19,
+		         NOW(), NOW(), 1, $20, $21)
+		 ON CONFLICT (deal_fingerprint) DO UPDATE SET
+		    last_seen_at = NOW(),
+		    times_seen = detected_deals.times_seen + 1,
+		    price = LEAST(detected_deals.price, $6),
+		    deal_score = GREATEST(detected_deals.deal_score, $11),
+		    updated_at = NOW()`,
+		deal.Origin, deal.Destination, deal.DepartureDate, deal.ReturnDate, deal.TripLength,
+		deal.Price, deal.Currency, deal.BaselineMean, deal.BaselineMedian, deal.DiscountPercent,
+		deal.DealScore, deal.DealClassification, deal.DistanceMiles, deal.CostPerMile,
+		deal.CabinClass, deal.SourceType, deal.SourceID, deal.SearchURL, deal.DealFingerprint,
+		deal.Status, deal.ExpiresAt,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to upsert detected deal: %w", err)
+	}
+	return nil
+}
+
+// GetDetectedDealByFingerprint retrieves a deal by its fingerprint
+func (p *PostgresDBImpl) GetDetectedDealByFingerprint(ctx context.Context, fingerprint string) (*DetectedDeal, error) {
+	var deal DetectedDeal
+	err := p.db.QueryRowContext(ctx,
+		`SELECT id, origin, destination, departure_date, return_date, trip_length,
+		        price, currency, baseline_mean, baseline_median, discount_percent,
+		        deal_score, deal_classification, distance_miles, cost_per_mile,
+		        cabin_class, source_type, source_id, search_url, deal_fingerprint,
+		        first_seen_at, last_seen_at, times_seen, status, verified,
+		        verified_price, verified_at, expires_at, created_at, updated_at
+		 FROM detected_deals WHERE deal_fingerprint = $1`,
+		fingerprint,
+	).Scan(
+		&deal.ID, &deal.Origin, &deal.Destination, &deal.DepartureDate, &deal.ReturnDate,
+		&deal.TripLength, &deal.Price, &deal.Currency, &deal.BaselineMean, &deal.BaselineMedian,
+		&deal.DiscountPercent, &deal.DealScore, &deal.DealClassification, &deal.DistanceMiles,
+		&deal.CostPerMile, &deal.CabinClass, &deal.SourceType, &deal.SourceID, &deal.SearchURL,
+		&deal.DealFingerprint, &deal.FirstSeenAt, &deal.LastSeenAt, &deal.TimesSeen, &deal.Status,
+		&deal.Verified, &deal.VerifiedPrice, &deal.VerifiedAt, &deal.ExpiresAt, &deal.CreatedAt, &deal.UpdatedAt,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get deal by fingerprint: %w", err)
+	}
+	return &deal, nil
+}
+
+// ListActiveDeals retrieves active deals with optional filtering
+func (p *PostgresDBImpl) ListActiveDeals(ctx context.Context, filter DealFilter) ([]DetectedDeal, error) {
+	query := `SELECT id, origin, destination, departure_date, return_date, trip_length,
+	                 price, currency, baseline_mean, baseline_median, discount_percent,
+	                 deal_score, deal_classification, distance_miles, cost_per_mile,
+	                 cabin_class, source_type, source_id, search_url, deal_fingerprint,
+	                 first_seen_at, last_seen_at, times_seen, status, verified,
+	                 verified_price, verified_at, expires_at, created_at, updated_at
+	          FROM detected_deals WHERE 1=1`
+	args := []interface{}{}
+	argIdx := 1
+
+	if !filter.IncludeExpired {
+		query += fmt.Sprintf(" AND (status = 'active' AND (expires_at IS NULL OR expires_at > NOW()))")
+	}
+	if filter.Origin != "" {
+		query += fmt.Sprintf(" AND origin = $%d", argIdx)
+		args = append(args, filter.Origin)
+		argIdx++
+	}
+	if filter.Destination != "" {
+		query += fmt.Sprintf(" AND destination = $%d", argIdx)
+		args = append(args, filter.Destination)
+		argIdx++
+	}
+	if filter.MinScore > 0 {
+		query += fmt.Sprintf(" AND deal_score >= $%d", argIdx)
+		args = append(args, filter.MinScore)
+		argIdx++
+	}
+	if filter.Classification != "" {
+		query += fmt.Sprintf(" AND deal_classification = $%d", argIdx)
+		args = append(args, filter.Classification)
+		argIdx++
+	}
+
+	query += " ORDER BY deal_score DESC, first_seen_at DESC"
+
+	if filter.Limit <= 0 {
+		filter.Limit = 100
+	}
+	query += fmt.Sprintf(" LIMIT $%d OFFSET $%d", argIdx, argIdx+1)
+	args = append(args, filter.Limit, filter.Offset)
+
+	rows, err := p.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list active deals: %w", err)
+	}
+	defer rows.Close()
+
+	var deals []DetectedDeal
+	for rows.Next() {
+		var deal DetectedDeal
+		if err := rows.Scan(
+			&deal.ID, &deal.Origin, &deal.Destination, &deal.DepartureDate, &deal.ReturnDate,
+			&deal.TripLength, &deal.Price, &deal.Currency, &deal.BaselineMean, &deal.BaselineMedian,
+			&deal.DiscountPercent, &deal.DealScore, &deal.DealClassification, &deal.DistanceMiles,
+			&deal.CostPerMile, &deal.CabinClass, &deal.SourceType, &deal.SourceID, &deal.SearchURL,
+			&deal.DealFingerprint, &deal.FirstSeenAt, &deal.LastSeenAt, &deal.TimesSeen, &deal.Status,
+			&deal.Verified, &deal.VerifiedPrice, &deal.VerifiedAt, &deal.ExpiresAt, &deal.CreatedAt, &deal.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan deal: %w", err)
+		}
+		deals = append(deals, deal)
+	}
+	return deals, nil
+}
+
+// ExpireOldDeals marks expired deals
+func (p *PostgresDBImpl) ExpireOldDeals(ctx context.Context) (int64, error) {
+	result, err := p.db.ExecContext(ctx,
+		`UPDATE detected_deals SET status = 'expired', updated_at = NOW()
+		 WHERE status = 'active' AND expires_at IS NOT NULL AND expires_at < NOW()`,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("failed to expire old deals: %w", err)
+	}
+	return result.RowsAffected()
+}
+
+// InsertDealAlert inserts a new deal alert
+func (p *PostgresDBImpl) InsertDealAlert(ctx context.Context, alert DealAlert) (int, error) {
+	var id int
+	err := p.db.QueryRowContext(ctx,
+		`INSERT INTO deal_alerts (detected_deal_id, origin, destination, price, currency,
+		                          discount_percent, deal_classification, deal_score,
+		                          published_at, publish_method, notification_channels)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9, $10)
+		 RETURNING id`,
+		alert.DetectedDealID, alert.Origin, alert.Destination, alert.Price, alert.Currency,
+		alert.DiscountPercent, alert.DealClassification, alert.DealScore,
+		alert.PublishMethod, pq.Array(alert.NotificationChannels),
+	).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("failed to insert deal alert: %w", err)
+	}
+	return id, nil
 }
 
 // --- End Implementation ---

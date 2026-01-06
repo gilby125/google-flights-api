@@ -22,6 +22,7 @@ type Config struct {
 	RedisConfig       RedisConfig
 	WorkerConfig      WorkerConfig
 	FlightConfig      FlightConfig
+	DealConfig        DealConfig
 	LetsEncryptConfig LetsEncryptConfig
 	NTFYConfig        NTFYConfig
 	AdminAuthConfig   AdminAuthConfig
@@ -34,6 +35,30 @@ type Config struct {
 type FlightConfig struct {
 	ExcludedAirlines []string // Airline codes to exclude from results (e.g., NK, G4, F9)
 	TopNDeals        int      // Number of top deals to fetch full itineraries for
+}
+
+// DealConfig holds deal detection configuration
+type DealConfig struct {
+	// Thresholds for deal classification (0.0 - 1.0)
+	GoodDealThreshold    float64
+	GreatDealThreshold   float64
+	AmazingDealThreshold float64
+	ErrorFareThreshold   float64
+
+	// Cost-per-mile thresholds by cabin class
+	CostPerMileEconomy  float64
+	CostPerMileBusiness float64
+	CostPerMileFirst    float64
+
+	// Baseline calculation
+	BaselineWindowDays int
+	BaselineMinSamples int
+
+	// Deal expiration
+	DealTTLHours int
+
+	// Publishing
+	AutoPublish bool
 }
 
 // LoggingConfig holds logging configuration

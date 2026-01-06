@@ -420,5 +420,68 @@ func (m *MockPostgresDB) ListContinuousSweepResults(ctx context.Context, filters
 	return results, args.Error(1)
 }
 
+// --- Deal Detection Methods Mock Implementations ---
+
+func (m *MockPostgresDB) GetRouteBaseline(ctx context.Context, origin, dest string, tripLength int, class string) (*db.RouteBaseline, error) {
+	args := m.Called(ctx, origin, dest, tripLength, class)
+	var baseline *db.RouteBaseline
+	if b := args.Get(0); b != nil {
+		baseline = b.(*db.RouteBaseline)
+	}
+	return baseline, args.Error(1)
+}
+
+func (m *MockPostgresDB) UpsertRouteBaseline(ctx context.Context, baseline db.RouteBaseline) error {
+	args := m.Called(ctx, baseline)
+	return args.Error(0)
+}
+
+func (m *MockPostgresDB) GetPriceHistoryForRoute(ctx context.Context, origin, dest string, tripLength int, class string, windowDays int) ([]float64, error) {
+	args := m.Called(ctx, origin, dest, tripLength, class, windowDays)
+	var prices []float64
+	if p := args.Get(0); p != nil {
+		prices = p.([]float64)
+	}
+	return prices, args.Error(1)
+}
+
+func (m *MockPostgresDB) InsertDetectedDeal(ctx context.Context, deal db.DetectedDeal) (int, error) {
+	args := m.Called(ctx, deal)
+	return args.Int(0), args.Error(1)
+}
+
+func (m *MockPostgresDB) UpsertDetectedDeal(ctx context.Context, deal db.DetectedDeal) error {
+	args := m.Called(ctx, deal)
+	return args.Error(0)
+}
+
+func (m *MockPostgresDB) GetDetectedDealByFingerprint(ctx context.Context, fingerprint string) (*db.DetectedDeal, error) {
+	args := m.Called(ctx, fingerprint)
+	var deal *db.DetectedDeal
+	if d := args.Get(0); d != nil {
+		deal = d.(*db.DetectedDeal)
+	}
+	return deal, args.Error(1)
+}
+
+func (m *MockPostgresDB) ListActiveDeals(ctx context.Context, filter db.DealFilter) ([]db.DetectedDeal, error) {
+	args := m.Called(ctx, filter)
+	var deals []db.DetectedDeal
+	if d := args.Get(0); d != nil {
+		deals = d.([]db.DetectedDeal)
+	}
+	return deals, args.Error(1)
+}
+
+func (m *MockPostgresDB) ExpireOldDeals(ctx context.Context) (int64, error) {
+	args := m.Called(ctx)
+	return args.Get(0).(int64), args.Error(1)
+}
+
+func (m *MockPostgresDB) InsertDealAlert(ctx context.Context, alert db.DealAlert) (int, error) {
+	args := m.Called(ctx, alert)
+	return args.Int(0), args.Error(1)
+}
+
 // Ensure MockPostgresDB implements db.PostgresDB
 var _ db.PostgresDB = (*MockPostgresDB)(nil)

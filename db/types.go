@@ -408,4 +408,135 @@ type ContinuousSweepResultsFilter struct {
 	Offset      int
 }
 
+// --- Deal Detection Types ---
+
+// DealClassification constants
+const (
+	DealClassGood      = "good"       // 20-35% below baseline
+	DealClassGreat     = "great"      // 35-50% below baseline
+	DealClassAmazing   = "amazing"    // 50%+ below baseline
+	DealClassErrorFare = "error_fare" // Suspiciously cheap (70%+)
+)
+
+// DealSourceType constants
+const (
+	DealSourceSweep   = "sweep"   // From continuous price sweeps
+	DealSourceSocial  = "social"  // From social-pulse webhook
+	DealSourceWebhook = "webhook" // From external webhook
+	DealSourceManual  = "manual"  // Manually entered
+)
+
+// DealStatus constants
+const (
+	DealStatusActive    = "active"
+	DealStatusExpired   = "expired"
+	DealStatusPublished = "published"
+	DealStatusVerified  = "verified"
+)
+
+// RouteBaseline stores historical price statistics for a route
+type RouteBaseline struct {
+	ID          int
+	Origin      string
+	Destination string
+	TripLength  int
+	Class       string
+	SampleCount int
+	MeanPrice   sql.NullFloat64
+	MedianPrice sql.NullFloat64
+	StddevPrice sql.NullFloat64
+	MinPrice    sql.NullFloat64
+	MaxPrice    sql.NullFloat64
+	P10Price    sql.NullFloat64
+	P25Price    sql.NullFloat64
+	P75Price    sql.NullFloat64
+	P90Price    sql.NullFloat64
+	WindowStart sql.NullTime
+	WindowEnd   sql.NullTime
+	UpdatedAt   time.Time
+	CreatedAt   time.Time
+}
+
+// DetectedDeal represents a flight deal identified by the system
+type DetectedDeal struct {
+	ID                 int
+	Origin             string
+	Destination        string
+	DepartureDate      time.Time
+	ReturnDate         sql.NullTime
+	TripLength         sql.NullInt32
+	Price              float64
+	Currency           string
+	BaselineMean       sql.NullFloat64
+	BaselineMedian     sql.NullFloat64
+	DiscountPercent    sql.NullFloat64
+	DealScore          sql.NullInt32
+	DealClassification sql.NullString
+	DistanceMiles      sql.NullFloat64
+	CostPerMile        sql.NullFloat64
+	CabinClass         string
+	SourceType         string
+	SourceID           sql.NullString
+	SearchURL          sql.NullString
+	DealFingerprint    string
+	FirstSeenAt        time.Time
+	LastSeenAt         time.Time
+	TimesSeen          int
+	Status             string
+	Verified           bool
+	VerifiedPrice      sql.NullFloat64
+	VerifiedAt         sql.NullTime
+	ExpiresAt          sql.NullTime
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+}
+
+// DealAlert represents a published deal ready for notification
+type DealAlert struct {
+	ID                   int
+	DetectedDealID       int
+	Origin               string
+	Destination          string
+	Price                float64
+	Currency             string
+	DiscountPercent      sql.NullFloat64
+	DealClassification   sql.NullString
+	DealScore            sql.NullInt32
+	PublishedAt          time.Time
+	PublishMethod        string
+	NotificationSent     bool
+	NotificationSentAt   sql.NullTime
+	NotificationChannels []string
+	CreatedAt            time.Time
+}
+
+// DealSource represents an external deal source (for webhook integration)
+type DealSource struct {
+	ID             int
+	Name           string
+	SourceType     string
+	WebhookURL     sql.NullString
+	APIKey         sql.NullString
+	Enabled        bool
+	LastReceivedAt sql.NullTime
+	DealsReceived  int
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
+// DealFilter is used to filter deals in queries
+type DealFilter struct {
+	Origin         string
+	Destination    string
+	MinScore       int
+	MaxPrice       *float64
+	MinDiscount    *float64
+	Classification string
+	Status         string
+	SourceType     string
+	IncludeExpired bool
+	Limit          int
+	Offset         int
+}
+
 // --- End Struct Definitions ---
