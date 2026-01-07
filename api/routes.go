@@ -179,6 +179,10 @@ func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Ne
 			admin.POST("/continuous-sweep/restart", restartCurrentSweep(workerManager))
 			admin.GET("/continuous-sweep/stats", getContinuousSweepStats(postgresDB))
 			admin.GET("/continuous-sweep/results", getContinuousSweepResults(postgresDB))
+
+			// Deal detection endpoints
+			admin.GET("/deals", listDeals(postgresDB))
+			admin.GET("/deal-alerts", listDealAlerts(postgresDB))
 		}
 	}
 

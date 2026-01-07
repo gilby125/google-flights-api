@@ -80,6 +80,7 @@ type PostgresDB interface {
 	ListActiveDeals(ctx context.Context, filter DealFilter) ([]DetectedDeal, error)
 	ExpireOldDeals(ctx context.Context) (int64, error)
 	InsertDealAlert(ctx context.Context, alert DealAlert) (int, error)
+	ListDealAlerts(ctx context.Context, limit, offset int) ([]DealAlert, error)
 }
 
 // Tx defines the interface for database transactions
@@ -1559,6 +1560,45 @@ func (p *PostgresDBImpl) InsertDealAlert(ctx context.Context, alert DealAlert) (
 		return 0, fmt.Errorf("failed to insert deal alert: %w", err)
 	}
 	return id, nil
+}
+
+// ListDealAlerts retrieves published deal alerts with pagination
+func (p *PostgresDBImpl) ListDealAlerts(ctx context.Context, limit, offset int) ([]DealAlert, error) {
+	rows, err := p.db.QueryContext(ctx,
+		`SELECT id, detected_deal_id, origin, destination, price, currency,
+		        discount_percent, deal_classification, deal_score,
+		        published_at, publish_method, notification_sent, notification_sent_at,
+		        notification_channels, created_at
+		 FROM deal_alerts
+		 ORDER BY published_at DESC
+		 LIMIT $1 OFFSET $2`,
+		limit, offset,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query deal alerts: %w", err)
+	}
+	defer rows.Close()
+
+	var alerts []DealAlert
+	for rows.Next() {
+		var alert DealAlert
+		var channels []string
+		err := rows.Scan(
+			&alert.ID, &alert.DetectedDealID, &alert.Origin, &alert.Destination,
+			&alert.Price, &alert.Currency, &alert.DiscountPercent, &alert.DealClassification,
+			&alert.DealScore, &alert.PublishedAt, &alert.PublishMethod, &alert.NotificationSent,
+			&alert.NotificationSentAt, pq.Array(&channels), &alert.CreatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan deal alert row: %w", err)
+		}
+		alert.NotificationChannels = channels
+		alerts = append(alerts, alert)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating deal alert rows: %w", err)
+	}
+	return alerts, nil
 }
 
 // --- End Implementation ---

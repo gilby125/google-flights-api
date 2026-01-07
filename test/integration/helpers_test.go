@@ -92,7 +92,7 @@ func TestMain(m *testing.M) {
 		panic(fmt.Sprintf("Failed to create Redis queue: %v", err))
 	}
 	// Pass nil for Redis client to disable leader election in tests
-	wm := worker.NewManager(q, nil, pgDB, neo4jDB, cfg.WorkerConfig, cfg.FlightConfig)
+	wm := worker.NewManager(q, nil, pgDB, neo4jDB, cfg.WorkerConfig, cfg.FlightConfig, config.DealConfig{})
 	api.RegisterRoutes(router, pgDB, neo4jDB, q, wm, cfg)
 	testServer := httptest.NewServer(router)
 	defer testServer.Close()

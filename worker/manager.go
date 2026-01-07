@@ -17,6 +17,7 @@ import (
 	"github.com/gilby125/google-flights-api/db"
 	"github.com/gilby125/google-flights-api/flights"
 	"github.com/gilby125/google-flights-api/iata"
+	"github.com/gilby125/google-flights-api/pkg/deals"
 	"github.com/gilby125/google-flights-api/pkg/geo"
 	"github.com/gilby125/google-flights-api/pkg/worker_registry"
 	"github.com/gilby125/google-flights-api/queue"
@@ -195,6 +196,7 @@ type Manager struct {
 	neo4jDB       db.Neo4jDatabase // Use the interface type
 	config        config.WorkerConfig
 	flightConfig  config.FlightConfig
+	dealConfig    config.DealConfig
 	topNDeals     int
 	excludedSet   map[string]bool
 	workers       []*Worker
@@ -214,7 +216,7 @@ type Manager struct {
 // NewManager creates a new worker manager.
 // If redisClient is provided, leader election is enabled for the scheduler.
 // If redisClient is nil, the scheduler runs on every instance (legacy behavior).
-func NewManager(queue queue.Queue, redisClient *redis.Client, postgresDB db.PostgresDB, neo4jDB db.Neo4jDatabase, workerConfig config.WorkerConfig, flightConfig config.FlightConfig) *Manager {
+func NewManager(queue queue.Queue, redisClient *redis.Client, postgresDB db.PostgresDB, neo4jDB db.Neo4jDatabase, workerConfig config.WorkerConfig, flightConfig config.FlightConfig, dealConfig config.DealConfig) *Manager {
 	// Pass nil for Cronner to use the default cron instance
 	scheduler := NewScheduler(queue, postgresDB, nil)
 
@@ -238,6 +240,7 @@ func NewManager(queue queue.Queue, redisClient *redis.Client, postgresDB db.Post
 		neo4jDB:      neo4jDB,
 		config:       workerConfig,
 		flightConfig: flightConfig,
+		dealConfig:   dealConfig,
 		topNDeals:    topNDeals,
 		excludedSet:  excludedSet,
 		stopChan:     make(chan struct{}),
@@ -857,6 +860,22 @@ func (m *Manager) processContinuousPriceGraph(ctx context.Context, worker *Worke
 		); syncErr != nil {
 			// Log but don't fail - Postgres is the source of truth
 			log.Printf("Warning: failed to sync price point to Neo4j for %s->%s: %v", payload.Origin, payload.Destination, syncErr)
+		}
+	}
+
+	// Detect deals from the price result
+	detector := deals.NewDealDetector(m.postgresDB, m.dealConfig)
+	deal, detectErr := detector.DetectDeal(ctx, record)
+	if detectErr != nil {
+		log.Printf("Warning: deal detection failed for %s->%s: %v", payload.Origin, payload.Destination, detectErr)
+	} else if deal != nil {
+		// Store or upsert the detected deal
+		if upsertErr := m.postgresDB.UpsertDetectedDeal(ctx, *deal); upsertErr != nil {
+			log.Printf("Warning: failed to upsert detected deal for %s->%s: %v", payload.Origin, payload.Destination, upsertErr)
+		} else {
+			log.Printf("Detected %s deal for %s->%s: $%.2f (%.0f%% off, score %d)",
+				deal.DealClassification.String, payload.Origin, payload.Destination,
+				deal.Price, deal.DiscountPercent.Float64, deal.DealScore.Int32)
 		}
 	}
 

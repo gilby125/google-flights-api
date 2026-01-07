@@ -303,6 +303,33 @@ func Load() (*Config, error) {
 		TopNDeals:        topNDeals,
 	}
 
+	// Deal detection config
+	goodDealThreshold, _ := strconv.ParseFloat(getEnv("DEAL_GOOD_THRESHOLD", "0.15"), 64)
+	greatDealThreshold, _ := strconv.ParseFloat(getEnv("DEAL_GREAT_THRESHOLD", "0.25"), 64)
+	amazingDealThreshold, _ := strconv.ParseFloat(getEnv("DEAL_AMAZING_THRESHOLD", "0.40"), 64)
+	errorFareThreshold, _ := strconv.ParseFloat(getEnv("DEAL_ERROR_FARE_THRESHOLD", "0.60"), 64)
+	costPerMileEconomy, _ := strconv.ParseFloat(getEnv("DEAL_CPM_ECONOMY", "0.08"), 64)
+	costPerMileBusiness, _ := strconv.ParseFloat(getEnv("DEAL_CPM_BUSINESS", "0.12"), 64)
+	costPerMileFirst, _ := strconv.ParseFloat(getEnv("DEAL_CPM_FIRST", "0.20"), 64)
+	baselineWindowDays, _ := strconv.Atoi(getEnv("DEAL_BASELINE_WINDOW_DAYS", "90"))
+	baselineMinSamples, _ := strconv.Atoi(getEnv("DEAL_BASELINE_MIN_SAMPLES", "5"))
+	dealTTLHours, _ := strconv.Atoi(getEnv("DEAL_TTL_HOURS", "48"))
+	autoPublish, _ := strconv.ParseBool(getEnv("DEAL_AUTO_PUBLISH", "false"))
+
+	dealConfig := DealConfig{
+		GoodDealThreshold:    goodDealThreshold,
+		GreatDealThreshold:   greatDealThreshold,
+		AmazingDealThreshold: amazingDealThreshold,
+		ErrorFareThreshold:   errorFareThreshold,
+		CostPerMileEconomy:   costPerMileEconomy,
+		CostPerMileBusiness:  costPerMileBusiness,
+		CostPerMileFirst:     costPerMileFirst,
+		BaselineWindowDays:   baselineWindowDays,
+		BaselineMinSamples:   baselineMinSamples,
+		DealTTLHours:         dealTTLHours,
+		AutoPublish:          autoPublish,
+	}
+
 	return &Config{
 		Port:            port,
 		HTTPBindAddr:    httpBindAddr,
@@ -315,6 +342,7 @@ func Load() (*Config, error) {
 		RedisConfig:     redisConfig,
 		WorkerConfig:    workerConfig,
 		FlightConfig:    flightConfig,
+		DealConfig:      dealConfig,
 		NTFYConfig:      ntfyConfig,
 		AdminAuthConfig: adminAuthConfig,
 		WorkerEnabled:   workerEnabled,

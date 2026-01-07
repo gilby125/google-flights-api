@@ -57,7 +57,7 @@ func setupManagerTest(cfg config.WorkerConfig) (*worker.Manager, *mocks.MockQueu
 	// Create the manager using the real NewManager which internally creates a real scheduler (using default cron).
 	// This limits our ability to mock scheduler calls directly.
 	// Pass nil for Redis client to disable leader election in tests
-	manager := worker.NewManager(mockQueue, nil, mockPgDb, mockNeo4jDb, cfg, config.FlightConfig{})
+	manager := worker.NewManager(mockQueue, nil, mockPgDb, mockNeo4jDb, cfg, config.FlightConfig{}, config.DealConfig{})
 	// --- End Simulation ---
 
 	// Allow price graph sweep dequeue calls by default in tests
@@ -288,7 +288,7 @@ func TestManager_JobProcessingFlow(t *testing.T) {
 		mockQueue := new(mocks.MockQueue)
 		mockPgDb := new(mocks.MockPostgresDB)
 		mockNeo4jDb := new(mocks.MockNeo4jDatabase)
-		manager := worker.NewManager(mockQueue, nil, mockPgDb, mockNeo4jDb, cfg, config.FlightConfig{}) // Recreate manager with fresh mocks
+		manager := worker.NewManager(mockQueue, nil, mockPgDb, mockNeo4jDb, cfg, config.FlightConfig{}, config.DealConfig{}) // Recreate manager with fresh mocks
 		allowPriceGraphDequeues(mockQueue)
 
 		// Mock the ListJobs call that the scheduler makes on startup

@@ -23,7 +23,7 @@ import (
 
 func newWorkerManagerForTests(queue *mocks.MockQueue, postgres *mocks.MockPostgresDB) *worker.Manager {
 	cfg := config.WorkerConfig{Concurrency: 1}
-	return worker.NewManager(queue, nil, postgres, nil, cfg, config.FlightConfig{})
+	return worker.NewManager(queue, nil, postgres, nil, cfg, config.FlightConfig{}, config.DealConfig{})
 }
 
 func TestEnqueuePriceGraphSweepHandler_Success(t *testing.T) {

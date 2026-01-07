@@ -3243,3 +3243,129 @@ func getOrCreateSession(m *worker.Manager) (*flights.Session, error) {
 	}
 	return session, nil
 }
+
+// listDeals returns a handler for listing detected deals
+func listDeals(pgDB db.PostgresDB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Parse filter parameters
+		filter := db.DealFilter{
+			Origin:         c.Query("origin"),
+			Destination:    c.Query("destination"),
+			Classification: c.Query("classification"),
+		}
+
+		limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+		if limit <= 0 || limit > 500 {
+			limit = 50
+		}
+		filter.Limit = limit
+
+		offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+		filter.Offset = offset
+
+		// Filter by status (default to active only)
+		status := c.DefaultQuery("status", db.DealStatusActive)
+		if status != "" {
+			filter.Status = status
+		}
+
+		deals, err := pgDB.ListActiveDeals(c.Request.Context(), filter)
+		if err != nil {
+			log.Printf("Error fetching deals: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch deals"})
+			return
+		}
+
+		// Convert to JSON-friendly format
+		response := make([]map[string]interface{}, len(deals))
+		for i, deal := range deals {
+			response[i] = map[string]interface{}{
+				"id":                  deal.ID,
+				"origin":              deal.Origin,
+				"destination":         deal.Destination,
+				"departure_date":      deal.DepartureDate.Format("2006-01-02"),
+				"price":               deal.Price,
+				"currency":            deal.Currency,
+				"discount_percent":    maybeNullFloat(deal.DiscountPercent),
+				"deal_score":          maybeNullInt(deal.DealScore),
+				"deal_classification": maybeNullString(deal.DealClassification),
+				"cost_per_mile":       maybeNullFloat(deal.CostPerMile),
+				"cabin_class":         deal.CabinClass,
+				"status":              deal.Status,
+				"first_seen_at":       deal.FirstSeenAt,
+				"times_seen":          deal.TimesSeen,
+			}
+			if deal.ReturnDate.Valid {
+				response[i]["return_date"] = deal.ReturnDate.Time.Format("2006-01-02")
+			}
+			if deal.SearchURL.Valid {
+				response[i]["search_url"] = deal.SearchURL.String
+			}
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"deals": response,
+			"count": len(deals),
+			"filter": gin.H{
+				"origin":         filter.Origin,
+				"destination":    filter.Destination,
+				"classification": filter.Classification,
+				"status":         filter.Status,
+			},
+		})
+	}
+}
+
+// maybeNullFloat returns the float value or nil if not valid
+func maybeNullFloat(value sql.NullFloat64) interface{} {
+	if value.Valid {
+		return value.Float64
+	}
+	return nil
+}
+
+// listDealAlerts returns a handler for listing published deal alerts
+func listDealAlerts(pgDB db.PostgresDB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+		if limit <= 0 || limit > 500 {
+			limit = 50
+		}
+
+		offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+
+		alerts, err := pgDB.ListDealAlerts(c.Request.Context(), limit, offset)
+		if err != nil {
+			log.Printf("Error fetching deal alerts: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch deal alerts"})
+			return
+		}
+
+		// Convert to JSON-friendly format
+		response := make([]map[string]interface{}, len(alerts))
+		for i, alert := range alerts {
+			response[i] = map[string]interface{}{
+				"id":                  alert.ID,
+				"detected_deal_id":    alert.DetectedDealID,
+				"origin":              alert.Origin,
+				"destination":         alert.Destination,
+				"price":               alert.Price,
+				"currency":            alert.Currency,
+				"discount_percent":    maybeNullFloat(alert.DiscountPercent),
+				"deal_classification": maybeNullString(alert.DealClassification),
+				"deal_score":          maybeNullInt(alert.DealScore),
+				"published_at":        alert.PublishedAt,
+				"publish_method":      alert.PublishMethod,
+				"notification_sent":   alert.NotificationSent,
+			}
+			if alert.NotificationSentAt.Valid {
+				response[i]["notification_sent_at"] = alert.NotificationSentAt.Time
+			}
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"alerts": response,
+			"count":  len(alerts),
+		})
+	}
+}

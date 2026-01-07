@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Detected Deals - Google Flights API</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <style>
+        body {
+            background-color: #f8f9fa;
+        }
+
+        .sidebar {
+            background-color: #f8f9fa;
+            box-shadow: inset -1px 0 0 rgba(0, 0, 0, 0.1);
+        }
+
+        .sidebar .nav-link {
+            color: #333;
+            font-weight: 500;
+        }
+
+        .sidebar .nav-link.active {
+            color: #0d6efd;
+        }
+
+        .badge-good {
+            background: linear-gradient(135deg, #28a745, #20c997);
+        }
+
+        .badge-great {
+            background: linear-gradient(135deg, #17a2b8, #0dcaf0);
+        }
+
+        .badge-amazing {
+            background: linear-gradient(135deg, #6f42c1, #e040fb);
+        }
+
+        .badge-error-fare {
+            background: linear-gradient(135deg, #dc3545, #ff5722);
+        }
+
+        .deal-score {
+            font-weight: bold;
+        }
+
+        .deal-card {
+            transition: transform 0.15s;
+        }
+
+        .deal-card:hover {
+            transform: translateY(-2px);
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container-fluid">
+        <div class="row flex-nowrap">
+            <nav class="col-md-3 col-lg-2 d-md-block sidebar py-4">
+                <div class="text-center mb-4">
+                    <a class="navbar-brand fw-semibold" href="/">Google Flights API</a>
+                </div>
+                <ul class="nav flex-column">
+                    <li class="nav-item">
+                        <a class="nav-link" href="index.html">
+                            <i class="bi bi-speedometer2 me-2"></i>Dashboard
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="bulk.html">
+                            <i class="bi bi-table me-2"></i>Bulk Results
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link active" href="deals.html">
+                            <i class="bi bi-tags-fill me-2"></i>Detected Deals
+                        </a>
+                    </li>
+                </ul>
+            </nav>
+
+            <main class="col-md-9 col-lg-10 ms-sm-auto px-md-5 py-4">
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <div>
+                        <h1 class="h2 mb-1">Detected Deals</h1>
+                        <p class="text-muted mb-0">Flight deals identified by the continuous sweep engine</p>
+                    </div>
+                    <button class="btn btn-outline-secondary" id="refreshBtn">
+                        <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+                    </button>
+                </div>
+
+                <!-- Filter Row -->
+                <div class="card shadow-sm mb-4">
+                    <div class="card-body">
+                        <form id="filterForm" class="row g-3 align-items-end">
+                            <div class="col-md-2">
+                                <label for="originFilter" class="form-label">Origin</label>
+                                <input type="text" class="form-control text-uppercase" id="originFilter"
+                                    placeholder="JFK" maxlength="3">
+                            </div>
+                            <div class="col-md-2">
+                                <label for="destinationFilter" class="form-label">Destination</label>
+                                <input type="text" class="form-control text-uppercase" id="destinationFilter"
+                                    placeholder="LHR" maxlength="3">
+                            </div>
+                            <div class="col-md-2">
+                                <label for="classificationFilter" class="form-label">Classification</label>
+                                <select class="form-select" id="classificationFilter">
+                                    <option value="">All</option>
+                                    <option value="good">Good</option>
+                                    <option value="great">Great</option>
+                                    <option value="amazing">Amazing</option>
+                                    <option value="error_fare">Error Fare</option>
+                                </select>
+                            </div>
+                            <div class="col-md-2">
+                                <label for="statusFilter" class="form-label">Status</label>
+                                <select class="form-select" id="statusFilter">
+                                    <option value="active" selected>Active</option>
+                                    <option value="expired">Expired</option>
+                                    <option value="">All</option>
+                                </select>
+                            </div>
+                            <div class="col-md-2">
+                                <button type="submit" class="btn btn-primary w-100">
+                                    <i class="bi bi-search me-1"></i>Filter
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Summary Stats -->
+                <div class="row g-3 mb-4">
+                    <div class="col-sm-6 col-lg-3">
+                        <div class="card text-center shadow-sm h-100">
+                            <div class="card-body">
+                                <i class="bi bi-tag text-success fs-2"></i>
+                                <h5 class="mt-2">Active Deals</h5>
+                                <h2 id="activeDealsCount">-</h2>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-sm-6 col-lg-3">
+                        <div class="card text-center shadow-sm h-100">
+                            <div class="card-body">
+                                <i class="bi bi-star-fill text-warning fs-2"></i>
+                                <h5 class="mt-2">Amazing Deals</h5>
+                                <h2 id="amazingDealsCount">-</h2>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-sm-6 col-lg-3">
+                        <div class="card text-center shadow-sm h-100">
+                            <div class="card-body">
+                                <i class="bi bi-arrow-down-circle text-info fs-2"></i>
+                                <h5 class="mt-2">Avg Discount</h5>
+                                <h2 id="avgDiscount">-</h2>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-sm-6 col-lg-3">
+                        <div class="card text-center shadow-sm h-100">
+                            <div class="card-body">
+                                <i class="bi bi-bell text-primary fs-2"></i>
+                                <h5 class="mt-2">Alerts Sent</h5>
+                                <h2 id="alertsSentCount">-</h2>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Deals Table -->
+                <div class="card shadow-sm">
+                    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                        <span><i class="bi bi-tags me-2"></i>Deal Results</span>
+                        <span class="text-muted" id="dealsMeta">Loading...</span>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table table-striped table-hover align-middle mb-0">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Route</th>
+                                        <th>Departure</th>
+                                        <th>Price</th>
+                                        <th>Discount</th>
+                                        <th>Classification</th>
+                                        <th>Score</th>
+                                        <th>CPM</th>
+                                        <th>First Seen</th>
+                                        <th class="text-end">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="dealsTableBody">
+                                    <tr>
+                                        <td colspan="9" class="text-center py-4 text-muted">
+                                            Loading deals...
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="deals.js"></script>
+</body>
+
+</html>

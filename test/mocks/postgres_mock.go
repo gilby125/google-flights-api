@@ -483,5 +483,14 @@ func (m *MockPostgresDB) InsertDealAlert(ctx context.Context, alert db.DealAlert
 	return args.Int(0), args.Error(1)
 }
 
+func (m *MockPostgresDB) ListDealAlerts(ctx context.Context, limit, offset int) ([]db.DealAlert, error) {
+	args := m.Called(ctx, limit, offset)
+	var alerts []db.DealAlert
+	if a := args.Get(0); a != nil {
+		alerts = a.([]db.DealAlert)
+	}
+	return alerts, args.Error(1)
+}
+
 // Ensure MockPostgresDB implements db.PostgresDB
 var _ db.PostgresDB = (*MockPostgresDB)(nil)

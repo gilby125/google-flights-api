@@ -239,7 +239,7 @@ func main() {
 	redisClient := redisQueue.GetClient()
 
 	// Initialize worker manager with Redis client for distributed leader election
-	workerManager := worker.NewManager(redisQueue, redisClient, postgresDB, neo4jDB, cfg.WorkerConfig, cfg.FlightConfig)
+	workerManager := worker.NewManager(redisQueue, redisClient, postgresDB, neo4jDB, cfg.WorkerConfig, cfg.FlightConfig, cfg.DealConfig)
 
 	// Start worker pool if enabled
 	if cfg.WorkerEnabled {
