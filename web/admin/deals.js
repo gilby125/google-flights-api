@@ -45,7 +45,7 @@ async function loadDeals() {
     } catch (error) {
         console.error('Error loading deals:', error);
         document.getElementById('dealsTableBody').innerHTML = `
-            <tr><td colspan="9" class="text-center py-4 text-danger">
+            <tr><td colspan="10" class="text-center py-4 text-danger">
                 Error loading deals: ${error.message}
             </td></tr>`;
         document.getElementById('dealsMeta').textContent = 'Error loading';
@@ -88,7 +88,7 @@ function renderDealsTable(deals) {
 
     if (!deals || deals.length === 0) {
         tbody.innerHTML = `
-            <tr><td colspan="9" class="text-center py-4 text-muted">
+            <tr><td colspan="10" class="text-center py-4 text-muted">
                 No deals found. Run a continuous sweep to detect deals.
             </td></tr>`;
         return;
@@ -99,6 +99,7 @@ function renderDealsTable(deals) {
             <td>
                 <strong>${deal.origin}</strong> → <strong>${deal.destination}</strong>
             </td>
+            <td>${renderCabinClass(deal.cabin_class)}</td>
             <td>${formatDate(deal.departure_date)}</td>
             <td class="fw-bold text-success">
                 $${deal.price.toFixed(2)}
@@ -143,6 +144,20 @@ function renderClassificationBadge(classification) {
     const displayName = displayNames[classification] || classification;
 
     return `<span class="badge ${badgeClass}">${displayName}</span>`;
+}
+
+function renderCabinClass(cabinClass) {
+    if (!cabinClass) return '<span class="badge bg-secondary">Economy</span>';
+
+    const classConfig = {
+        'economy': { badge: 'bg-secondary', label: 'Economy' },
+        'premium_economy': { badge: 'bg-info', label: 'Premium' },
+        'business': { badge: 'bg-warning text-dark', label: '✈️ Business' },
+        'first': { badge: 'bg-dark', label: '👑 First' }
+    };
+
+    const config = classConfig[cabinClass.toLowerCase()] || classConfig['economy'];
+    return `<span class="badge ${config.badge}">${config.label}</span>`;
 }
 
 function renderScore(score) {
