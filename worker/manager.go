@@ -1787,6 +1787,37 @@ func (m *Manager) processPriceGraphSweep(ctx context.Context, worker *Worker, se
 		tripLengths = []int{0}
 	}
 
+	classes := payload.Classes
+	if len(classes) == 0 {
+		if payload.Class != "" {
+			classes = []string{payload.Class}
+		} else {
+			classes = []string{"economy"}
+			payload.Class = "economy"
+		}
+	}
+	seenClass := make(map[string]struct{}, len(classes))
+	normalizedClasses := make([]string, 0, len(classes))
+	for _, c := range classes {
+		cabin := strings.ToLower(strings.TrimSpace(c))
+		if cabin == "" {
+			continue
+		}
+		switch cabin {
+		case "economy", "premium_economy", "business", "first":
+		default:
+			return fmt.Errorf("invalid class %q (allowed: economy, premium_economy, business, first)", c)
+		}
+		if _, ok := seenClass[cabin]; ok {
+			continue
+		}
+		seenClass[cabin] = struct{}{}
+		normalizedClasses = append(normalizedClasses, cabin)
+	}
+	if len(normalizedClasses) == 0 {
+		return fmt.Errorf("price graph sweep requires at least one class")
+	}
+
 	var tripType flights.TripType
 	switch payload.TripType {
 	case "one_way":
@@ -1795,7 +1826,6 @@ func (m *Manager) processPriceGraphSweep(ctx context.Context, worker *Worker, se
 		tripType = flights.RoundTrip
 	}
 
-	flightClass := parseClass(payload.Class)
 	flightStops := parseStops(payload.Stops)
 
 	cur, err := currency.ParseISO(payload.Currency)
@@ -1865,7 +1895,6 @@ func (m *Manager) processPriceGraphSweep(ctx context.Context, worker *Worker, se
 		},
 		Currency: cur,
 		Stops:    flightStops,
-		Class:    flightClass,
 		TripType: tripType,
 		Lang:     language.English,
 	}
@@ -1873,88 +1902,91 @@ func (m *Manager) processPriceGraphSweep(ctx context.Context, worker *Worker, se
 	for _, origin := range payload.Origins {
 		for _, destination := range payload.Destinations {
 			for _, length := range tripLengths {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				default:
-				}
-
-				args := flights.PriceGraphArgs{
-					RangeStartDate: payload.DepartureDateFrom,
-					RangeEndDate:   payload.DepartureDateTo,
-					TripLength:     length,
-					SrcAirports:    []string{origin},
-					DstAirports:    []string{destination},
-					Options:        options,
-				}
-
-				offers, _, sweepErr := session.GetPriceGraph(ctx, args)
-				if sweepErr != nil {
-					errorCount++
-					log.Printf("Price graph sweep error for %s -> %s (length %d): %v", origin, destination, length, sweepErr)
-					continue
-				}
-
-				for _, offer := range offers {
-					// Price=0 means price unavailable; skip these rows.
-					if offer.Price <= 0 {
-						continue
-					}
-					distanceMiles, costPerMile := calculateDistanceAndCostPerMile(origin, destination, offer.Price)
-					record := db.PriceGraphResultRecord{
-						SweepID:       sweepID,
-						Origin:        origin,
-						Destination:   destination,
-						DepartureDate: offer.StartDate,
-						ReturnDate:    timeToNullTime(offer.ReturnDate),
-						TripLength:    nullInt32(length),
-						Price:         offer.Price,
-						Currency:      strings.ToUpper(payload.Currency),
-						DistanceMiles: distanceMiles,
-						CostPerMile:   costPerMile,
-						Adults:        payload.Adults,
-						Children:      payload.Children,
-						InfantsLap:    payload.InfantsLap,
-						InfantsSeat:   payload.InfantsSeat,
-						TripType:      payload.TripType,
-						Class:         payload.Class,
-						Stops:         payload.Stops,
-						QueriedAt:     time.Now(),
+				for _, class := range normalizedClasses {
+					select {
+					case <-ctx.Done():
+						return ctx.Err()
+					default:
 					}
 
-					searchURL, urlErr := session.SerializeURL(ctx, flights.Args{
-						Date:        offer.StartDate,
-						ReturnDate:  offer.ReturnDate,
-						SrcAirports: []string{origin},
-						DstAirports: []string{destination},
-						Options:     options,
-					})
-					if urlErr == nil && searchURL != "" {
-						record.SearchURL = sql.NullString{String: searchURL, Valid: true}
-					} else if urlErr != nil {
-						log.Printf("Failed to serialize Google Flights URL for %s->%s: %v", origin, destination, urlErr)
+					options.Class = parseClass(class)
+					args := flights.PriceGraphArgs{
+						RangeStartDate: payload.DepartureDateFrom,
+						RangeEndDate:   payload.DepartureDateTo,
+						TripLength:     length,
+						SrcAirports:    []string{origin},
+						DstAirports:    []string{destination},
+						Options:        options,
 					}
 
-					if insertErr := m.postgresDB.InsertPriceGraphResult(ctx, record); insertErr != nil {
+					offers, _, sweepErr := session.GetPriceGraph(ctx, args)
+					if sweepErr != nil {
 						errorCount++
-						log.Printf("Failed to store price graph result for %s -> %s on %s: %v", origin, destination, offer.StartDate.Format("2006-01-02"), insertErr)
+						log.Printf("Price graph sweep error for %s -> %s (class %s, length %d): %v", origin, destination, class, length, sweepErr)
 						continue
 					}
-					resultsInserted++
 
-					// Sync price point to Neo4j for graph analytics (idempotent via MERGE)
-					if m.neo4jDB != nil {
-						dateStr := offer.StartDate.Format("2006-01-02")
-						if syncErr := m.neo4jDB.AddPricePoint(origin, destination, dateStr, offer.Price, ""); syncErr != nil {
-							log.Printf("Warning: failed to sync price point to Neo4j for %s->%s: %v", origin, destination, syncErr)
+					for _, offer := range offers {
+						// Price=0 means price unavailable; skip these rows.
+						if offer.Price <= 0 {
+							continue
+						}
+						distanceMiles, costPerMile := calculateDistanceAndCostPerMile(origin, destination, offer.Price)
+						record := db.PriceGraphResultRecord{
+							SweepID:       sweepID,
+							Origin:        origin,
+							Destination:   destination,
+							DepartureDate: offer.StartDate,
+							ReturnDate:    timeToNullTime(offer.ReturnDate),
+							TripLength:    nullInt32(length),
+							Price:         offer.Price,
+							Currency:      strings.ToUpper(payload.Currency),
+							DistanceMiles: distanceMiles,
+							CostPerMile:   costPerMile,
+							Adults:        payload.Adults,
+							Children:      payload.Children,
+							InfantsLap:    payload.InfantsLap,
+							InfantsSeat:   payload.InfantsSeat,
+							TripType:      payload.TripType,
+							Class:         class,
+							Stops:         payload.Stops,
+							QueriedAt:     time.Now(),
+						}
+
+						searchURL, urlErr := session.SerializeURL(ctx, flights.Args{
+							Date:        offer.StartDate,
+							ReturnDate:  offer.ReturnDate,
+							SrcAirports: []string{origin},
+							DstAirports: []string{destination},
+							Options:     options,
+						})
+						if urlErr == nil && searchURL != "" {
+							record.SearchURL = sql.NullString{String: searchURL, Valid: true}
+						} else if urlErr != nil {
+							log.Printf("Failed to serialize Google Flights URL for %s->%s: %v", origin, destination, urlErr)
+						}
+
+						if insertErr := m.postgresDB.InsertPriceGraphResult(ctx, record); insertErr != nil {
+							errorCount++
+							log.Printf("Failed to store price graph result for %s -> %s on %s: %v", origin, destination, offer.StartDate.Format("2006-01-02"), insertErr)
+							continue
+						}
+						resultsInserted++
+
+						// Sync price point to Neo4j for graph analytics (idempotent via MERGE)
+						if m.neo4jDB != nil {
+							dateStr := offer.StartDate.Format("2006-01-02")
+							if syncErr := m.neo4jDB.AddPricePoint(origin, destination, dateStr, offer.Price, ""); syncErr != nil {
+								log.Printf("Warning: failed to sync price point to Neo4j for %s->%s: %v", origin, destination, syncErr)
+							}
 						}
 					}
-				}
 
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-time.After(rateDelay):
+					select {
+					case <-ctx.Done():
+						return ctx.Err()
+					case <-time.After(rateDelay):
+					}
 				}
 			}
 		}

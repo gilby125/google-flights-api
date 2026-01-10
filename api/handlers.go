@@ -159,14 +159,16 @@ type PriceGraphSweepRequest struct {
 	DepartureDateTo   DateOnly `json:"departure_date_to" binding:"required"`
 	TripLengths       []int    `json:"trip_lengths,omitempty"`
 	TripType          string   `json:"trip_type" binding:"required,oneof=one_way round_trip"`
-	Class             string   `json:"class" binding:"required,oneof=economy premium_economy business first"`
-	Stops             string   `json:"stops" binding:"required,oneof=nonstop one_stop two_stops two_stops_plus any"`
-	Adults            int      `json:"adults" binding:"required,min=1"`
-	Children          int      `json:"children" binding:"min=0"`
-	InfantsLap        int      `json:"infants_lap" binding:"min=0"`
-	InfantsSeat       int      `json:"infants_seat" binding:"min=0"`
-	Currency          string   `json:"currency" binding:"required,len=3"`
-	RateLimitMillis   int      `json:"rate_limit_millis,omitempty" binding:"min=0"`
+	// Class is kept for backward compatibility; prefer Classes for multi-cabin sweeps.
+	Class           string   `json:"class,omitempty"`
+	Classes         []string `json:"classes,omitempty"`
+	Stops           string   `json:"stops" binding:"required,oneof=nonstop one_stop two_stops two_stops_plus any"`
+	Adults          int      `json:"adults" binding:"required,min=1"`
+	Children        int      `json:"children" binding:"min=0"`
+	InfantsLap      int      `json:"infants_lap" binding:"min=0"`
+	InfantsSeat     int      `json:"infants_seat" binding:"min=0"`
+	Currency        string   `json:"currency" binding:"required,len=3"`
+	RateLimitMillis int      `json:"rate_limit_millis,omitempty" binding:"min=0"`
 }
 
 func maybeNullInt(value sql.NullInt32) interface{} {
@@ -188,6 +190,88 @@ func maybeNullString(value sql.NullString) interface{} {
 		return nil
 	}
 	return value.String
+}
+
+func normalizePriceGraphSweepClasses(legacyClass string, classes []string) ([]string, error) {
+	if legacyClass != "" && len(classes) > 0 {
+		return nil, fmt.Errorf("provide either 'class' or 'classes', not both")
+	}
+
+	var input []string
+	if legacyClass != "" {
+		input = []string{legacyClass}
+	} else {
+		input = classes
+	}
+
+	if len(input) == 0 {
+		return nil, fmt.Errorf("either 'class' or 'classes' is required")
+	}
+
+	seen := make(map[string]struct{}, len(input))
+	out := make([]string, 0, len(input))
+	for _, c := range input {
+		cabin := strings.ToLower(strings.TrimSpace(c))
+		if cabin == "" {
+			continue
+		}
+		switch cabin {
+		case "economy", "premium_economy", "business", "first":
+		default:
+			return nil, fmt.Errorf("invalid class %q (allowed: economy, premium_economy, business, first)", c)
+		}
+		if _, ok := seen[cabin]; ok {
+			continue
+		}
+		seen[cabin] = struct{}{}
+		out = append(out, cabin)
+	}
+
+	if len(out) == 0 {
+		return nil, fmt.Errorf("either 'class' or 'classes' must contain at least one valid value")
+	}
+
+	return out, nil
+}
+
+func containsToken(inputs []string, token string) bool {
+	for _, v := range inputs {
+		if strings.EqualFold(strings.TrimSpace(v), token) {
+			return true
+		}
+	}
+	return false
+}
+
+func listAllAirportCodes(ctx context.Context, pgDB db.PostgresDB) ([]string, error) {
+	rows, err := pgDB.Search(ctx, `SELECT code FROM airports WHERE length(code) = 3 ORDER BY code`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query airports: %w", err)
+	}
+	defer rows.Close()
+
+	seen := make(map[string]struct{})
+	codes := make([]string, 0, 4096)
+	for rows.Next() {
+		var code string
+		if err := rows.Scan(&code); err != nil {
+			return nil, fmt.Errorf("failed to scan airport code: %w", err)
+		}
+		code = strings.ToUpper(strings.TrimSpace(code))
+		if len(code) != 3 {
+			continue
+		}
+		if _, ok := seen[code]; ok {
+			continue
+		}
+		seen[code] = struct{}{}
+		codes = append(codes, code)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate airport codes: %w", err)
+	}
+
+	return codes, nil
 }
 
 // getAirports returns a handler for getting all airports
@@ -1183,13 +1267,32 @@ func enqueuePriceGraphSweep(pgDB db.PostgresDB, workerManager *worker.Manager) g
 			stops = "any"
 		}
 
+		classes, err := normalizePriceGraphSweepClasses(req.Class, req.Classes)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		ctx := c.Request.Context()
+		var overrides map[string][]string
+		var worldAllCount int
+		if containsToken(req.Origins, macros.RegionWorldAll) || containsToken(req.Destinations, macros.RegionWorldAll) {
+			worldAll, err := listAllAirportCodes(ctx, pgDB)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			overrides = map[string][]string{macros.RegionWorldAll: worldAll}
+			worldAllCount = len(worldAll)
+		}
+
 		// Expand region tokens in origins and destinations
-		expandedOrigins, originWarnings, err := macros.ExpandAirportTokens(req.Origins)
+		expandedOrigins, originWarnings, err := macros.ExpandAirportTokensWithOverrides(req.Origins, overrides)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid origin: " + err.Error()})
 			return
 		}
-		expandedDestinations, destinationWarnings, err := macros.ExpandAirportTokens(req.Destinations)
+		expandedDestinations, destinationWarnings, err := macros.ExpandAirportTokensWithOverrides(req.Destinations, overrides)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid destination: " + err.Error()})
 			return
@@ -1197,6 +1300,9 @@ func enqueuePriceGraphSweep(pgDB db.PostgresDB, workerManager *worker.Manager) g
 
 		warnings := append([]string{}, originWarnings...)
 		warnings = append(warnings, destinationWarnings...)
+		if worldAllCount > 0 {
+			warnings = append(warnings, fmt.Sprintf("%s expanded to %d airports", macros.RegionWorldAll, worldAllCount))
+		}
 
 		// Guard against accidental workload explosion from region tokens
 		totalRoutes := len(expandedOrigins) * len(expandedDestinations)
@@ -1227,7 +1333,8 @@ func enqueuePriceGraphSweep(pgDB db.PostgresDB, workerManager *worker.Manager) g
 			DepartureDateTo:   req.DepartureDateTo.Time,
 			TripLengths:       req.TripLengths,
 			TripType:          req.TripType,
-			Class:             req.Class,
+			Class:             classes[0],
+			Classes:           classes,
 			Stops:             stops,
 			Adults:            req.Adults,
 			Children:          req.Children,
@@ -1237,7 +1344,6 @@ func enqueuePriceGraphSweep(pgDB db.PostgresDB, workerManager *worker.Manager) g
 			RateLimitMillis:   req.RateLimitMillis,
 		}
 
-		ctx := c.Request.Context()
 		sweepID, err := workerManager.GetScheduler().EnqueuePriceGraphSweep(ctx, payload)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to enqueue price graph sweep: " + err.Error()})
@@ -1253,6 +1359,7 @@ func enqueuePriceGraphSweep(pgDB db.PostgresDB, workerManager *worker.Manager) g
 		c.JSON(http.StatusAccepted, gin.H{
 			"message":  "Price graph sweep enqueued",
 			"sweep_id": sweepID,
+			"classes":  classes,
 			"warnings": warnings,
 			"sweep": map[string]interface{}{
 				"id":                sweep.ID,
@@ -1972,13 +2079,26 @@ func CreateBulkSearch(q queue.Queue, pgDB db.PostgresDB) gin.HandlerFunc {
 			return
 		}
 
+		ctx := c.Request.Context()
+		var overrides map[string][]string
+		var worldAllCount int
+		if containsToken(req.Origins, macros.RegionWorldAll) || containsToken(req.Destinations, macros.RegionWorldAll) {
+			worldAll, err := listAllAirportCodes(ctx, pgDB)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			overrides = map[string][]string{macros.RegionWorldAll: worldAll}
+			worldAllCount = len(worldAll)
+		}
+
 		// Expand region tokens in origins and destinations
-		expandedOrigins, originWarnings, err := macros.ExpandAirportTokens(req.Origins)
+		expandedOrigins, originWarnings, err := macros.ExpandAirportTokensWithOverrides(req.Origins, overrides)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid origin: " + err.Error()})
 			return
 		}
-		expandedDestinations, destinationWarnings, err := macros.ExpandAirportTokens(req.Destinations)
+		expandedDestinations, destinationWarnings, err := macros.ExpandAirportTokensWithOverrides(req.Destinations, overrides)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid destination: " + err.Error()})
 			return
@@ -1986,6 +2106,9 @@ func CreateBulkSearch(q queue.Queue, pgDB db.PostgresDB) gin.HandlerFunc {
 
 		warnings := append([]string{}, originWarnings...)
 		warnings = append(warnings, destinationWarnings...)
+		if worldAllCount > 0 {
+			warnings = append(warnings, fmt.Sprintf("%s expanded to %d airports", macros.RegionWorldAll, worldAllCount))
+		}
 
 		totalRoutes := len(expandedOrigins) * len(expandedDestinations)
 		if totalRoutes == 0 {
@@ -2014,7 +2137,7 @@ func CreateBulkSearch(q queue.Queue, pgDB db.PostgresDB) gin.HandlerFunc {
 
 		// Create bulk search record so the run can be tracked
 		bulkSearchID, err := pgDB.CreateBulkSearchRecord(
-			c.Request.Context(),
+			ctx,
 			sql.NullInt32{}, // No associated scheduled job for on-demand requests
 			totalRoutes,
 			currencyCode,
@@ -2046,9 +2169,9 @@ func CreateBulkSearch(q queue.Queue, pgDB db.PostgresDB) gin.HandlerFunc {
 		}
 
 		// Enqueue the job
-		jobID, err := q.Enqueue(c.Request.Context(), "bulk_search", payload)
+		jobID, err := q.Enqueue(ctx, "bulk_search", payload)
 		if err != nil {
-			_ = pgDB.UpdateBulkSearchStatus(c.Request.Context(), bulkSearchID, "failed")
+			_ = pgDB.UpdateBulkSearchStatus(ctx, bulkSearchID, "failed")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
@@ -2653,13 +2776,26 @@ func createBulkJob(pgDB db.PostgresDB, workerManager *worker.Manager) gin.Handle
 			returnDateEnd = sql.NullTime{Time: parsedDate, Valid: true}
 		}
 
+		ctx := c.Request.Context()
+		var overrides map[string][]string
+		var worldAllCount int
+		if containsToken(req.Origins, macros.RegionWorldAll) || containsToken(req.Destinations, macros.RegionWorldAll) {
+			worldAll, err := listAllAirportCodes(ctx, pgDB)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			overrides = map[string][]string{macros.RegionWorldAll: worldAll}
+			worldAllCount = len(worldAll)
+		}
+
 		// Expand region tokens in origins and destinations
-		expandedOrigins, originWarnings, err := macros.ExpandAirportTokens(req.Origins)
+		expandedOrigins, originWarnings, err := macros.ExpandAirportTokensWithOverrides(req.Origins, overrides)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid origin: " + err.Error()})
 			return
 		}
-		expandedDestinations, destinationWarnings, err := macros.ExpandAirportTokens(req.Destinations)
+		expandedDestinations, destinationWarnings, err := macros.ExpandAirportTokensWithOverrides(req.Destinations, overrides)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid destination: " + err.Error()})
 			return
@@ -2667,6 +2803,9 @@ func createBulkJob(pgDB db.PostgresDB, workerManager *worker.Manager) gin.Handle
 
 		warnings := append([]string{}, originWarnings...)
 		warnings = append(warnings, destinationWarnings...)
+		if worldAllCount > 0 {
+			warnings = append(warnings, fmt.Sprintf("%s expanded to %d airports", macros.RegionWorldAll, worldAllCount))
+		}
 
 		// Guard against accidental explosion of scheduled jobs from region tokens
 		// This is stricter than bulk search since each job persists to DB and runs repeatedly
@@ -2700,7 +2839,6 @@ func createBulkJob(pgDB db.PostgresDB, workerManager *worker.Manager) gin.Handle
 				jobName := fmt.Sprintf("%s: %s→%s", req.Name, origin, destination)
 
 				// Begin transaction for each job
-				ctx := c.Request.Context()
 				tx, err := pgDB.BeginTx(ctx)
 				if err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to begin transaction"})

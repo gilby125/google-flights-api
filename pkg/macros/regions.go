@@ -31,6 +31,9 @@ const (
 	RegionMiddleEast   = "REGION:MIDDLE_EAST"
 	RegionAfrica       = "REGION:AFRICA"
 	RegionWorld        = "REGION:WORLD"
+	// RegionWorldAll expands to *all* airports supported by this server (backed by Postgres airports table).
+	// NOTE: This token requires a server-side override list; it is not included in the canonical Top100Airports set.
+	RegionWorldAll = "REGION:WORLD_ALL"
 )
 
 // airportCodePattern validates IATA airport codes (3 uppercase letters).
@@ -211,10 +214,23 @@ func IsRegionToken(input string) bool {
 // - validates airports: ^[A-Z]{3}$
 // - unknown token => error (handlers return 400)
 func ExpandAirportTokens(inputs []string) (airports []string, warnings []string, err error) {
+	return ExpandAirportTokensWithOverrides(inputs, nil)
+}
+
+// ExpandAirportTokensWithOverrides expands airport IATA codes + REGION:* tokens into airport codes,
+// allowing the caller to provide explicit expansions for specific region tokens (e.g. REGION:WORLD_ALL).
+//
+// Overrides are token -> []IATA (case-insensitive on the token key).
+func ExpandAirportTokensWithOverrides(inputs []string, overrides map[string][]string) (airports []string, warnings []string, err error) {
 	initRegionCache()
 
 	seen := make(map[string]bool)
 	result := make([]string, 0, len(inputs))
+
+	normalizedOverrides := make(map[string][]string, len(overrides))
+	for k, v := range overrides {
+		normalizedOverrides[strings.ToUpper(strings.TrimSpace(k))] = v
+	}
 
 	for _, input := range inputs {
 		token := strings.ToUpper(strings.TrimSpace(input))
@@ -223,10 +239,18 @@ func ExpandAirportTokens(inputs []string) (airports []string, warnings []string,
 		}
 
 		if IsRegionToken(token) {
-			// Expand region token
-			regionAirports := GetRegionAirports(token)
-			if regionAirports == nil {
-				return nil, nil, fmt.Errorf("unknown region token: %s", token)
+			// Expand region token (with optional override)
+			var regionAirports []string
+			if override, ok := normalizedOverrides[token]; ok {
+				regionAirports = override
+			} else {
+				regionAirports = GetRegionAirports(token)
+				if regionAirports == nil {
+					if token == RegionWorldAll {
+						return nil, nil, fmt.Errorf("%s requires a server-side airport list override and is only supported by endpoints that explicitly enable it", RegionWorldAll)
+					}
+					return nil, nil, fmt.Errorf("unknown region token: %s", token)
+				}
 			}
 
 			if len(regionAirports) == 0 {

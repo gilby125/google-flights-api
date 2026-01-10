@@ -451,6 +451,19 @@ async function submitPriceGraphSweep(event) {
 
         const tripLengths = parseNumberList(document.getElementById('pgTripLengths')?.value || '');
 
+        const selectedClasses = [
+            document.getElementById('pgClassEconomy'),
+            document.getElementById('pgClassPremiumEconomy'),
+            document.getElementById('pgClassBusiness'),
+            document.getElementById('pgClassFirst'),
+        ]
+            .filter(el => el && el.checked)
+            .map(el => el.value);
+
+        if (!selectedClasses.length) {
+            throw new Error('Select at least one cabin class');
+        }
+
         const payload = {
             origins,
             destinations,
@@ -458,7 +471,7 @@ async function submitPriceGraphSweep(event) {
             departure_date_to: `${departureTo}T00:00:00Z`,
             trip_lengths: tripLengths.length ? tripLengths : undefined,
             trip_type: document.getElementById('pgTripType')?.value || 'round_trip',
-            class: document.getElementById('pgClass')?.value || 'economy',
+            classes: selectedClasses,
             stops: document.getElementById('pgStops')?.value || 'any',
             adults: parseInt(document.getElementById('pgAdults')?.value || '1', 10),
             children: parseInt(document.getElementById('pgChildren')?.value || '0', 10),
@@ -1084,6 +1097,12 @@ function populateRegionSelect(selectEl, regions) {
         option.textContent = labelParts.join(' ');
         selectEl.appendChild(option);
     });
+
+    // Special token: not returned by /regions because it requires a server-side Postgres-backed expansion.
+    const worldAllOption = document.createElement('option');
+    worldAllOption.value = 'REGION:WORLD_ALL';
+    worldAllOption.textContent = 'REGION:WORLD_ALL (all airports in DB; large)';
+    selectEl.appendChild(worldAllOption);
 
     if (currentValue) {
         selectEl.value = currentValue;

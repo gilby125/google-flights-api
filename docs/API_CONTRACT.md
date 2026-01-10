@@ -28,6 +28,11 @@ This document formalizes the public contract for the Google Flights API service 
 - `POST /api/v1/admin/jobs`: Creates a scheduled job. Body includes `name`, `cron`, and job template. Returns `201` with job metadata.
 - `POST /api/v1/admin/jobs/:id/run|enable|disable`: Run immediately or toggle job state; success returns updated job record.
 - `GET /api/v1/admin/workers` and `GET /api/v1/admin/queue`: Surface worker pool health and queue depth metrics for dashboards.
+- Price graph sweeps (admin on-demand):
+  - `POST /api/v1/admin/price-graph-sweeps`: Enqueues a sweep over `origins[] × destinations[] × trip_lengths[] × classes[]` for the departure date range. Provide either `class` (single) or `classes` (array) to run multiple cabins in one sweep (e.g. economy + business).
+  - `GET /api/v1/admin/price-graph-sweeps`: Lists sweep runs.
+  - `GET /api/v1/admin/price-graph-sweeps/:id`: Lists results for a sweep.
+- Region tokens: some endpoints accept `REGION:*` items inside `origins[]`/`destinations[]` and expand them server-side. `REGION:WORLD_ALL` expands to all airports in the server’s Postgres `airports` table (currently ~3,429 Google Flights-supported airports); routes are still capped per endpoint to prevent accidental explosions.
 - Continuous sweep (admin UI support):
   - `GET /api/v1/admin/continuous-sweep/status`: Returns current sweep status, including `trip_lengths` (nights).
   - `PUT /api/v1/admin/continuous-sweep/config`: Updates sweep config. Supported keys include `trip_lengths` (array of ints, 1–30), `class`, `pacing_mode`, `target_duration_hours`, `min_delay_ms`.

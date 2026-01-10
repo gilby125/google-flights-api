@@ -144,14 +144,16 @@ type PriceGraphSweepPayload struct {
 	DepartureDateTo   time.Time `json:"departure_date_to"`
 	TripLengths       []int     `json:"trip_lengths,omitempty"`
 	TripType          string    `json:"trip_type"`
-	Class             string    `json:"class"`
-	Stops             string    `json:"stops"`
-	Adults            int       `json:"adults"`
-	Children          int       `json:"children"`
-	InfantsLap        int       `json:"infants_lap"`
-	InfantsSeat       int       `json:"infants_seat"`
-	Currency          string    `json:"currency"`
-	RateLimitMillis   int       `json:"rate_limit_millis,omitempty"`
+	// Class is kept for backward compatibility; prefer Classes for multi-cabin sweeps.
+	Class           string   `json:"class,omitempty"`
+	Classes         []string `json:"classes,omitempty"`
+	Stops           string   `json:"stops"`
+	Adults          int      `json:"adults"`
+	Children        int      `json:"children"`
+	InfantsLap      int      `json:"infants_lap"`
+	InfantsSeat     int      `json:"infants_seat"`
+	Currency        string   `json:"currency"`
+	RateLimitMillis int      `json:"rate_limit_millis,omitempty"`
 }
 
 // StoreFlightOffers stores flight offers in the database (Exported for testing)

@@ -458,7 +458,7 @@
                                         <div class="mb-3">
                                             <label for="pgOrigins" class="form-label">Origins</label>
                                             <textarea class="form-control" id="pgOrigins" rows="2" placeholder="e.g. JFK, BOS, EWR" required></textarea>
-                                            <div class="form-text">Comma-separated airport codes or <code>REGION:*</code> tokens (e.g. <code>REGION:EUROPE</code>).</div>
+                                            <div class="form-text">Comma-separated airport codes or <code>REGION:*</code> tokens (e.g. <code>REGION:EUROPE</code>, <code>REGION:WORLD_ALL</code>).</div>
                                             <div class="input-group input-group-sm mt-2">
                                                 <select class="form-select" id="pgOriginRegionSelect" disabled>
                                                     <option value="">Add a region…</option>
@@ -469,7 +469,7 @@
                                         <div class="mb-3">
                                             <label for="pgDestinations" class="form-label">Destinations</label>
                                             <textarea class="form-control" id="pgDestinations" rows="2" placeholder="e.g. LAX, SFO" required></textarea>
-                                            <div class="form-text">Comma-separated airport codes or <code>REGION:*</code> tokens (e.g. <code>REGION:NORTH_AMERICA</code>).</div>
+                                            <div class="form-text">Comma-separated airport codes or <code>REGION:*</code> tokens (e.g. <code>REGION:NORTH_AMERICA</code>, <code>REGION:WORLD_ALL</code>).</div>
                                             <div class="input-group input-group-sm mt-2">
                                                 <select class="form-select" id="pgDestinationRegionSelect" disabled>
                                                     <option value="">Add a region…</option>
@@ -501,13 +501,26 @@
                                                 </select>
                                             </div>
                                             <div class="col-md-6">
-                                                <label for="pgClass" class="form-label">Cabin Class</label>
-                                                <select class="form-select" id="pgClass" required>
-                                                    <option value="economy" selected>Economy</option>
-                                                    <option value="premium_economy">Premium Economy</option>
-                                                    <option value="business">Business</option>
-                                                    <option value="first">First</option>
-                                                </select>
+                                                <label class="form-label">Cabin Classes</label>
+                                                <div class="border rounded p-2 bg-light">
+                                                    <div class="form-check">
+                                                        <input class="form-check-input" type="checkbox" value="economy" id="pgClassEconomy" checked>
+                                                        <label class="form-check-label" for="pgClassEconomy">Economy</label>
+                                                    </div>
+                                                    <div class="form-check">
+                                                        <input class="form-check-input" type="checkbox" value="premium_economy" id="pgClassPremiumEconomy">
+                                                        <label class="form-check-label" for="pgClassPremiumEconomy">Premium Economy</label>
+                                                    </div>
+                                                    <div class="form-check">
+                                                        <input class="form-check-input" type="checkbox" value="business" id="pgClassBusiness">
+                                                        <label class="form-check-label" for="pgClassBusiness">Business</label>
+                                                    </div>
+                                                    <div class="form-check">
+                                                        <input class="form-check-input" type="checkbox" value="first" id="pgClassFirst">
+                                                        <label class="form-check-label" for="pgClassFirst">First</label>
+                                                    </div>
+                                                </div>
+                                                <div class="form-text">Select one or more cabins (e.g. Economy + Business).</div>
                                             </div>
                                         </div>
                                         <div class="row g-3 mb-3">
