@@ -21,7 +21,7 @@ This document formalizes the public contract for the Google Flights API service 
 - `GET /api/v1/bulk-search/:id`: Provides run status, queue metrics, and references to completed search jobs for that bulk submission.
 
 ## Price History
-- `GET /api/v1/price-history/:origin/:destination`: Returns price buckets (date, carrier, fare range) computed from stored results. Accepts optional `days` query (default 30) to bound lookback.
+- `GET /api/v1/price-history/:origin/:destination`: Returns stored price points (date, price, airline) for the route. The response is not time-bounded by default.
 
 ## Admin & Operations
 - `GET /api/v1/admin/jobs`: Lists scheduled jobs with cron expressions and next run times. Filtering options: `type`, `status`.

@@ -311,7 +311,7 @@ func Load() (*Config, error) {
 	costPerMileEconomy, _ := strconv.ParseFloat(getEnv("DEAL_CPM_ECONOMY", "0.05"), 64)
 	costPerMileBusiness, _ := strconv.ParseFloat(getEnv("DEAL_CPM_BUSINESS", "0.08"), 64)
 	costPerMileFirst, _ := strconv.ParseFloat(getEnv("DEAL_CPM_FIRST", "0.12"), 64)
-	baselineWindowDays, _ := strconv.Atoi(getEnv("DEAL_BASELINE_WINDOW_DAYS", "90"))
+	baselineWindowDays, _ := strconv.Atoi(getEnv("DEAL_BASELINE_WINDOW_DAYS", "0"))
 	baselineMinSamples, _ := strconv.Atoi(getEnv("DEAL_BASELINE_MIN_SAMPLES", "5"))
 	dealTTLHours, _ := strconv.Atoi(getEnv("DEAL_TTL_HOURS", "48"))
 	autoPublish, _ := strconv.ParseBool(getEnv("DEAL_AUTO_PUBLISH", "false"))

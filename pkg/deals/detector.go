@@ -17,12 +17,18 @@ import (
 
 // DealDetector identifies flight deals from price data
 type DealDetector struct {
-	db     db.PostgresDB
+	db     BaselineStore
 	config config.DealConfig
 }
 
+type BaselineStore interface {
+	GetRouteBaseline(ctx context.Context, origin, dest string, tripLength int, class string) (*db.RouteBaseline, error)
+	UpsertRouteBaseline(ctx context.Context, baseline db.RouteBaseline) error
+	GetPriceHistoryForRoute(ctx context.Context, origin, dest string, tripLength int, class string, windowDays int) ([]float64, error)
+}
+
 // NewDealDetector creates a new deal detector instance
-func NewDealDetector(database db.PostgresDB, cfg config.DealConfig) *DealDetector {
+func NewDealDetector(database BaselineStore, cfg config.DealConfig) *DealDetector {
 	return &DealDetector{
 		db:     database,
 		config: cfg,
@@ -39,7 +45,7 @@ func DefaultDealConfig() config.DealConfig {
 		CostPerMileEconomy:   0.05,
 		CostPerMileBusiness:  0.08,
 		CostPerMileFirst:     0.12,
-		BaselineWindowDays:   90,
+		BaselineWindowDays:   0,
 		BaselineMinSamples:   10,
 		DealTTLHours:         24,
 		AutoPublish:          true,

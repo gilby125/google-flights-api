@@ -1293,6 +1293,79 @@ function safeParseJSON(responseText, fallbackValue = null) {
 // Interval for auto-refreshing sweep status
 let sweepStatusInterval = null;
 
+const SWEEP_CONFIG_FIELD_IDS = [
+    'sweepClass',
+    'sweepTripLengths',
+    'sweepPacingMode',
+    'sweepTargetHours',
+    'sweepMinDelay',
+];
+
+let sweepConfigLastServerValues = {};
+const sweepConfigDirtyFields = new Set();
+
+function getSweepConfigServerValuesFromStatus(status) {
+    const values = {};
+    values.sweepClass = status?.class ?? '';
+    values.sweepTripLengths = Array.isArray(status?.trip_lengths) ? status.trip_lengths.join(',') : '';
+    values.sweepPacingMode = status?.pacing_mode ?? '';
+    values.sweepTargetHours = status?.target_duration_hours != null ? String(status.target_duration_hours) : '';
+    values.sweepMinDelay = status?.min_delay_ms != null ? String(status.min_delay_ms) : '';
+    return values;
+}
+
+function updateSweepConfigDirtyState(fieldId) {
+    const el = document.getElementById(fieldId);
+    if (!el) return;
+
+    const serverValue = sweepConfigLastServerValues[fieldId];
+    if (serverValue == null) {
+        sweepConfigDirtyFields.add(fieldId);
+        return;
+    }
+
+    if (String(el.value) === String(serverValue)) {
+        sweepConfigDirtyFields.delete(fieldId);
+        return;
+    }
+
+    sweepConfigDirtyFields.add(fieldId);
+}
+
+function initSweepConfigFormState() {
+    SWEEP_CONFIG_FIELD_IDS.forEach((fieldId) => {
+        const el = document.getElementById(fieldId);
+        if (!el) return;
+
+        const handler = () => updateSweepConfigDirtyState(fieldId);
+        el.addEventListener('input', handler);
+        el.addEventListener('change', handler);
+    });
+}
+
+function syncSweepConfigFormFromStatus(status) {
+    const nextServerValues = getSweepConfigServerValuesFromStatus(status);
+    sweepConfigLastServerValues = nextServerValues;
+
+    // If the user has typed but the server values catch up (or we just loaded status),
+    // re-evaluate dirty state so matching fields aren't treated as "locked".
+    SWEEP_CONFIG_FIELD_IDS.forEach((fieldId) => updateSweepConfigDirtyState(fieldId));
+
+    SWEEP_CONFIG_FIELD_IDS.forEach((fieldId) => {
+        const el = document.getElementById(fieldId);
+        if (!el) return;
+
+        const isFocused = document.activeElement === el;
+        if (isFocused || sweepConfigDirtyFields.has(fieldId)) {
+            return;
+        }
+
+        const serverValue = nextServerValues[fieldId];
+        if (serverValue == null) return;
+        el.value = serverValue;
+    });
+}
+
 // Initialize continuous sweep controls
 function initContinuousSweepControls() {
     const startBtn = document.getElementById('sweepStartBtn');
@@ -1316,6 +1389,8 @@ function initContinuousSweepControls() {
     if (refreshStatsBtn) refreshStatsBtn.addEventListener('click', loadContinuousSweepStats);
     if (refreshResultsBtn) refreshResultsBtn.addEventListener('click', loadContinuousSweepResults);
     if (configForm) configForm.addEventListener('submit', updateSweepConfig);
+
+    initSweepConfigFormState();
 
     // Initial load
     loadContinuousSweepStatus();
@@ -1353,7 +1428,7 @@ function updateSweepStatusUI(status) {
     const notReady = document.getElementById('sweepStatusNotReady');
     const content = document.getElementById('sweepStatusContent');
 
-    if (!status || (!status.is_running && status.route_index === 0)) {
+    if (!status) {
         showSweepNotReady();
         return;
     }
@@ -1380,19 +1455,19 @@ function updateSweepStatusUI(status) {
                     return null;
             }
         })();
-        if (status.is_paused) {
+        if (!status.is_running) {
+            statusBadge.className = 'badge bg-secondary';
+            statusBadge.textContent = 'Stopped';
+            statusText.textContent = cabinLabel ? `Sweep is not running • ${cabinLabel}` : 'Sweep is not running';
+        } else if (status.is_paused) {
             statusBadge.className = 'badge bg-warning';
             statusBadge.textContent = 'Paused';
             statusText.textContent = cabinLabel ? `Sweep is paused • ${cabinLabel}` : 'Sweep is paused';
-        } else if (status.is_running) {
+        } else {
             statusBadge.className = 'badge bg-success';
             statusBadge.textContent = 'Running';
             const modeLabel = status.pacing_mode === 'adaptive' ? 'Adaptive mode' : 'Fixed delay mode';
             statusText.textContent = cabinLabel ? `${modeLabel} • ${cabinLabel}` : modeLabel;
-        } else {
-            statusBadge.className = 'badge bg-secondary';
-            statusBadge.textContent = 'Stopped';
-            statusText.textContent = cabinLabel ? `Sweep is not running • ${cabinLabel}` : 'Sweep is not running';
         }
     }
 
@@ -1450,19 +1525,8 @@ function updateSweepStatusUI(status) {
     // Update button states
     updateSweepButtonStates(status);
 
-    // Update config form with current values
-    const sweepClass = document.getElementById('sweepClass');
-    const tripLengths = document.getElementById('sweepTripLengths');
-    const pacingMode = document.getElementById('sweepPacingMode');
-    const targetHours = document.getElementById('sweepTargetHours');
-    const minDelay = document.getElementById('sweepMinDelay');
-    if (sweepClass && status.class) sweepClass.value = status.class;
-    if (tripLengths && Array.isArray(status.trip_lengths) && status.trip_lengths.length) {
-        tripLengths.value = status.trip_lengths.join(',');
-    }
-    if (pacingMode && status.pacing_mode) pacingMode.value = status.pacing_mode;
-    if (targetHours && status.target_duration_hours) targetHours.value = status.target_duration_hours;
-    if (minDelay && status.current_delay_ms) minDelay.value = status.current_delay_ms;
+    // Sync config inputs without overwriting in-progress edits.
+    syncSweepConfigFormFromStatus(status);
 }
 
 // Show sweep not ready state
@@ -1503,7 +1567,7 @@ function updateSweepButtonStates(status) {
 
     if (startBtn) startBtn.disabled = isRunning;
     if (pauseBtn) pauseBtn.disabled = !isRunning || isPaused;
-    if (resumeBtn) resumeBtn.disabled = !isPaused;
+    if (resumeBtn) resumeBtn.disabled = !isRunning || !isPaused;
     if (stopBtn) stopBtn.disabled = !isRunning;
     if (skipBtn) skipBtn.disabled = !isRunning || isPaused;
     if (restartBtn) restartBtn.disabled = !isRunning;
@@ -1681,8 +1745,15 @@ async function updateSweepConfig(event) {
             throw new Error(error.error || 'Failed to update config');
         }
 
+        const data = await response.json();
+        sweepConfigDirtyFields.clear();
+        if (data?.status) {
+            updateSweepStatusUI(data.status);
+        } else {
+            await loadContinuousSweepStatus();
+        }
+
         showAlert('Configuration updated', 'success');
-        await loadContinuousSweepStatus();
     } catch (error) {
         console.error('Error updating config:', error);
         showAlert(`Error updating config: ${error.message}`, 'danger');

@@ -1354,16 +1354,22 @@ func (p *PostgresDBImpl) UpsertRouteBaseline(ctx context.Context, baseline Route
 
 // GetPriceHistoryForRoute retrieves historical prices for baseline calculation
 func (p *PostgresDBImpl) GetPriceHistoryForRoute(ctx context.Context, origin, dest string, tripLength int, class string, windowDays int) ([]float64, error) {
-	rows, err := p.db.QueryContext(ctx,
-		`SELECT price FROM price_graph_results
+	query := `SELECT price FROM price_graph_results
 		 WHERE origin = $1 AND destination = $2 
 		   AND (trip_length = $3 OR $3 = 0)
-		   AND class = $4
-		   AND queried_at >= NOW() - INTERVAL '1 day' * $5
-		   AND price > 0
-		 ORDER BY queried_at DESC`,
-		origin, dest, tripLength, class, windowDays,
-	)
+		   AND class = $4`
+	args := []interface{}{origin, dest, tripLength, class}
+	argIdx := 5
+
+	if windowDays > 0 {
+		query += fmt.Sprintf(" AND queried_at >= NOW() - INTERVAL '1 day' * $%d", argIdx)
+		args = append(args, windowDays)
+		argIdx++
+	}
+
+	query += " AND price > 0 ORDER BY queried_at DESC"
+
+	rows, err := p.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get price history: %w", err)
 	}

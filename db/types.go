@@ -394,6 +394,7 @@ type SweepStatusResponse struct {
 	EstimatedCompletion time.Time `json:"estimated_completion,omitempty"`
 	PacingMode          string    `json:"pacing_mode"`
 	CurrentDelayMs      int       `json:"current_delay_ms"`
+	MinDelayMs          int       `json:"min_delay_ms"`
 	TargetDurationHours int       `json:"target_duration_hours"`
 	QueriesPerHour      float64   `json:"queries_per_hour"`
 }

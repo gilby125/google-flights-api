@@ -152,6 +152,7 @@ func (r *ContinuousSweepRunner) Start() error {
 	r.resumeCh = make(chan struct{})
 
 	r.isRunning = true
+	r.isPaused = false
 	r.mu.Unlock()
 
 	// Try to restore progress from DB (use the long-lived context)
@@ -186,6 +187,7 @@ func (r *ContinuousSweepRunner) Stop() {
 		r.stopCh = nil // Prevent double-close
 	}
 	r.isRunning = false
+	r.isPaused = false
 }
 
 // Pause pauses the sweep (can be resumed)
@@ -307,6 +309,7 @@ func (r *ContinuousSweepRunner) GetStatus() db.SweepStatusResponse {
 		LastError:           r.lastError,
 		PacingMode:          string(r.config.PacingMode),
 		TargetDurationHours: r.config.TargetDurationHours,
+		MinDelayMs:          r.config.MinDelayMs,
 		Class:               r.config.Class,
 		Stops:               r.config.Stops,
 		TripLengths:         append([]int(nil), r.config.TripLengths...),
