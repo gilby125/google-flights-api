@@ -19,6 +19,7 @@ import (
 	"github.com/gilby125/google-flights-api/pkg/cache"
 	"github.com/gilby125/google-flights-api/pkg/logger"
 	"github.com/gilby125/google-flights-api/pkg/macros"
+	"github.com/gilby125/google-flights-api/pkg/middleware"
 	"github.com/gilby125/google-flights-api/pkg/notify"
 	"github.com/gilby125/google-flights-api/pkg/worker_registry"
 	"github.com/gilby125/google-flights-api/queue"
@@ -277,8 +278,22 @@ func listAllAirportCodes(ctx context.Context, pgDB db.PostgresDB) ([]string, err
 // getAirports returns a handler for getting all airports
 func GetAirports(pgDB db.PostgresDB) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		rows, err := pgDB.QueryAirports(c.Request.Context())
+		const statusClientClosedRequest = 499
+
+		ctx := c.Request.Context()
+		requestID := middleware.GetRequestID(c)
+
+		start := time.Now()
+		rows, err := pgDB.QueryAirports(ctx)
 		if err != nil {
+			logger.WithFields(map[string]interface{}{
+				"request_id": requestID,
+				"method":     c.Request.Method,
+				"path":       c.Request.URL.Path,
+				"client_ip":  c.ClientIP(),
+				"duration":   time.Since(start),
+				"ctx_err":    ctx.Err(),
+			}).Error(err, "QueryAirports failed")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query airports"})
 			return
 		}
@@ -286,14 +301,60 @@ func GetAirports(pgDB db.PostgresDB) gin.HandlerFunc {
 
 		airports := []db.Airport{} // Use the defined struct
 		for rows.Next() {
+			if err := ctx.Err(); err != nil {
+				logger.WithFields(map[string]interface{}{
+					"request_id": requestID,
+					"method":     c.Request.Method,
+					"path":       c.Request.URL.Path,
+					"client_ip":  c.ClientIP(),
+					"duration":   time.Since(start),
+					"rows_read":  len(airports),
+					"ctx_err":    err,
+				}).Warn("GetAirports client disconnected (context canceled)")
+				c.Status(statusClientClosedRequest)
+				c.Abort()
+				return
+			}
+
 			var airport db.Airport
 			if err := rows.Scan(&airport.Code, &airport.Name, &airport.City, &airport.Country, &airport.Latitude, &airport.Longitude); err != nil {
+				logger.WithFields(map[string]interface{}{
+					"request_id": requestID,
+					"method":     c.Request.Method,
+					"path":       c.Request.URL.Path,
+					"client_ip":  c.ClientIP(),
+					"duration":   time.Since(start),
+					"rows_read":  len(airports),
+					"ctx_err":    ctx.Err(),
+				}).Error(err, "GetAirports scan failed")
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scan airport row"})
 				return
 			}
 			airports = append(airports, airport)
 		}
 		if err := rows.Err(); err != nil {
+			if ctx.Err() != nil {
+				logger.WithFields(map[string]interface{}{
+					"request_id": requestID,
+					"method":     c.Request.Method,
+					"path":       c.Request.URL.Path,
+					"client_ip":  c.ClientIP(),
+					"duration":   time.Since(start),
+					"rows_read":  len(airports),
+					"ctx_err":    ctx.Err(),
+				}).Warn("GetAirports rows iteration stopped (context canceled)")
+				c.Status(statusClientClosedRequest)
+				c.Abort()
+				return
+			}
+			logger.WithFields(map[string]interface{}{
+				"request_id": requestID,
+				"method":     c.Request.Method,
+				"path":       c.Request.URL.Path,
+				"client_ip":  c.ClientIP(),
+				"duration":   time.Since(start),
+				"rows_read":  len(airports),
+			}).Error(err, "GetAirports rows iteration failed")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error iterating airport rows"})
 			return
 		}
@@ -2317,6 +2378,41 @@ func GetQueueStatus(q queue.Queue) gin.HandlerFunc {
 		}
 
 		c.JSON(http.StatusOK, allStats)
+	}
+}
+
+// ClearQueue clears pending jobs from a queue (admin/debug endpoint).
+func ClearQueue(q queue.Queue) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		queueName := c.Param("name")
+		allowed := map[string]struct{}{
+			"flight_search":          {},
+			"bulk_search":            {},
+			"price_graph_sweep":      {},
+			"continuous_price_graph": {},
+		}
+		if _, ok := allowed[queueName]; !ok {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid queue name"})
+			return
+		}
+
+		cleared, err := q.ClearQueue(c.Request.Context(), queueName)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		stats, err := q.GetQueueStats(c.Request.Context(), queueName)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"queue":   queueName,
+			"cleared": cleared,
+			"stats":   stats,
+		})
 	}
 }
 

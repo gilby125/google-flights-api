@@ -57,10 +57,11 @@ func (c *PostgresChecker) Check(ctx context.Context) Check {
 		Details:   make(map[string]string),
 	}
 
-	// Test basic connectivity with a simple query
-	// We need to use a method that's available on the PostgresDB interface
-	// Since we don't have a Ping method, we'll try a simple query
-	_, err := c.DB.QueryAirports(ctx)
+	// Test basic connectivity with a cheap query.
+	rows, err := c.DB.Search(ctx, "SELECT 1")
+	if rows != nil {
+		_ = rows.Close()
+	}
 	duration := time.Since(start)
 	check.Duration = duration
 

@@ -221,6 +221,22 @@ func TestValidatePriceGraphArgs(t *testing.T) {
 	testValidatePriceGraphArgs(t, args, "rangeStartDate is before today's date")
 }
 
+func TestValidateRangeDate_AllowsToday(t *testing.T) {
+	prev := timeNow
+	t.Cleanup(func() { timeNow = prev })
+
+	loc := time.FixedZone("test", 2*60*60)
+	timeNow = func() time.Time {
+		return time.Date(2026, 1, 26, 19, 37, 0, 0, loc)
+	}
+
+	rangeStartDate := time.Date(2026, 1, 26, 0, 0, 0, 0, loc)
+	rangeEndDate := time.Date(2026, 1, 27, 0, 0, 0, 0, loc)
+	if err := validateRangeDate(rangeStartDate, rangeEndDate); err != nil {
+		t.Fatalf("expected start date on today's date to be allowed, got error: %v", err)
+	}
+}
+
 func TestValidateURLArgs(t *testing.T) {
 	args := Args{SrcCities: []string{"abc"}, SrcAirports: []string{}, DstCities: []string{}, DstAirports: []string{}}
 	testValidateURLArg(t, args, "dst locations: number of locations should be at least 1, specified: 0")

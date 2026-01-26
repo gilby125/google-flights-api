@@ -36,6 +36,7 @@ func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Ne
 	healthChecker.AddChecker(&health.WorkerChecker{Manager: workerManager, Name: "workers"})
 
 	// Setup middleware
+	router.Use(middleware.RequestID())
 	router.Use(middleware.RequestLogger())
 	router.Use(middleware.Recovery())
 
@@ -164,6 +165,7 @@ func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Ne
 			// Worker and queue status
 			admin.GET("/workers", GetWorkerStatus(workerManager, redisClient, cfg.WorkerConfig))
 			admin.GET("/queue", GetQueueStatus(queue))
+			admin.POST("/queue/:name/clear", ClearQueue(queue))
 
 			// Real-time events via Server-Sent Events
 			admin.GET("/events", GetAdminEvents(workerManager, redisClient, cfg.WorkerConfig))

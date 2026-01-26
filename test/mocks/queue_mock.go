@@ -56,5 +56,14 @@ func (m *MockQueue) GetQueueStats(ctx context.Context, queueName string) (map[st
 	return args.Get(0).(map[string]int64), args.Error(1)
 }
 
+func (m *MockQueue) ClearQueue(ctx context.Context, queueName string) (int64, error) {
+	args := m.Called(ctx, queueName)
+	var cleared int64
+	if args.Get(0) != nil {
+		cleared = args.Get(0).(int64)
+	}
+	return cleared, args.Error(1)
+}
+
 // Ensure MockQueue implements the interface
 var _ queue.Queue = (*MockQueue)(nil)

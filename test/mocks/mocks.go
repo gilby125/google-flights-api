@@ -335,3 +335,12 @@ func (m *Queue) GetQueueStats(ctx context.Context, queueName string) (map[string
 	stats, _ := args.Get(0).(map[string]int64)
 	return stats, args.Error(1)
 }
+
+func (m *Queue) ClearQueue(ctx context.Context, queueName string) (int64, error) {
+	args := m.Called(ctx, queueName)
+	var cleared int64
+	if v := args.Get(0); v != nil {
+		cleared, _ = v.(int64)
+	}
+	return cleared, args.Error(1)
+}

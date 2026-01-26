@@ -36,6 +36,10 @@ func RequestLogger() gin.HandlerFunc {
 			"user_agent": c.Request.UserAgent(),
 		}
 
+		if requestID := GetRequestID(c); requestID != "" {
+			fields["request_id"] = requestID
+		}
+
 		if raw != "" {
 			fields["query"] = raw
 		}

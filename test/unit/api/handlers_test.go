@@ -506,6 +506,40 @@ func TestGetQueueStatus_Error(t *testing.T) {
 	mockQueue.AssertExpectations(t) // Ensure the failing call was made
 }
 
+func TestClearQueue_Success(t *testing.T) {
+	mockQueue := new(mocks.Queue)
+	router := setupRouter()
+	router.POST("/queue/:name/clear", api.ClearQueue(mockQueue))
+
+	expectedStats := map[string]int64{"pending": 0, "processing": 0, "completed": 12, "failed": 1}
+	mockQueue.On("ClearQueue", mock.Anything, "continuous_price_graph").Return(int64(5), nil)
+	mockQueue.On("GetQueueStats", mock.Anything, "continuous_price_graph").Return(expectedStats, nil)
+
+	req, _ := http.NewRequest(http.MethodPost, "/queue/continuous_price_graph/clear", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var response map[string]any
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NoError(t, err)
+	assert.Equal(t, "continuous_price_graph", response["queue"])
+	assert.Equal(t, float64(5), response["cleared"])
+	mockQueue.AssertExpectations(t)
+}
+
+func TestClearQueue_InvalidName(t *testing.T) {
+	mockQueue := new(mocks.Queue)
+	router := setupRouter()
+	router.POST("/queue/:name/clear", api.ClearQueue(mockQueue))
+
+	req, _ := http.NewRequest(http.MethodPost, "/queue/not_a_queue/clear", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
 func TestGetWorkerStatus(t *testing.T) {
 	// Arrange
 	router := setupRouter()

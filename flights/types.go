@@ -135,7 +135,9 @@ type Travelers struct {
 }
 
 func truncateToDay(date time.Time) time.Time {
-	return date.Truncate(24 * time.Hour)
+	loc := date.Location()
+	d := date.In(loc)
+	return time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, loc)
 }
 
 func validateNumberOfLocations(cities, airports []string) error {
@@ -150,32 +152,38 @@ func validateNumberOfLocations(cities, airports []string) error {
 var timeNow = time.Now
 
 func validateDate(date, returnDate time.Time) error {
-	now := timeNow().Truncate(time.Hour * 24)
+	dateDay := truncateToDay(date)
+	now := truncateToDay(timeNow().In(dateDay.Location()))
 
 	// Only validate returnDate if it's not a zero value (for one-way trips)
-	if !returnDate.IsZero() && returnDate.Before(date) {
+	if !returnDate.IsZero() && truncateToDay(returnDate).Before(dateDay) {
 		return fmt.Errorf("returnDate is before date")
 	}
-	if date.Before(now) {
+	if dateDay.Before(now) {
 		return fmt.Errorf("date is before today's date")
 	}
 	return nil
 }
 
 func validateRangeDate(rangeStartDate time.Time, rangeEndDate time.Time) error {
-	now := timeNow().Truncate(time.Hour * 24)
+	startDay := truncateToDay(rangeStartDate)
+	endDay := truncateToDay(rangeEndDate)
+	now := truncateToDay(timeNow().In(startDay.Location()))
 
-	days := int(rangeEndDate.Sub(rangeStartDate).Hours() / 24)
+	days := 0
+	for d := startDay; d.Before(endDay); d = d.AddDate(0, 0, 1) {
+		days++
+	}
 	if days > 161 {
 		return fmt.Errorf("number of days between dates is larger than 161, %d", days)
 	}
-	if rangeEndDate.Equal(rangeStartDate) {
+	if endDay.Equal(startDay) {
 		return fmt.Errorf("rangeEndDate is the same as rangeStartDate")
 	}
-	if rangeEndDate.Before(rangeStartDate) {
+	if endDay.Before(startDay) {
 		return fmt.Errorf("rangeEndDate is before rangeStartDate")
 	}
-	if rangeStartDate.Before(now) {
+	if startDay.Before(now) {
 		return fmt.Errorf("rangeStartDate is before today's date")
 	}
 	return nil

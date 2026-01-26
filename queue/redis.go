@@ -36,6 +36,9 @@ type Queue interface {
 	Nack(ctx context.Context, queueName, jobID string) error
 	GetJobStatus(ctx context.Context, jobID string) (string, error)
 	GetQueueStats(ctx context.Context, queueName string) (map[string]int64, error)
+	// ClearQueue removes all pending jobs from the named queue without touching in-flight processing jobs.
+	// It is intended for admin/debug use when a backlog needs to be drained safely.
+	ClearQueue(ctx context.Context, queueName string) (cleared int64, err error)
 }
 
 // RedisQueue implements the Queue interface using Redis Streams
@@ -315,6 +318,44 @@ func (q *RedisQueue) GetQueueStats(ctx context.Context, queueName string) (map[s
 	stats["failed"] = failedCount
 
 	return stats, nil
+}
+
+func (q *RedisQueue) ClearQueue(ctx context.Context, queueName string) (int64, error) {
+	if err := q.ensureStream(ctx, queueName); err != nil {
+		return 0, err
+	}
+
+	stream := q.streamName(queueName)
+	jobIDs, err := q.client.SMembers(ctx, q.pendingKey(queueName)).Result()
+	if err != nil {
+		return 0, fmt.Errorf("failed to list pending jobs: %w", err)
+	}
+
+	var cleared int64
+	for _, jobID := range jobIDs {
+		jobKey := q.jobKey(jobID)
+		jobBytes, getErr := q.client.Get(ctx, jobKey).Bytes()
+		if getErr != nil && !errors.Is(getErr, redis.Nil) {
+			return cleared, fmt.Errorf("failed to get job details for %s: %w", jobID, getErr)
+		}
+
+		if getErr == nil {
+			var job Job
+			if err := json.Unmarshal(jobBytes, &job); err != nil {
+				return cleared, fmt.Errorf("failed to unmarshal job %s: %w", jobID, err)
+			}
+
+			if job.StreamID != "" {
+				_ = q.client.XDel(ctx, stream, job.StreamID).Err()
+			}
+			_ = q.client.Del(ctx, jobKey).Err()
+		}
+
+		_ = q.client.SRem(ctx, q.pendingKey(queueName), jobID).Err()
+		cleared++
+	}
+
+	return cleared, nil
 }
 
 func (q *RedisQueue) ensureStream(ctx context.Context, queueName string) error {
