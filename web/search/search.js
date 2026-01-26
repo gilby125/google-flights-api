@@ -856,7 +856,14 @@ function computeCheapestFromRoutes(routes) {
   for (const route of routes || []) {
     if (!route || route.error || !Array.isArray(route.offers)) continue;
     for (const offer of route.offers) {
-      if (!offer || typeof offer.price !== "number") continue;
+      if (
+        !offer ||
+        typeof offer.price !== "number" ||
+        !Number.isFinite(offer.price) ||
+        offer.price <= 0
+      ) {
+        continue;
+      }
       if (!best || offer.price < best.offer.price) {
         best = {
           origin: route.origin,
@@ -879,17 +886,24 @@ function displayMultiRouteResults(searchResult) {
   elements.flightResults.innerHTML = "";
 
   currentRoutes = Array.isArray(searchResult.routes) ? searchResult.routes : [];
-  const cheapest =
+  let cheapest = null;
+  if (
     searchResult?.cheapest?.offer &&
     typeof searchResult?.cheapest?.origin === "string" &&
-    typeof searchResult?.cheapest?.destination === "string"
-      ? {
-          origin: searchResult.cheapest.origin,
-          destination: searchResult.cheapest.destination,
-          offer: searchResult.cheapest.offer,
-          searchParams: null,
-        }
-      : computeCheapestFromRoutes(currentRoutes);
+    typeof searchResult?.cheapest?.destination === "string" &&
+    typeof searchResult?.cheapest?.offer?.price === "number" &&
+    Number.isFinite(searchResult.cheapest.offer.price) &&
+    searchResult.cheapest.offer.price > 0
+  ) {
+    cheapest = {
+      origin: searchResult.cheapest.origin,
+      destination: searchResult.cheapest.destination,
+      offer: searchResult.cheapest.offer,
+      searchParams: null,
+    };
+  } else {
+    cheapest = computeCheapestFromRoutes(currentRoutes);
+  }
 
   if (cheapest?.offer) {
     const summary = document.createElement("div");
@@ -995,10 +1009,38 @@ function renderActiveRoutePane() {
     return;
   }
 
+  const routeCurrency =
+    route?.search_params?.currency || currentSearchParams?.currency || "";
+  const routeMinPrice = offers.reduce((min, offer) => {
+    const price =
+      typeof offer?.price === "number" &&
+      Number.isFinite(offer.price) &&
+      offer.price > 0
+        ? offer.price
+        : null;
+    if (price == null) return min;
+    if (min == null) return price;
+    return Math.min(min, price);
+  }, null);
+
   const sortBy = elements.sortResults ? elements.sortResults.value : "price";
   switch (sortBy) {
     case "price":
-      offers.sort((a, b) => (a.price || 0) - (b.price || 0));
+      offers.sort((a, b) => {
+        const priceA =
+          typeof a?.price === "number" &&
+          Number.isFinite(a.price) &&
+          a.price > 0
+            ? a.price
+            : Number.POSITIVE_INFINITY;
+        const priceB =
+          typeof b?.price === "number" &&
+          Number.isFinite(b.price) &&
+          b.price > 0
+            ? b.price
+            : Number.POSITIVE_INFINITY;
+        return priceA - priceB;
+      });
       break;
     case "duration":
       offers.sort((a, b) => (a.total_duration || 0) - (b.total_duration || 0));
@@ -1014,7 +1056,9 @@ function renderActiveRoutePane() {
 
   const routeParams = route.search_params || currentSearchParams;
   offers.forEach((offer) => {
-    pane.appendChild(createFlightCard(offer, routeParams));
+    pane.appendChild(
+      createFlightCard(offer, routeParams, { routeCurrency, routeMinPrice }),
+    );
   });
 }
 
@@ -1034,7 +1078,21 @@ function sortFlightResults() {
   // Sort offers
   switch (sortBy) {
     case "price":
-      offers.sort((a, b) => a.price - b.price);
+      offers.sort((a, b) => {
+        const priceA =
+          typeof a?.price === "number" &&
+          Number.isFinite(a.price) &&
+          a.price > 0
+            ? a.price
+            : Number.POSITIVE_INFINITY;
+        const priceB =
+          typeof b?.price === "number" &&
+          Number.isFinite(b.price) &&
+          b.price > 0
+            ? b.price
+            : Number.POSITIVE_INFINITY;
+        return priceA - priceB;
+      });
       break;
     case "duration":
       offers.sort((a, b) => a.total_duration - b.total_duration);
@@ -1059,7 +1117,7 @@ function sortFlightResults() {
 }
 
 // Create a flight card element
-function createFlightCard(offer, searchParamsOverride) {
+function createFlightCard(offer, searchParamsOverride, options) {
   const card = document.createElement("div");
   card.className = "flight-card";
 
@@ -1107,6 +1165,24 @@ function createFlightCard(offer, searchParamsOverride) {
 
   const airlineGroupBadges = renderAirlineGroupBadges(offer.airline_groups);
   const currency = offer.currency || effectiveSearchParams?.currency || "";
+  const hasPrice =
+    typeof offer.price === "number" &&
+    Number.isFinite(offer.price) &&
+    offer.price > 0;
+  const fallbackCurrency = options?.routeCurrency || currency;
+  const fallbackMinPrice =
+    typeof options?.routeMinPrice === "number" &&
+    Number.isFinite(options.routeMinPrice) &&
+    options.routeMinPrice > 0
+      ? options.routeMinPrice
+      : null;
+  const priceLabel = hasPrice
+    ? `${escapeHtml(currency)} ${Number(offer.price).toFixed(2)}`
+    : fallbackMinPrice != null
+      ? `From ${escapeHtml(fallbackCurrency)} ${Number(
+          fallbackMinPrice,
+        ).toFixed(2)}`
+      : "Price unavailable";
 
   // Create card content
   card.innerHTML = `
@@ -1127,7 +1203,7 @@ function createFlightCard(offer, searchParamsOverride) {
                 <div>${departureSegment.airplane || "Aircraft information unavailable"}</div>
             </div>
             <div class="col-md-2 text-end">
-                <div class="flight-price">${escapeHtml(currency)} ${Number(offer.price || 0).toFixed(2)}</div>
+                <div class="flight-price">${priceLabel}</div>
                 <button class="btn btn-sm btn-outline-primary mt-2">Select</button>
                 <a href="${googleFlightsUrl}" target="_blank" class="btn btn-sm btn-outline-secondary mt-1">
                     <i class="bi bi-google"></i> View on Google Flights

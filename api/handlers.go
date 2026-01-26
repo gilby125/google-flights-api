@@ -2631,6 +2631,7 @@ func DirectFlightSearch() gin.HandlerFunc {
 				responseOffer := map[string]interface{}{
 					"id":                 fmt.Sprintf("offer%d", i+1),
 					"price":              offer.Price,
+					"price_available":    offer.Price > 0,
 					"currency":           searchRequest.Currency,
 					"total_duration":     int(offer.FlightDuration.Minutes()),
 					"segments":           segments,
@@ -2640,7 +2641,7 @@ func DirectFlightSearch() gin.HandlerFunc {
 					"airline_groups":     airlineGroups,
 				}
 
-				if !cheapestSet || offer.Price < cheapestPrice {
+				if offer.Price > 0 && (!cheapestSet || offer.Price < cheapestPrice) {
 					cheapestSet = true
 					cheapestPrice = offer.Price
 					cheapest = responseOffer
@@ -2970,7 +2971,7 @@ func DirectFlightSearch() gin.HandlerFunc {
 			haveRange := false
 			for _, offer := range routeOffers {
 				price, ok := offer["price"].(float64)
-				if !ok {
+				if !ok || price <= 0 {
 					continue
 				}
 				if !haveRange {
