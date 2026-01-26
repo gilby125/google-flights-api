@@ -2704,6 +2704,114 @@ func DirectFlightSearch() gin.HandlerFunc {
 		}
 
 		// Multi-route: single query with multiple Src/Dst airports, then group offers by route.
+		// Fallback to per-route queries for small grids, since Google responses can vary with multi-airport queries.
+		const maxDirectRouteFallback = 16
+		if totalRoutes <= maxDirectRouteFallback {
+			routes := make([]map[string]interface{}, 0, totalRoutes)
+			var overallCheapestOffer map[string]interface{}
+			var overallCheapestOrigin string
+			var overallCheapestDestination string
+			var overallCheapestPrice float64
+			overallCheapestSet := false
+
+			for _, origin := range expandedOrigins {
+				for _, destination := range expandedDestinations {
+					offers, priceRange, err := session.GetOffers(
+						c.Request.Context(),
+						flights.Args{
+							Date:        departureDate,
+							ReturnDate:  returnDate,
+							SrcAirports: []string{origin},
+							DstAirports: []string{destination},
+							Options: flights.Options{
+								Travelers: flights.Travelers{
+									Adults:       searchRequest.Adults,
+									Children:     searchRequest.Children,
+									InfantOnLap:  searchRequest.InfantsLap,
+									InfantInSeat: searchRequest.InfantsSeat,
+								},
+								Currency: cur,
+								Stops:    stops,
+								Class:    class,
+								TripType: tripType,
+								Lang:     language.English,
+							},
+						},
+					)
+
+					route := map[string]interface{}{
+						"origin":      origin,
+						"destination": destination,
+					}
+
+					if err != nil {
+						log.Printf("Error searching flights for %s->%s: %v", origin, destination, err)
+						route["error"] = "Failed to search flights: " + err.Error()
+						routes = append(routes, route)
+						continue
+					}
+
+					routeOffers, routeCheapestPrice, routeCheapestOffer, routeCheapestSet := convertOffers(origin, destination, offers)
+					route["offers"] = routeOffers
+
+					routeParams := searchRequest
+					routeParams.Origin = origin
+					routeParams.Destination = destination
+					route["search_params"] = routeParams
+
+					if priceRange != nil {
+						route["price_range"] = map[string]interface{}{
+							"low":  priceRange.Low,
+							"high": priceRange.High,
+						}
+					}
+
+					if routeCheapestSet && routeCheapestOffer != nil && (!overallCheapestSet || routeCheapestPrice < overallCheapestPrice) {
+						overallCheapestSet = true
+						overallCheapestPrice = routeCheapestPrice
+						overallCheapestOffer = routeCheapestOffer
+						overallCheapestOrigin = origin
+						overallCheapestDestination = destination
+					}
+
+					routes = append(routes, route)
+				}
+			}
+
+			response := map[string]interface{}{
+				"routes": routes,
+				"search_params": map[string]interface{}{
+					"origins":               expandedOrigins,
+					"destinations":          expandedDestinations,
+					"departure_date":        searchRequest.DepartureDate,
+					"return_date":           searchRequest.ReturnDate,
+					"trip_type":             searchRequest.TripType,
+					"class":                 searchRequest.Class,
+					"stops":                 searchRequest.Stops,
+					"adults":                searchRequest.Adults,
+					"children":              searchRequest.Children,
+					"infants_lap":           searchRequest.InfantsLap,
+					"infants_seat":          searchRequest.InfantsSeat,
+					"currency":              searchRequest.Currency,
+					"requested_route_count": totalRoutes,
+					"returned_route_count":  len(routes),
+				},
+			}
+			if len(warnings) > 0 {
+				response["warnings"] = warnings
+			}
+			if overallCheapestSet && overallCheapestOffer != nil {
+				response["cheapest"] = map[string]interface{}{
+					"origin":      overallCheapestOrigin,
+					"destination": overallCheapestDestination,
+					"offer":       overallCheapestOffer,
+				}
+			}
+
+			c.JSON(http.StatusOK, response)
+			return
+		}
+
 		var overallCheapestOffer map[string]interface{}
 		var overallCheapestOrigin string
 		var overallCheapestDestination string
@@ -2747,62 +2855,92 @@ func DirectFlightSearch() gin.HandlerFunc {
 			offersByRoute[key] = append(offersByRoute[key], offer)
 		}
 
-		routes := make([]map[string]interface{}, 0, len(offersByRoute))
-		for _, origin := range expandedOrigins {
-			for _, destination := range expandedDestinations {
-				key := origin + "->" + destination
-				fullOffers := offersByRoute[key]
-				if len(fullOffers) == 0 {
+		type routeKey struct {
+			origin      string
+			destination string
+		}
+
+		routeKeys := make([]routeKey, 0, len(offersByRoute))
+		for key := range offersByRoute {
+			parts := strings.SplitN(key, "->", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			routeKeys = append(routeKeys, routeKey{origin: parts[0], destination: parts[1]})
+		}
+
+		sort.Slice(routeKeys, func(i, j int) bool {
+			if routeKeys[i].origin == routeKeys[j].origin {
+				return routeKeys[i].destination < routeKeys[j].destination
+			}
+			return routeKeys[i].origin < routeKeys[j].origin
+		})
+
+		routes := make([]map[string]interface{}, 0, len(routeKeys))
+		for _, rk := range routeKeys {
+			key := rk.origin + "->" + rk.destination
+			fullOffers := offersByRoute[key]
+			if len(fullOffers) == 0 {
+				continue
+			}
+
+			routeOffers, routeCheapestPrice, routeCheapestOffer, routeCheapestSet := convertOffers(rk.origin, rk.destination, fullOffers)
+			route := map[string]interface{}{
+				"origin":      rk.origin,
+				"destination": rk.destination,
+				"offers":      routeOffers,
+			}
+
+			routeParams := searchRequest
+			routeParams.Origin = rk.origin
+			routeParams.Destination = rk.destination
+			route["search_params"] = routeParams
+
+			low := 0.0
+			high := 0.0
+			haveRange := false
+			for _, offer := range routeOffers {
+				price, ok := offer["price"].(float64)
+				if !ok {
 					continue
 				}
-
-				routeOffers, routeCheapestPrice, routeCheapestOffer, routeCheapestSet := convertOffers(origin, destination, fullOffers)
-				route := map[string]interface{}{
-					"origin":      origin,
-					"destination": destination,
-					"offers":      routeOffers,
+				if !haveRange {
+					haveRange = true
+					low = price
+					high = price
+					continue
 				}
-
-				routeParams := searchRequest
-				routeParams.Origin = origin
-				routeParams.Destination = destination
-				route["search_params"] = routeParams
-
-				low := 0.0
-				high := 0.0
-				haveRange := false
-				for _, offer := range routeOffers {
-					price, ok := offer["price"].(float64)
-					if !ok {
-						continue
-					}
-					if !haveRange {
-						haveRange = true
-						low = price
-						high = price
-						continue
-					}
-					if price < low {
-						low = price
-					}
-					if price > high {
-						high = price
-					}
+				if price < low {
+					low = price
 				}
-				if haveRange {
-					route["price_range"] = map[string]interface{}{"low": low, "high": high}
+				if price > high {
+					high = price
 				}
-
-				if routeCheapestSet && routeCheapestOffer != nil && (!overallCheapestSet || routeCheapestPrice < overallCheapestPrice) {
-					overallCheapestSet = true
-					overallCheapestPrice = routeCheapestPrice
-					overallCheapestOffer = routeCheapestOffer
-					overallCheapestOrigin = origin
-					overallCheapestDestination = destination
-				}
-
-				routes = append(routes, route)
 			}
+			if haveRange {
+				route["price_range"] = map[string]interface{}{"low": low, "high": high}
+			}
+
+			if routeCheapestSet && routeCheapestOffer != nil && (!overallCheapestSet || routeCheapestPrice < overallCheapestPrice) {
+				overallCheapestSet = true
+				overallCheapestPrice = routeCheapestPrice
+				overallCheapestOffer = routeCheapestOffer
+				overallCheapestOrigin = rk.origin
+				overallCheapestDestination = rk.destination
+			}
+
+			routes = append(routes, route)
+		}
+
+		if len(offers) > 0 && len(routes) == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": fmt.Sprintf(
+					"search returned %d offers, but none could be grouped into routes; try narrowing the search or switching to /api/v1/bulk-search",
+					len(offers),
+				),
+				"warnings": warnings,
+			})
+			return
 		}
 
 		response := map[string]interface{}{
@@ -2820,6 +2958,7 @@ func DirectFlightSearch() gin.HandlerFunc {
 				"infants_lap":           searchRequest.InfantsLap,
 				"infants_seat":          searchRequest.InfantsSeat,
 				"currency":              searchRequest.Currency,
+				"offers_count":          len(offers),
 				"requested_route_count": totalRoutes,
 				"returned_route_count":  len(routes),
 			},

@@ -906,7 +906,7 @@ function displayMultiRouteResults(searchResult) {
 
   if (!currentRoutes.length) {
     elements.flightResults.innerHTML +=
-      '<div class="alert alert-info">No routes returned for this search.</div>';
+      '<div class="alert alert-info">No flights found matching your criteria.</div>';
     return;
   }
 
