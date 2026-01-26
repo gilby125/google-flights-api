@@ -58,15 +58,37 @@ async function initAdminPanel() {
   elements.saveJobBtn.addEventListener("click", saveJob);
   if (elements.queueTable) {
     elements.queueTable.addEventListener("click", (event) => {
-      const button = event.target.closest('button[data-action="clear-queue"]');
+      const button = event.target.closest("button[data-action]");
       if (!button) return;
 
+      const action = button.getAttribute("data-action");
       const queueName = button.getAttribute("data-queue");
       const pending =
         parseInt(button.getAttribute("data-pending") || "0", 10) || 0;
-      clearQueue(queueName, pending).catch((err) => {
-        console.error("Error clearing queue:", err);
-        showAlert(`Error clearing queue: ${err.message}`, "danger");
+      const processing =
+        parseInt(button.getAttribute("data-processing") || "0", 10) || 0;
+      const failed =
+        parseInt(button.getAttribute("data-failed") || "0", 10) || 0;
+
+      const handler = (() => {
+        switch (action) {
+          case "clear-queue":
+            return () => clearQueue(queueName, pending);
+          case "clear-processing":
+            return () => clearProcessing(queueName, processing);
+          case "clear-failed":
+            return () => clearFailed(queueName, failed);
+          case "retry-failed":
+            return () => retryFailed(queueName, failed);
+          default:
+            return null;
+        }
+      })();
+
+      if (!handler) return;
+      handler().catch((err) => {
+        console.error("Queue action error:", err);
+        showAlert(`Queue action error: ${err.message}`, "danger");
       });
     });
   }
@@ -426,6 +448,9 @@ async function loadQueueStatus() {
     const failed = Number.isInteger(stats.failed) ? stats.failed : 0;
 
     const clearDisabled = pending === 0;
+    const clearProcessingDisabled = processing === 0;
+    const clearFailedDisabled = failed === 0;
+    const retryFailedDisabled = failed === 0;
     row.innerHTML = `
             <td>${queueName}</td>
             <td>${pending}</td>
@@ -435,13 +460,43 @@ async function loadQueueStatus() {
             <td class="text-end">
                 <button
                     type="button"
-                    class="btn btn-sm btn-outline-danger"
+                    class="btn btn-sm btn-outline-danger me-1"
                     data-action="clear-queue"
                     data-queue="${queueName}"
                     data-pending="${pending}"
                     ${clearDisabled ? "disabled" : ""}
                     title="${clearDisabled ? "No pending jobs to clear" : "Clear pending jobs"}">
                     <i class="bi bi-trash me-1"></i>Clear
+                </button>
+                <button
+                    type="button"
+                    class="btn btn-sm btn-outline-danger me-1"
+                    data-action="clear-processing"
+                    data-queue="${queueName}"
+                    data-processing="${processing}"
+                    ${clearProcessingDisabled ? "disabled" : ""}
+                    title="${clearProcessingDisabled ? "No processing jobs to clear" : "Clear processing jobs (force)"}">
+                    <i class="bi bi-x-octagon me-1"></i>Clear Processing
+                </button>
+                <button
+                    type="button"
+                    class="btn btn-sm btn-outline-danger me-1"
+                    data-action="clear-failed"
+                    data-queue="${queueName}"
+                    data-failed="${failed}"
+                    ${clearFailedDisabled ? "disabled" : ""}
+                    title="${clearFailedDisabled ? "No failed jobs to clear" : "Clear failed jobs"}">
+                    <i class="bi bi-trash3 me-1"></i>Clear Failed
+                </button>
+                <button
+                    type="button"
+                    class="btn btn-sm btn-outline-primary"
+                    data-action="retry-failed"
+                    data-queue="${queueName}"
+                    data-failed="${failed}"
+                    ${retryFailedDisabled ? "disabled" : ""}
+                    title="${retryFailedDisabled ? "No failed jobs to retry" : "Retry failed jobs"}">
+                    <i class="bi bi-arrow-repeat me-1"></i>Retry Failed
                 </button>
             </td>
         `;
@@ -474,6 +529,95 @@ async function clearQueue(queueName, pending) {
     `Cleared ${cleared} pending job(s) from "${queueName}".`,
     "success",
   );
+  await loadQueueStatus();
+}
+
+async function clearProcessing(queueName, processing) {
+  if (!queueName) return;
+
+  const message =
+    processing > 0
+      ? `Force-clear ${processing} processing job(s) from "${queueName}"? This will drop "in-flight" bookkeeping and ack/delete stream entries when possible.`
+      : `Force-clear processing jobs from "${queueName}"?`;
+  if (!confirm(message)) return;
+
+  const url = `${ENDPOINTS.QUEUE}/${encodeURIComponent(queueName)}/clear-processing`;
+  const response = await fetch(url, { method: "POST" });
+  const responseText = await response.text();
+  const body = safeParseJSON(responseText, {});
+
+  if (!response.ok) {
+    const errorMessage =
+      body && body.error ? body.error : `HTTP ${response.status}`;
+    throw new Error(errorMessage);
+  }
+
+  const cleared =
+    typeof body.cleared === "number" ? body.cleared : processing;
+  showAlert(
+    `Cleared ${cleared} processing job(s) from "${queueName}".`,
+    "success",
+  );
+  await loadQueueStatus();
+}
+
+async function clearFailed(queueName, failed) {
+  if (!queueName) return;
+
+  const message =
+    failed > 0
+      ? `Clear ${failed} failed job(s) from "${queueName}"?`
+      : `Clear failed jobs from "${queueName}"?`;
+  if (!confirm(message)) return;
+
+  const url = `${ENDPOINTS.QUEUE}/${encodeURIComponent(queueName)}/clear-failed`;
+  const response = await fetch(url, { method: "POST" });
+  const responseText = await response.text();
+  const body = safeParseJSON(responseText, {});
+
+  if (!response.ok) {
+    const errorMessage =
+      body && body.error ? body.error : `HTTP ${response.status}`;
+    throw new Error(errorMessage);
+  }
+
+  const cleared = typeof body.cleared === "number" ? body.cleared : failed;
+  showAlert(`Cleared ${cleared} failed job(s) from "${queueName}".`, "success");
+  await loadQueueStatus();
+}
+
+async function retryFailed(queueName, failed) {
+  if (!queueName) return;
+
+  const defaultLimit = Math.min(200, failed || 200);
+  const limitInput = prompt(
+    `Retry how many failed job(s) from "${queueName}"?`,
+    String(defaultLimit),
+  );
+  if (limitInput == null) return;
+  const limit = parseInt(limitInput, 10);
+  if (!Number.isFinite(limit) || limit <= 0) {
+    throw new Error("Invalid retry limit");
+  }
+
+  const message = `Retry up to ${limit} failed job(s) from "${queueName}"?`;
+  if (!confirm(message)) return;
+
+  const url = `${ENDPOINTS.QUEUE}/${encodeURIComponent(queueName)}/retry-failed?limit=${encodeURIComponent(
+    String(limit),
+  )}`;
+  const response = await fetch(url, { method: "POST" });
+  const responseText = await response.text();
+  const body = safeParseJSON(responseText, {});
+
+  if (!response.ok) {
+    const errorMessage =
+      body && body.error ? body.error : `HTTP ${response.status}`;
+    throw new Error(errorMessage);
+  }
+
+  const retried = typeof body.retried === "number" ? body.retried : 0;
+  showAlert(`Retried ${retried} failed job(s) from "${queueName}".`, "success");
   await loadQueueStatus();
 }
 

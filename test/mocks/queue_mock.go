@@ -97,5 +97,32 @@ func (m *MockQueue) GetEnqueueMetrics(ctx context.Context, queueName string, min
 	return args.Get(0).(map[string]int64), args.Error(1)
 }
 
+func (m *MockQueue) ClearFailed(ctx context.Context, queueName string) (int64, error) {
+	args := m.Called(ctx, queueName)
+	var cleared int64
+	if args.Get(0) != nil {
+		cleared = args.Get(0).(int64)
+	}
+	return cleared, args.Error(1)
+}
+
+func (m *MockQueue) ClearProcessing(ctx context.Context, queueName string) (int64, error) {
+	args := m.Called(ctx, queueName)
+	var cleared int64
+	if args.Get(0) != nil {
+		cleared = args.Get(0).(int64)
+	}
+	return cleared, args.Error(1)
+}
+
+func (m *MockQueue) RetryFailed(ctx context.Context, queueName string, limit int) (int64, error) {
+	args := m.Called(ctx, queueName, limit)
+	var retried int64
+	if args.Get(0) != nil {
+		retried = args.Get(0).(int64)
+	}
+	return retried, args.Error(1)
+}
+
 // Ensure MockQueue implements the interface
 var _ queue.Queue = (*MockQueue)(nil)

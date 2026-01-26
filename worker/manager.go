@@ -757,6 +757,13 @@ func (m *Manager) processContinuousPriceGraph(ctx context.Context, worker *Worke
 		return fmt.Errorf("continuous price graph payload has invalid date range")
 	}
 
+	// Continuous jobs can sit in the queue long enough that their date range becomes stale.
+	// Shift the whole range forward to start at (or after) today's date in the range's timezone.
+	payload.RangeStartDate, payload.RangeEndDate = shiftRangeToToday(payload.RangeStartDate, payload.RangeEndDate)
+	if payload.RangeEndDate.Equal(payload.RangeStartDate) || payload.RangeEndDate.Before(payload.RangeStartDate) {
+		return fmt.Errorf("continuous price graph payload has invalid date range after normalization")
+	}
+
 	args := flights.PriceGraphArgs{
 		RangeStartDate: payload.RangeStartDate,
 		RangeEndDate:   payload.RangeEndDate,
@@ -880,6 +887,27 @@ func (m *Manager) processContinuousPriceGraph(ctx context.Context, worker *Worke
 	}
 
 	return nil
+}
+
+func shiftRangeToToday(rangeStartDate, rangeEndDate time.Time) (time.Time, time.Time) {
+	startDay := truncateToDay(rangeStartDate)
+	nowDay := truncateToDay(time.Now().In(startDay.Location()))
+
+	if !startDay.Before(nowDay) {
+		return rangeStartDate, rangeEndDate
+	}
+
+	shiftDays := 0
+	for d := startDay; d.Before(nowDay); d = d.AddDate(0, 0, 1) {
+		shiftDays++
+	}
+
+	return rangeStartDate.AddDate(0, 0, shiftDays), rangeEndDate.AddDate(0, 0, shiftDays)
+}
+
+func truncateToDay(d time.Time) time.Time {
+	loc := d.Location()
+	return time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, loc)
 }
 
 // getFlightSession gets or creates a flight session based on session type

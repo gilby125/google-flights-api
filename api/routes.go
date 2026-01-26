@@ -170,6 +170,9 @@ func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Ne
 			admin.GET("/queue/:name/jobs/:id", GetQueueJob(queue))
 			admin.GET("/queue/:name/enqueues", GetQueueEnqueueMetrics(queue))
 			admin.POST("/queue/:name/clear", ClearQueue(queue))
+			admin.POST("/queue/:name/clear-failed", ClearQueueFailed(queue))
+			admin.POST("/queue/:name/clear-processing", ClearQueueProcessing(queue))
+			admin.POST("/queue/:name/retry-failed", RetryQueueFailed(queue))
 
 			// Real-time events via Server-Sent Events
 			admin.GET("/events", GetAdminEvents(workerManager, redisClient, cfg.WorkerConfig))

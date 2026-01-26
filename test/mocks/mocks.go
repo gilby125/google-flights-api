@@ -376,3 +376,30 @@ func (m *Queue) GetEnqueueMetrics(ctx context.Context, queueName string, minutes
 	}
 	return args.Get(0).(map[string]int64), args.Error(1)
 }
+
+func (m *Queue) ClearFailed(ctx context.Context, queueName string) (int64, error) {
+	args := m.Called(ctx, queueName)
+	var cleared int64
+	if v := args.Get(0); v != nil {
+		cleared, _ = v.(int64)
+	}
+	return cleared, args.Error(1)
+}
+
+func (m *Queue) ClearProcessing(ctx context.Context, queueName string) (int64, error) {
+	args := m.Called(ctx, queueName)
+	var cleared int64
+	if v := args.Get(0); v != nil {
+		cleared, _ = v.(int64)
+	}
+	return cleared, args.Error(1)
+}
+
+func (m *Queue) RetryFailed(ctx context.Context, queueName string, limit int) (int64, error) {
+	args := m.Called(ctx, queueName, limit)
+	var retried int64
+	if v := args.Get(0); v != nil {
+		retried, _ = v.(int64)
+	}
+	return retried, args.Error(1)
+}

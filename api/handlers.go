@@ -2552,6 +2552,101 @@ func ClearQueue(q queue.Queue) gin.HandlerFunc {
 	}
 }
 
+// ClearQueueFailed clears failed jobs from a queue (admin/debug endpoint).
+func ClearQueueFailed(q queue.Queue) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		queueName := c.Param("name")
+		if !isAllowedQueueName(queueName) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid queue name"})
+			return
+		}
+
+		cleared, err := q.ClearFailed(c.Request.Context(), queueName)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		stats, err := q.GetQueueStats(c.Request.Context(), queueName)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"queue":   queueName,
+			"cleared": cleared,
+			"stats":   stats,
+		})
+	}
+}
+
+// ClearQueueProcessing clears "processing" jobs for a queue (admin/debug endpoint).
+func ClearQueueProcessing(q queue.Queue) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		queueName := c.Param("name")
+		if !isAllowedQueueName(queueName) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid queue name"})
+			return
+		}
+
+		cleared, err := q.ClearProcessing(c.Request.Context(), queueName)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		stats, err := q.GetQueueStats(c.Request.Context(), queueName)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"queue":   queueName,
+			"cleared": cleared,
+			"stats":   stats,
+		})
+	}
+}
+
+// RetryQueueFailed retries failed jobs for a queue (admin/debug endpoint).
+func RetryQueueFailed(q queue.Queue) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		queueName := c.Param("name")
+		if !isAllowedQueueName(queueName) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid queue name"})
+			return
+		}
+
+		limit := 200
+		if v := c.Query("limit"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				limit = n
+			}
+		}
+
+		retried, err := q.RetryFailed(c.Request.Context(), queueName, limit)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		stats, err := q.GetQueueStats(c.Request.Context(), queueName)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"queue":   queueName,
+			"retried": retried,
+			"limit":   limit,
+			"stats":   stats,
+		})
+	}
+}
+
 // getJobById returns a handler for getting a job by ID
 func getJobById(pgDB db.PostgresDB) gin.HandlerFunc { // Changed parameter type
 	return func(c *gin.Context) {

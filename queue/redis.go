@@ -88,6 +88,12 @@ type Queue interface {
 	GetBacklog(ctx context.Context, queueName string, limit int) ([]*Job, error)
 	// GetEnqueueMetrics aggregates enqueue sources over the last N minutes.
 	GetEnqueueMetrics(ctx context.Context, queueName string, minutes int) (map[string]int64, error)
+	// ClearFailed removes all failed jobs for the named queue.
+	ClearFailed(ctx context.Context, queueName string) (cleared int64, err error)
+	// ClearProcessing removes all "processing" jobs for the named queue and acks/dels their stream entries when possible.
+	ClearProcessing(ctx context.Context, queueName string) (cleared int64, err error)
+	// RetryFailed moves up to limit failed jobs back into pending by re-enqueueing them.
+	RetryFailed(ctx context.Context, queueName string, limit int) (retried int64, err error)
 	// ClearQueue removes all pending jobs from the named queue without touching in-flight processing jobs.
 	// It is intended for admin/debug use when a backlog needs to be drained safely.
 	ClearQueue(ctx context.Context, queueName string) (cleared int64, err error)
@@ -597,6 +603,113 @@ func (q *RedisQueue) ClearQueue(ctx context.Context, queueName string) (int64, e
 	}
 
 	return cleared, nil
+}
+
+func (q *RedisQueue) ClearFailed(ctx context.Context, queueName string) (int64, error) {
+	if err := q.ensureStream(ctx, queueName); err != nil {
+		return 0, err
+	}
+
+	jobIDs, err := q.client.SMembers(ctx, q.failedKey(queueName)).Result()
+	if err != nil {
+		return 0, fmt.Errorf("failed to list failed jobs: %w", err)
+	}
+
+	var cleared int64
+	for _, jobID := range jobIDs {
+		_ = q.client.Del(ctx, q.jobKey(jobID)).Err()
+		_ = q.client.SRem(ctx, q.failedKey(queueName), jobID).Err()
+		cleared++
+	}
+	return cleared, nil
+}
+
+func (q *RedisQueue) ClearProcessing(ctx context.Context, queueName string) (int64, error) {
+	if err := q.ensureStream(ctx, queueName); err != nil {
+		return 0, err
+	}
+
+	stream := q.streamName(queueName)
+	jobIDs, err := q.client.SMembers(ctx, q.processingKey(queueName)).Result()
+	if err != nil {
+		return 0, fmt.Errorf("failed to list processing jobs: %w", err)
+	}
+
+	var cleared int64
+	for _, jobID := range jobIDs {
+		job, _, getErr := q.getStoredJob(ctx, jobID)
+		if getErr == nil && job != nil && job.StreamID != "" {
+			_ = q.client.XAck(ctx, stream, q.cfg.QueueGroup, job.StreamID).Err()
+			_ = q.client.XDel(ctx, stream, job.StreamID).Err()
+		}
+		_ = q.client.Del(ctx, q.jobKey(jobID)).Err()
+		_ = q.client.SRem(ctx, q.processingKey(queueName), jobID).Err()
+		cleared++
+	}
+
+	return cleared, nil
+}
+
+func (q *RedisQueue) RetryFailed(ctx context.Context, queueName string, limit int) (int64, error) {
+	if err := q.ensureStream(ctx, queueName); err != nil {
+		return 0, err
+	}
+	if limit <= 0 {
+		limit = 200
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+
+	stream := q.streamName(queueName)
+	jobIDs, err := q.client.SMembers(ctx, q.failedKey(queueName)).Result()
+	if err != nil {
+		return 0, fmt.Errorf("failed to list failed jobs: %w", err)
+	}
+
+	var retried int64
+	for _, jobID := range jobIDs {
+		if retried >= int64(limit) {
+			break
+		}
+
+		job, _, err := q.getStoredJob(ctx, jobID)
+		if err != nil {
+			if errors.Is(err, redis.Nil) {
+				_ = q.client.SRem(ctx, q.failedKey(queueName), jobID).Err()
+				continue
+			}
+			return retried, err
+		}
+
+		job.Attempts = 0
+		job.Status = "pending"
+		job.StreamID = ""
+
+		requeuePayload, err := json.Marshal(job)
+		if err != nil {
+			return retried, fmt.Errorf("failed to marshal job for retry: %w", err)
+		}
+
+		msgID, err := q.client.XAdd(ctx, &redis.XAddArgs{
+			Stream: stream,
+			Values: map[string]interface{}{"job": requeuePayload},
+		}).Result()
+		if err != nil {
+			return retried, fmt.Errorf("failed to requeue failed job: %w", err)
+		}
+
+		job.StreamID = msgID
+		if err := q.persistJob(ctx, job); err != nil {
+			return retried, err
+		}
+
+		_ = q.client.SRem(ctx, q.failedKey(queueName), jobID).Err()
+		_ = q.client.SAdd(ctx, q.pendingKey(queueName), jobID).Err()
+		retried++
+	}
+
+	return retried, nil
 }
 
 func (q *RedisQueue) ensureStream(ctx context.Context, queueName string) error {
