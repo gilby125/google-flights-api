@@ -2554,7 +2554,7 @@ func DirectFlightSearch() gin.HandlerFunc {
 		warnings = append(warnings, destinationWarnings...)
 
 		totalRoutes := len(expandedOrigins) * len(expandedDestinations)
-		const maxDirectAirportsPerSide = 30
+		const maxDirectAirportsPerSide = 50
 		const maxDirectAirportsTotal = 60
 		if len(expandedOrigins) > maxDirectAirportsPerSide || len(expandedDestinations) > maxDirectAirportsPerSide || (len(expandedOrigins)+len(expandedDestinations)) > maxDirectAirportsTotal {
 			c.JSON(http.StatusBadRequest, gin.H{
@@ -2818,13 +2818,33 @@ func DirectFlightSearch() gin.HandlerFunc {
 		var overallCheapestPrice float64
 		overallCheapestSet := false
 
-		offers, _, err := session.GetOffers(
-			c.Request.Context(),
-			flights.Args{
+		// For large grids, do batched queries by the smaller side (e.g., per-origin with many destinations).
+		// This is more reliable than sending many Src and many Dst airports in a single Google Flights request.
+		offers := make([]flights.FullOffer, 0, 128)
+		chunkStrings := func(values []string, size int) [][]string {
+			if size <= 0 || len(values) == 0 {
+				return nil
+			}
+			chunks := make([][]string, 0, (len(values)+size-1)/size)
+			for i := 0; i < len(values); i += size {
+				end := i + size
+				if end > len(values) {
+					end = len(values)
+				}
+				chunks = append(chunks, values[i:end])
+			}
+			return chunks
+		}
+
+		const maxAirportsPerRequestSide = 10
+		const maxBatchedRequests = 64
+
+		queryArgs := func(srcAirports, dstAirports []string) flights.Args {
+			return flights.Args{
 				Date:        departureDate,
 				ReturnDate:  returnDate,
-				SrcAirports: expandedOrigins,
-				DstAirports: expandedDestinations,
+				SrcAirports: srcAirports,
+				DstAirports: dstAirports,
 				Options: flights.Options{
 					Travelers: flights.Travelers{
 						Adults:       searchRequest.Adults,
@@ -2838,12 +2858,61 @@ func DirectFlightSearch() gin.HandlerFunc {
 					TripType: tripType,
 					Lang:     language.English,
 				},
-			},
-		)
-		if err != nil {
-			log.Printf("Error searching flights: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to search flights: " + err.Error()})
-			return
+			}
+		}
+
+		if len(expandedOrigins) <= len(expandedDestinations) {
+			destChunks := chunkStrings(expandedDestinations, maxAirportsPerRequestSide)
+			totalBatches := len(expandedOrigins) * len(destChunks)
+			if totalBatches > maxBatchedRequests {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error": fmt.Sprintf(
+						"too many batched requests to execute safely (%d; max %d). Narrow your inputs or use /api/v1/bulk-search.",
+						totalBatches,
+						maxBatchedRequests,
+					),
+					"warnings": warnings,
+				})
+				return
+			}
+
+			for _, origin := range expandedOrigins {
+				for _, destChunk := range destChunks {
+					batchOffers, _, err := session.GetOffers(c.Request.Context(), queryArgs([]string{origin}, destChunk))
+					if err != nil {
+						log.Printf("Error searching flights for %s->* (chunk): %v", origin, err)
+						warnings = append(warnings, fmt.Sprintf("search failed for origin %s: %v", origin, err))
+						continue
+					}
+					offers = append(offers, batchOffers...)
+				}
+			}
+		} else {
+			originChunks := chunkStrings(expandedOrigins, maxAirportsPerRequestSide)
+			totalBatches := len(expandedDestinations) * len(originChunks)
+			if totalBatches > maxBatchedRequests {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error": fmt.Sprintf(
+						"too many batched requests to execute safely (%d; max %d). Narrow your inputs or use /api/v1/bulk-search.",
+						totalBatches,
+						maxBatchedRequests,
+					),
+					"warnings": warnings,
+				})
+				return
+			}
+
+			for _, destination := range expandedDestinations {
+				for _, originChunk := range originChunks {
+					batchOffers, _, err := session.GetOffers(c.Request.Context(), queryArgs(originChunk, []string{destination}))
+					if err != nil {
+						log.Printf("Error searching flights for *->%s (chunk): %v", destination, err)
+						warnings = append(warnings, fmt.Sprintf("search failed for destination %s: %v", destination, err))
+						continue
+					}
+					offers = append(offers, batchOffers...)
+				}
+			}
 		}
 
 		offersByRoute := make(map[string][]flights.FullOffer, len(offers))

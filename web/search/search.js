@@ -713,7 +713,8 @@ async function handleSearch(event) {
       priceHistoryOrigin = searchResult.cheapest.origin;
       priceHistoryDestination = searchResult.cheapest.destination;
     }
-    if (priceHistoryOrigin && priceHistoryDestination) {
+    const isIata = (value) => /^[A-Z0-9]{3}$/.test(String(value || "").trim());
+    if (isIata(priceHistoryOrigin) && isIata(priceHistoryDestination)) {
       await loadPriceHistory(priceHistoryOrigin, priceHistoryDestination);
     }
 
