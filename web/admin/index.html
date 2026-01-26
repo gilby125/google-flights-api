@@ -1,810 +1,1272 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Admin Panel - Google Flights API</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css"
+    />
     <style>
-        body {
-            background-color: #f8f9fa;
-        }
-        .admin-wrapper {
-            min-height: 100vh;
-        }
-        .sidebar {
-            background-color: #f8f9fa;
-            box-shadow: inset -1px 0 0 rgba(0, 0, 0, 0.1);
-        }
-        .sidebar .nav-link {
-            color: #333;
-            font-weight: 500;
-        }
-        .sidebar .nav-link.active {
-            color: #0d6efd;
-        }
-        .stats-card {
-            border-radius: 10px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-            text-align: center;
-            padding: 1.5rem;
-        }
-        .stats-card i {
-            font-size: 2rem;
-            margin-bottom: 0.5rem;
-        }
-        .table-actions .btn {
-            min-width: 36px;
-        }
+      body {
+        background-color: #f8f9fa;
+      }
+      .admin-wrapper {
+        min-height: 100vh;
+      }
+      .sidebar {
+        background-color: #f8f9fa;
+        box-shadow: inset -1px 0 0 rgba(0, 0, 0, 0.1);
+      }
+      .sidebar .nav-link {
+        color: #333;
+        font-weight: 500;
+      }
+      .sidebar .nav-link.active {
+        color: #0d6efd;
+      }
+      .stats-card {
+        border-radius: 10px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        text-align: center;
+        padding: 1.5rem;
+      }
+      .stats-card i {
+        font-size: 2rem;
+        margin-bottom: 0.5rem;
+      }
+      .table-actions .btn {
+        min-width: 36px;
+      }
     </style>
-</head>
-<body>
+  </head>
+  <body>
     <div class="container-fluid admin-wrapper">
-        <div class="row flex-nowrap">
-            <nav class="col-md-3 col-lg-2 d-md-block sidebar py-4">
-                <div class="text-center mb-4">
-                    <a class="navbar-brand fw-semibold" href="/">Google Flights API</a>
+      <div class="row flex-nowrap">
+        <nav class="col-md-3 col-lg-2 d-md-block sidebar py-4">
+          <div class="text-center mb-4">
+            <a class="navbar-brand fw-semibold" href="/">Google Flights API</a>
+          </div>
+          <ul class="nav flex-column">
+            <li class="nav-item">
+              <a class="nav-link active" href="#dashboard">
+                <i class="bi bi-speedometer2 me-2"></i>Dashboard
+              </a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link" href="#jobs">
+                <i class="bi bi-calendar-check me-2"></i>Scheduled Jobs
+              </a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link" href="#workers">
+                <i class="bi bi-cpu me-2"></i>Workers
+              </a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link" href="#queue">
+                <i class="bi bi-list-ol me-2"></i>Queue Status
+              </a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link" href="#continuous-sweep">
+                <i class="bi bi-arrow-repeat me-2"></i>Continuous Sweep
+              </a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link" href="#price-graph">
+                <i class="bi bi-graph-up-arrow me-2"></i>Price Graph Sweeps
+              </a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link" href="bulk.html">
+                <i class="bi bi-table me-2"></i>Bulk Results
+              </a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link" href="deals.html">
+                <i class="bi bi-tags-fill me-2"></i>Detected Deals
+              </a>
+            </li>
+          </ul>
+        </nav>
+
+        <main class="col-md-9 col-lg-10 ms-sm-auto px-md-5 py-4">
+          <div
+            id="dashboard"
+            class="d-flex justify-content-between align-items-center flex-wrap mb-4"
+          >
+            <h1 class="h2 mb-0">Admin Dashboard</h1>
+            <div class="btn-toolbar mb-3 mb-md-0">
+              <button
+                type="button"
+                class="btn btn-outline-secondary btn-sm"
+                id="refreshBtn"
+              >
+                <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+              </button>
+              <button
+                type="button"
+                class="btn btn-primary btn-sm ms-2"
+                data-bs-toggle="modal"
+                data-bs-target="#newJobModal"
+              >
+                <i class="bi bi-plus-lg me-1"></i>New Job
+              </button>
+            </div>
+          </div>
+
+          <div class="row g-3">
+            <div class="col-sm-6 col-lg-3">
+              <div class="stats-card bg-white h-100">
+                <i class="bi bi-calendar-check text-primary"></i>
+                <h5>Scheduled Jobs</h5>
+                <h2 id="jobsCount">0</h2>
+              </div>
+            </div>
+            <div class="col-sm-6 col-lg-3">
+              <div class="stats-card bg-white h-100">
+                <i class="bi bi-cpu text-success"></i>
+                <h5>Active Workers</h5>
+                <h2 id="workersCount">0</h2>
+              </div>
+            </div>
+            <div class="col-sm-6 col-lg-3">
+              <div class="stats-card bg-white h-100">
+                <i class="bi bi-list-ol text-warning"></i>
+                <h5>Queue Size</h5>
+                <h2 id="queueSize">0</h2>
+              </div>
+            </div>
+            <div class="col-sm-6 col-lg-3">
+              <div class="stats-card bg-white h-100">
+                <i class="bi bi-search text-info"></i>
+                <h5>Total Searches</h5>
+                <h2 id="searchesCount">0</h2>
+              </div>
+            </div>
+          </div>
+
+          <section class="mt-5" id="jobs">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+              <h2 class="h4 mb-0">Scheduled Jobs</h2>
+              <button
+                type="button"
+                class="btn btn-primary"
+                data-bs-toggle="modal"
+                data-bs-target="#newJobModal"
+              >
+                <i class="bi bi-plus-lg me-1"></i>Create Job
+              </button>
+            </div>
+            <div class="table-responsive bg-white rounded shadow-sm">
+              <table class="table table-striped table-hover align-middle mb-0">
+                <thead class="table-light">
+                  <tr>
+                    <th scope="col">ID</th>
+                    <th scope="col">Name</th>
+                    <th scope="col">Schedule</th>
+                    <th scope="col">Route</th>
+                    <th scope="col">Status</th>
+                    <th scope="col">Last Run</th>
+                    <th scope="col" class="text-end">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="jobsTable"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="mt-5" id="workers">
+            <h2 class="h4 mb-3">Workers</h2>
+            <div class="table-responsive bg-white rounded shadow-sm">
+              <table class="table table-striped table-hover align-middle mb-0">
+                <thead class="table-light">
+                  <tr>
+                    <th scope="col">ID</th>
+                    <th scope="col">Status</th>
+                    <th scope="col">Current Job</th>
+                    <th scope="col">Processed</th>
+                    <th scope="col">Uptime</th>
+                  </tr>
+                </thead>
+                <tbody id="workersTable"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="mt-5" id="queue">
+            <h2 class="h4 mb-3">Queue Status</h2>
+            <div class="table-responsive bg-white rounded shadow-sm">
+              <table class="table table-striped table-hover align-middle mb-0">
+                <thead class="table-light">
+                  <tr>
+                    <th scope="col">Queue</th>
+                    <th scope="col">Pending</th>
+                    <th scope="col">Processing</th>
+                    <th scope="col">Completed</th>
+                    <th scope="col">Failed</th>
+                    <th scope="col" class="text-end">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="queueTable"></tbody>
+              </table>
+            </div>
+            <div class="text-muted small mt-2">
+              Clear removes <strong>pending</strong> jobs only (does not
+              interrupt currently processing jobs).
+            </div>
+          </section>
+
+          <section class="mt-5" id="continuous-sweep">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+              <div>
+                <h2 class="h4 mb-1">Continuous Price Graph Sweep</h2>
+                <p class="text-muted mb-0">
+                  Always-running sweep across top 100 international airport
+                  routes (~8,800 routes)
+                </p>
+              </div>
+              <button
+                class="btn btn-outline-secondary"
+                id="refreshSweepStatusBtn"
+              >
+                <i class="bi bi-arrow-clockwise me-1"></i>Refresh Status
+              </button>
+            </div>
+
+            <div class="row g-4">
+              <div class="col-lg-4">
+                <div class="card shadow-sm h-100">
+                  <div class="card-header bg-primary text-white">
+                    <i class="bi bi-sliders me-2"></i>Sweep Controls
+                  </div>
+                  <div class="card-body">
+                    <div class="d-grid gap-2 mb-4">
+                      <button class="btn btn-success" id="sweepStartBtn">
+                        <i class="bi bi-play-fill me-1"></i>Start Sweep
+                      </button>
+                      <button
+                        class="btn btn-warning"
+                        id="sweepPauseBtn"
+                        disabled
+                      >
+                        <i class="bi bi-pause-fill me-1"></i>Pause
+                      </button>
+                      <button class="btn btn-info" id="sweepResumeBtn" disabled>
+                        <i class="bi bi-play me-1"></i>Resume
+                      </button>
+                      <button class="btn btn-danger" id="sweepStopBtn" disabled>
+                        <i class="bi bi-stop-fill me-1"></i>Stop
+                      </button>
+                    </div>
+
+                    <hr />
+
+                    <h6 class="mb-3">Advanced Actions</h6>
+                    <div class="d-grid gap-2">
+                      <button
+                        class="btn btn-outline-secondary btn-sm"
+                        id="sweepSkipBtn"
+                        disabled
+                      >
+                        <i class="bi bi-skip-forward me-1"></i>Skip Current
+                        Route
+                      </button>
+                      <button
+                        class="btn btn-outline-danger btn-sm"
+                        id="sweepRestartBtn"
+                        disabled
+                      >
+                        <i class="bi bi-arrow-counterclockwise me-1"></i>Restart
+                        Sweep
+                      </button>
+                    </div>
+                  </div>
                 </div>
-                <ul class="nav flex-column">
-                    <li class="nav-item">
-                        <a class="nav-link active" href="#dashboard">
-                            <i class="bi bi-speedometer2 me-2"></i>Dashboard
-                        </a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="#jobs">
-                            <i class="bi bi-calendar-check me-2"></i>Scheduled Jobs
-                        </a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="#workers">
-                            <i class="bi bi-cpu me-2"></i>Workers
-                        </a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="#queue">
-                            <i class="bi bi-list-ol me-2"></i>Queue Status
-                        </a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="#continuous-sweep">
-                            <i class="bi bi-arrow-repeat me-2"></i>Continuous Sweep
-                        </a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="#price-graph">
-                            <i class="bi bi-graph-up-arrow me-2"></i>Price Graph Sweeps
-                        </a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="bulk.html">
-                            <i class="bi bi-table me-2"></i>Bulk Results
-                        </a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="deals.html">
-                            <i class="bi bi-tags-fill me-2"></i>Detected Deals
-                        </a>
-                    </li>
-                </ul>
-            </nav>
+              </div>
 
-            <main class="col-md-9 col-lg-10 ms-sm-auto px-md-5 py-4">
-                <div id="dashboard" class="d-flex justify-content-between align-items-center flex-wrap mb-4">
-                    <h1 class="h2 mb-0">Admin Dashboard</h1>
-                    <div class="btn-toolbar mb-3 mb-md-0">
-                        <button type="button" class="btn btn-outline-secondary btn-sm" id="refreshBtn">
-                            <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+              <div class="col-lg-4">
+                <div class="card shadow-sm h-100">
+                  <div class="card-header bg-white">
+                    <i class="bi bi-gear me-2"></i>Configuration
+                  </div>
+                  <div class="card-body">
+                    <form id="sweepConfigForm">
+                      <div class="mb-3">
+                        <label class="form-label">Cabin Class</label>
+                        <select class="form-select" id="sweepClass">
+                          <option value="economy" selected>Economy</option>
+                          <option value="premium_economy">
+                            Premium Economy
+                          </option>
+                          <option value="business">Business</option>
+                          <option value="first">First</option>
+                        </select>
+                        <div class="form-text">
+                          Applies to new continuous price graph jobs as they are
+                          enqueued.
+                        </div>
+                      </div>
+                      <div class="mb-3">
+                        <label class="form-label">Trip Lengths (nights)</label>
+                        <input
+                          type="text"
+                          class="form-control"
+                          id="sweepTripLengths"
+                          value="7,14"
+                          placeholder="e.g. 3-14 or 3,5,7,9,12"
+                        />
+                        <div class="form-text">
+                          Comma list or inclusive range (e.g.
+                          <code>3-14</code>).
+                        </div>
+                      </div>
+                      <div class="mb-3">
+                        <label class="form-label">Pacing Mode</label>
+                        <select class="form-select" id="sweepPacingMode">
+                          <option value="adaptive">
+                            Adaptive (1 sweep / 24h)
+                          </option>
+                          <option value="fixed">Fixed (3s delay)</option>
+                        </select>
+                        <div class="form-text">
+                          Adaptive auto-calculates delay for 1 sweep per day.
+                        </div>
+                      </div>
+                      <div class="mb-3">
+                        <label class="form-label"
+                          >Target Duration (hours)</label
+                        >
+                        <input
+                          type="number"
+                          class="form-control"
+                          id="sweepTargetHours"
+                          value="24"
+                          min="1"
+                        />
+                        <div class="form-text">For adaptive mode only.</div>
+                      </div>
+                      <div class="mb-3">
+                        <label class="form-label">Min Delay (ms)</label>
+                        <input
+                          type="number"
+                          class="form-control"
+                          id="sweepMinDelay"
+                          value="3000"
+                          min="1000"
+                        />
+                        <div class="form-text">
+                          Minimum delay between requests.
+                        </div>
+                      </div>
+                      <div class="d-grid">
+                        <button type="submit" class="btn btn-primary btn-sm">
+                          <i class="bi bi-save me-1"></i>Apply Config
                         </button>
-                        <button type="button" class="btn btn-primary btn-sm ms-2" data-bs-toggle="modal" data-bs-target="#newJobModal">
-                            <i class="bi bi-plus-lg me-1"></i>New Job
-                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              </div>
+
+              <div class="col-lg-4">
+                <div class="card shadow-sm h-100">
+                  <div class="card-header bg-white">
+                    <i class="bi bi-activity me-2"></i>Live Status
+                  </div>
+                  <div class="card-body">
+                    <div
+                      id="sweepStatusNotReady"
+                      class="text-center py-4 text-muted"
+                    >
+                      <i class="bi bi-hourglass display-4 d-block mb-2"></i>
+                      <p>Sweep not running. Click Start to begin.</p>
                     </div>
+                    <div id="sweepStatusContent" style="display: none">
+                      <div class="mb-3">
+                        <small class="text-muted">Status</small>
+                        <div class="d-flex align-items-center">
+                          <span class="badge me-2" id="sweepStatusBadge"
+                            >-</span
+                          >
+                          <span id="sweepStatusText">-</span>
+                        </div>
+                      </div>
+                      <div class="mb-3">
+                        <small class="text-muted">Progress</small>
+                        <div class="progress mb-1" style="height: 20px">
+                          <div
+                            class="progress-bar progress-bar-striped progress-bar-animated"
+                            id="sweepProgressBar"
+                            role="progressbar"
+                            style="width: 0%"
+                          >
+                            0%
+                          </div>
+                        </div>
+                        <small class="text-muted">
+                          Route <span id="sweepRouteIndex">0</span> of
+                          <span id="sweepTotalRoutes">0</span>
+                        </small>
+                      </div>
+                      <div class="row g-2 mb-3">
+                        <div class="col-6">
+                          <small class="text-muted">Sweep #</small>
+                          <div class="fw-bold" id="sweepNumber">-</div>
+                        </div>
+                        <div class="col-6">
+                          <small class="text-muted">Queries/hour</small>
+                          <div class="fw-bold" id="sweepQueriesPerHour">-</div>
+                        </div>
+                      </div>
+                      <div class="row g-2 mb-3">
+                        <div class="col-6">
+                          <small class="text-muted">Completed</small>
+                          <div class="fw-bold text-success" id="sweepCompleted">
+                            -
+                          </div>
+                        </div>
+                        <div class="col-6">
+                          <small class="text-muted">Errors</small>
+                          <div class="fw-bold text-danger" id="sweepErrors">
+                            -
+                          </div>
+                        </div>
+                      </div>
+                      <div class="mb-3">
+                        <small class="text-muted">Current Route</small>
+                        <div class="fw-bold" id="sweepCurrentRoute">-</div>
+                      </div>
+                      <div class="mb-3">
+                        <small class="text-muted">Current Delay</small>
+                        <div id="sweepCurrentDelay">-</div>
+                      </div>
+                      <div class="mb-3">
+                        <small class="text-muted">Est. Completion</small>
+                        <div id="sweepEstCompletion">-</div>
+                      </div>
+                      <div
+                        id="sweepLastError"
+                        class="alert alert-danger py-2 mb-0"
+                        style="display: none"
+                      >
+                        <small
+                          ><strong>Last Error:</strong>
+                          <span id="sweepLastErrorText"></span
+                        ></small>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="row mt-4">
+              <div class="col-12">
+                <div class="card shadow-sm">
+                  <div
+                    class="card-header bg-white d-flex justify-content-between align-items-center"
+                  >
+                    <span
+                      ><i class="bi bi-clock-history me-2"></i>Historical Sweep
+                      Stats</span
+                    >
+                    <button
+                      class="btn btn-outline-secondary btn-sm"
+                      id="refreshSweepStatsBtn"
+                    >
+                      <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+                    </button>
+                  </div>
+                  <div class="card-body p-0">
+                    <div class="table-responsive">
+                      <table
+                        class="table table-sm table-striped table-hover mb-0"
+                      >
+                        <thead class="table-light">
+                          <tr>
+                            <th>Sweep #</th>
+                            <th>Started</th>
+                            <th>Completed</th>
+                            <th>Duration</th>
+                            <th>Routes</th>
+                            <th>Success</th>
+                            <th>Failed</th>
+                            <th>Avg Delay</th>
+                            <th>Price Range</th>
+                          </tr>
+                        </thead>
+                        <tbody id="sweepStatsTable">
+                          <tr>
+                            <td colspan="9" class="text-center py-3 text-muted">
+                              No historical data yet.
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <!-- Continuous Sweep Results -->
+              <div class="col-12">
+                <div
+                  class="card shadow-sm"
+                  id="sweepResultsContainer"
+                  style="display: none"
+                >
+                  <div
+                    class="card-header d-flex justify-content-between align-items-center"
+                  >
+                    <span
+                      ><i class="bi bi-graph-up me-2"></i>Recent Sweep Results
+                      (Best Fares)</span
+                    >
+                    <button
+                      class="btn btn-outline-secondary btn-sm"
+                      id="refreshSweepResultsBtn"
+                    >
+                      <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+                    </button>
+                  </div>
+                  <div class="card-body p-0">
+                    <div
+                      class="table-responsive"
+                      style="max-height: 400px; overflow-y: auto"
+                    >
+                      <table
+                        class="table table-sm table-striped table-hover mb-0"
+                      >
+                        <thead class="table-light sticky-top">
+                          <tr>
+                            <th>Origin</th>
+                            <th>Destination</th>
+                            <th>Departure</th>
+                            <th>Return</th>
+                            <th>Trip Length</th>
+                            <th>Price</th>
+                            <th>$/Mile</th>
+                          </tr>
+                        </thead>
+                        <tbody id="sweepResultsTable">
+                          <tr>
+                            <td colspan="7" class="text-center py-3 text-muted">
+                              No results captured yet.
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="mt-5" id="price-graph">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+              <div>
+                <h2 class="h4 mb-1">Price Graph Sweeps</h2>
+                <p class="text-muted mb-0">
+                  Launch grid sweeps to capture low-fare snapshots and review
+                  recent runs.
+                </p>
+              </div>
+              <button class="btn btn-outline-secondary" id="refreshSweepsBtn">
+                <i class="bi bi-arrow-clockwise me-1"></i>Refresh Sweeps
+              </button>
+            </div>
+
+            <div class="row g-4">
+              <div class="col-lg-5">
+                <div class="card shadow-sm h-100">
+                  <div class="card-header bg-primary text-white">
+                    <i class="bi bi-rocket-takeoff me-2"></i>Enqueue Price Graph
+                    Sweep
+                  </div>
+                  <div class="card-body">
+                    <form id="priceGraphForm" novalidate>
+                      <div class="mb-3">
+                        <label for="pgOrigins" class="form-label"
+                          >Origins</label
+                        >
+                        <textarea
+                          class="form-control"
+                          id="pgOrigins"
+                          rows="2"
+                          placeholder="e.g. JFK, BOS, EWR"
+                          required
+                        ></textarea>
+                        <div class="form-text">
+                          Comma-separated airport codes or
+                          <code>REGION:*</code> tokens (e.g.
+                          <code>REGION:EUROPE</code>,
+                          <code>REGION:WORLD_ALL</code>).
+                        </div>
+                        <div class="input-group input-group-sm mt-2">
+                          <select
+                            class="form-select"
+                            id="pgOriginRegionSelect"
+                            disabled
+                          >
+                            <option value="">Add a region…</option>
+                          </select>
+                          <button
+                            class="btn btn-outline-secondary"
+                            type="button"
+                            id="pgOriginRegionAddBtn"
+                            disabled
+                          >
+                            Add
+                          </button>
+                        </div>
+                      </div>
+                      <div class="mb-3">
+                        <label for="pgDestinations" class="form-label"
+                          >Destinations</label
+                        >
+                        <textarea
+                          class="form-control"
+                          id="pgDestinations"
+                          rows="2"
+                          placeholder="e.g. LAX, SFO"
+                          required
+                        ></textarea>
+                        <div class="form-text">
+                          Comma-separated airport codes or
+                          <code>REGION:*</code> tokens (e.g.
+                          <code>REGION:NORTH_AMERICA</code>,
+                          <code>REGION:WORLD_ALL</code>).
+                        </div>
+                        <div class="input-group input-group-sm mt-2">
+                          <select
+                            class="form-select"
+                            id="pgDestinationRegionSelect"
+                            disabled
+                          >
+                            <option value="">Add a region…</option>
+                          </select>
+                          <button
+                            class="btn btn-outline-secondary"
+                            type="button"
+                            id="pgDestinationRegionAddBtn"
+                            disabled
+                          >
+                            Add
+                          </button>
+                        </div>
+                      </div>
+                      <div class="row g-3 mb-3">
+                        <div class="col-md-6">
+                          <label for="pgDepartureFrom" class="form-label"
+                            >Departure Start</label
+                          >
+                          <input
+                            type="date"
+                            class="form-control"
+                            id="pgDepartureFrom"
+                            required
+                          />
+                        </div>
+                        <div class="col-md-6">
+                          <label for="pgDepartureTo" class="form-label"
+                            >Departure End</label
+                          >
+                          <input
+                            type="date"
+                            class="form-control"
+                            id="pgDepartureTo"
+                            required
+                          />
+                        </div>
+                      </div>
+                      <div class="mb-3">
+                        <label for="pgTripLengths" class="form-label"
+                          >Trip Lengths</label
+                        >
+                        <input
+                          type="text"
+                          class="form-control"
+                          id="pgTripLengths"
+                          placeholder="e.g. 3,5,7"
+                        />
+                        <div class="form-text">
+                          Optional comma-separated nights. Leave blank for
+                          0-night sweeps.
+                        </div>
+                      </div>
+                      <div class="row g-3 mb-3">
+                        <div class="col-md-6">
+                          <label for="pgTripType" class="form-label"
+                            >Trip Type</label
+                          >
+                          <select class="form-select" id="pgTripType" required>
+                            <option value="round_trip" selected>
+                              Round trip
+                            </option>
+                            <option value="one_way">One-way</option>
+                          </select>
+                        </div>
+                        <div class="col-md-6">
+                          <label class="form-label">Cabin Classes</label>
+                          <div class="border rounded p-2 bg-light">
+                            <div class="form-check">
+                              <input
+                                class="form-check-input"
+                                type="checkbox"
+                                value="economy"
+                                id="pgClassEconomy"
+                                checked
+                              />
+                              <label
+                                class="form-check-label"
+                                for="pgClassEconomy"
+                                >Economy</label
+                              >
+                            </div>
+                            <div class="form-check">
+                              <input
+                                class="form-check-input"
+                                type="checkbox"
+                                value="premium_economy"
+                                id="pgClassPremiumEconomy"
+                              />
+                              <label
+                                class="form-check-label"
+                                for="pgClassPremiumEconomy"
+                                >Premium Economy</label
+                              >
+                            </div>
+                            <div class="form-check">
+                              <input
+                                class="form-check-input"
+                                type="checkbox"
+                                value="business"
+                                id="pgClassBusiness"
+                              />
+                              <label
+                                class="form-check-label"
+                                for="pgClassBusiness"
+                                >Business</label
+                              >
+                            </div>
+                            <div class="form-check">
+                              <input
+                                class="form-check-input"
+                                type="checkbox"
+                                value="first"
+                                id="pgClassFirst"
+                              />
+                              <label class="form-check-label" for="pgClassFirst"
+                                >First</label
+                              >
+                            </div>
+                          </div>
+                          <div class="form-text">
+                            Select one or more cabins (e.g. Economy + Business).
+                          </div>
+                        </div>
+                      </div>
+                      <div class="row g-3 mb-3">
+                        <div class="col-md-6">
+                          <label for="pgStops" class="form-label">Stops</label>
+                          <select class="form-select" id="pgStops" required>
+                            <option value="any" selected>Any</option>
+                            <option value="nonstop">Nonstop</option>
+                            <option value="one_stop">One stop</option>
+                            <option value="two_stops">Two stops</option>
+                            <option value="two_stops_plus">Two+ stops</option>
+                          </select>
+                        </div>
+                        <div class="col-md-6">
+                          <label for="pgCurrency" class="form-label"
+                            >Currency</label
+                          >
+                          <input
+                            type="text"
+                            class="form-control text-uppercase"
+                            id="pgCurrency"
+                            value="USD"
+                            maxlength="3"
+                            required
+                          />
+                        </div>
+                      </div>
+                      <div class="row g-3 mb-3">
+                        <div class="col-md-3">
+                          <label for="pgAdults" class="form-label"
+                            >Adults</label
+                          >
+                          <input
+                            type="number"
+                            class="form-control"
+                            id="pgAdults"
+                            min="1"
+                            value="1"
+                            required
+                          />
+                        </div>
+                        <div class="col-md-3">
+                          <label for="pgChildren" class="form-label"
+                            >Children</label
+                          >
+                          <input
+                            type="number"
+                            class="form-control"
+                            id="pgChildren"
+                            min="0"
+                            value="0"
+                          />
+                        </div>
+                        <div class="col-md-3">
+                          <label for="pgInfantsLap" class="form-label"
+                            >Infants (lap)</label
+                          >
+                          <input
+                            type="number"
+                            class="form-control"
+                            id="pgInfantsLap"
+                            min="0"
+                            value="0"
+                          />
+                        </div>
+                        <div class="col-md-3">
+                          <label for="pgInfantsSeat" class="form-label"
+                            >Infants (seat)</label
+                          >
+                          <input
+                            type="number"
+                            class="form-control"
+                            id="pgInfantsSeat"
+                            min="0"
+                            value="0"
+                          />
+                        </div>
+                      </div>
+                      <div class="mb-3">
+                        <label for="pgRateLimit" class="form-label"
+                          >Rate Limit (ms)</label
+                        >
+                        <input
+                          type="number"
+                          class="form-control"
+                          id="pgRateLimit"
+                          min="0"
+                          placeholder="750"
+                        />
+                        <div class="form-text">
+                          Optional delay between Google Flights requests.
+                          Defaults to 750ms.
+                        </div>
+                      </div>
+                      <div class="d-grid">
+                        <button
+                          type="submit"
+                          class="btn btn-primary"
+                          id="submitPriceGraphBtn"
+                        >
+                          <i class="bi bi-play-fill me-1"></i>Enqueue Sweep
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              </div>
+              <div class="col-lg-7">
+                <div class="card shadow-sm mb-4">
+                  <div
+                    class="card-header bg-white d-flex justify-content-between align-items-center"
+                  >
+                    <span
+                      ><i class="bi bi-clock-history me-2 text-secondary"></i
+                      >Recent Sweeps</span
+                    >
+                    <small class="text-muted" id="sweepsStatus"></small>
+                  </div>
+                  <div class="card-body p-0">
+                    <div class="table-responsive">
+                      <table class="table table-striped table-hover mb-0">
+                        <thead class="table-light">
+                          <tr>
+                            <th scope="col">ID</th>
+                            <th scope="col">Status</th>
+                            <th scope="col">Coverage</th>
+                            <th scope="col">Trip Lengths</th>
+                            <th scope="col">Errors</th>
+                            <th scope="col">Updated</th>
+                            <th scope="col" class="text-end">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody id="priceGraphTable">
+                          <tr>
+                            <td
+                              colspan="7"
+                              class="text-center py-4 text-muted"
+                              id="priceGraphEmpty"
+                            >
+                              No sweeps yet. Submit the form to get started.
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
                 </div>
 
-                <div class="row g-3">
-                    <div class="col-sm-6 col-lg-3">
-                        <div class="stats-card bg-white h-100">
-                            <i class="bi bi-calendar-check text-primary"></i>
-                            <h5>Scheduled Jobs</h5>
-                            <h2 id="jobsCount">0</h2>
-                        </div>
+                <div class="card shadow-sm">
+                  <div
+                    class="card-header bg-white d-flex justify-content-between align-items-center"
+                  >
+                    <span>
+                      <i class="bi bi-grid-3x3-gap me-2 text-primary"></i>
+                      Sweep Results
+                    </span>
+                    <div class="d-flex align-items-center gap-2">
+                      <span class="text-muted" id="priceGraphResultsMeta"
+                        >Select a sweep to view results.</span
+                      >
+                      <button
+                        class="btn btn-outline-secondary btn-sm"
+                        id="exportResultsBtn"
+                        disabled
+                      >
+                        <i class="bi bi-download me-1"></i>Export CSV
+                      </button>
                     </div>
-                    <div class="col-sm-6 col-lg-3">
-                        <div class="stats-card bg-white h-100">
-                            <i class="bi bi-cpu text-success"></i>
-                            <h5>Active Workers</h5>
-                            <h2 id="workersCount">0</h2>
-                        </div>
+                  </div>
+                  <div class="card-body p-0">
+                    <div class="table-responsive">
+                      <table
+                        class="table table-sm table-hover align-middle mb-0"
+                      >
+                        <thead class="table-light">
+                          <tr>
+                            <th scope="col">Route</th>
+                            <th scope="col">Departs</th>
+                            <th scope="col">Returns</th>
+                            <th scope="col">Trip</th>
+                            <th scope="col" class="text-end">Price</th>
+                          </tr>
+                        </thead>
+                        <tbody id="priceGraphResultsTable">
+                          <tr>
+                            <td colspan="5" class="text-center py-4 text-muted">
+                              Results will appear here.
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
                     </div>
-                    <div class="col-sm-6 col-lg-3">
-                        <div class="stats-card bg-white h-100">
-                            <i class="bi bi-list-ol text-warning"></i>
-                            <h5>Queue Size</h5>
-                            <h2 id="queueSize">0</h2>
-                        </div>
-                    </div>
-                    <div class="col-sm-6 col-lg-3">
-                        <div class="stats-card bg-white h-100">
-                            <i class="bi bi-search text-info"></i>
-                            <h5>Total Searches</h5>
-                            <h2 id="searchesCount">0</h2>
-                        </div>
-                    </div>
+                  </div>
                 </div>
-
-                <section class="mt-5" id="jobs">
-                    <div class="d-flex justify-content-between align-items-center mb-3">
-                        <h2 class="h4 mb-0">Scheduled Jobs</h2>
-                        <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#newJobModal">
-                            <i class="bi bi-plus-lg me-1"></i>Create Job
-                        </button>
-                    </div>
-                    <div class="table-responsive bg-white rounded shadow-sm">
-                        <table class="table table-striped table-hover align-middle mb-0">
-                            <thead class="table-light">
-                                <tr>
-                                    <th scope="col">ID</th>
-                                    <th scope="col">Name</th>
-                                    <th scope="col">Schedule</th>
-                                    <th scope="col">Route</th>
-                                    <th scope="col">Status</th>
-                                    <th scope="col">Last Run</th>
-                                    <th scope="col" class="text-end">Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody id="jobsTable"></tbody>
-                        </table>
-                    </div>
-                </section>
-
-                <section class="mt-5" id="workers">
-                    <h2 class="h4 mb-3">Workers</h2>
-                    <div class="table-responsive bg-white rounded shadow-sm">
-                        <table class="table table-striped table-hover align-middle mb-0">
-                            <thead class="table-light">
-                                <tr>
-                                    <th scope="col">ID</th>
-                                    <th scope="col">Status</th>
-                                    <th scope="col">Current Job</th>
-                                    <th scope="col">Processed</th>
-                                    <th scope="col">Uptime</th>
-                                </tr>
-                            </thead>
-                            <tbody id="workersTable"></tbody>
-                        </table>
-                    </div>
-                </section>
-
-                <section class="mt-5" id="queue">
-                    <h2 class="h4 mb-3">Queue Status</h2>
-                    <div class="table-responsive bg-white rounded shadow-sm">
-                        <table class="table table-striped table-hover align-middle mb-0">
-                            <thead class="table-light">
-                                <tr>
-                                    <th scope="col">Queue</th>
-                                    <th scope="col">Pending</th>
-                                    <th scope="col">Processing</th>
-                                    <th scope="col">Completed</th>
-                                    <th scope="col">Failed</th>
-                                </tr>
-                            </thead>
-                            <tbody id="queueTable"></tbody>
-                        </table>
-                    </div>
-                </section>
-
-                <section class="mt-5" id="continuous-sweep">
-                    <div class="d-flex justify-content-between align-items-center mb-3">
-                        <div>
-                            <h2 class="h4 mb-1">Continuous Price Graph Sweep</h2>
-                            <p class="text-muted mb-0">
-                                Always-running sweep across top 100 international airport routes (~8,800 routes)
-                            </p>
-                        </div>
-                        <button class="btn btn-outline-secondary" id="refreshSweepStatusBtn">
-                            <i class="bi bi-arrow-clockwise me-1"></i>Refresh Status
-                        </button>
-                    </div>
-
-                    <div class="row g-4">
-                        <div class="col-lg-4">
-                            <div class="card shadow-sm h-100">
-                                <div class="card-header bg-primary text-white">
-                                    <i class="bi bi-sliders me-2"></i>Sweep Controls
-                                </div>
-                                <div class="card-body">
-                                    <div class="d-grid gap-2 mb-4">
-                                        <button class="btn btn-success" id="sweepStartBtn">
-                                            <i class="bi bi-play-fill me-1"></i>Start Sweep
-                                        </button>
-                                        <button class="btn btn-warning" id="sweepPauseBtn" disabled>
-                                            <i class="bi bi-pause-fill me-1"></i>Pause
-                                        </button>
-                                        <button class="btn btn-info" id="sweepResumeBtn" disabled>
-                                            <i class="bi bi-play me-1"></i>Resume
-                                        </button>
-                                        <button class="btn btn-danger" id="sweepStopBtn" disabled>
-                                            <i class="bi bi-stop-fill me-1"></i>Stop
-                                        </button>
-                                    </div>
-
-                                    <hr>
-
-                                    <h6 class="mb-3">Advanced Actions</h6>
-                                    <div class="d-grid gap-2">
-                                        <button class="btn btn-outline-secondary btn-sm" id="sweepSkipBtn" disabled>
-                                            <i class="bi bi-skip-forward me-1"></i>Skip Current Route
-                                        </button>
-                                        <button class="btn btn-outline-danger btn-sm" id="sweepRestartBtn" disabled>
-                                            <i class="bi bi-arrow-counterclockwise me-1"></i>Restart Sweep
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="col-lg-4">
-                            <div class="card shadow-sm h-100">
-                                <div class="card-header bg-white">
-                                    <i class="bi bi-gear me-2"></i>Configuration
-                                </div>
-	                                <div class="card-body">
-	                                    <form id="sweepConfigForm">
-	                                        <div class="mb-3">
-	                                            <label class="form-label">Cabin Class</label>
-	                                            <select class="form-select" id="sweepClass">
-	                                                <option value="economy" selected>Economy</option>
-	                                                <option value="premium_economy">Premium Economy</option>
-	                                                <option value="business">Business</option>
-	                                                <option value="first">First</option>
-	                                            </select>
-	                                            <div class="form-text">Applies to new continuous price graph jobs as they are enqueued.</div>
-	                                        </div>
-	                                        <div class="mb-3">
-	                                            <label class="form-label">Trip Lengths (nights)</label>
-	                                            <input type="text" class="form-control" id="sweepTripLengths" value="7,14" placeholder="e.g. 3-14 or 3,5,7,9,12">
-	                                            <div class="form-text">Comma list or inclusive range (e.g. <code>3-14</code>).</div>
-	                                        </div>
-	                                        <div class="mb-3">
-	                                            <label class="form-label">Pacing Mode</label>
-	                                            <select class="form-select" id="sweepPacingMode">
-	                                                <option value="adaptive">Adaptive (1 sweep / 24h)</option>
-	                                                <option value="fixed">Fixed (3s delay)</option>
-	                                            </select>
-                                            <div class="form-text">Adaptive auto-calculates delay for 1 sweep per day.</div>
-                                        </div>
-                                        <div class="mb-3">
-                                            <label class="form-label">Target Duration (hours)</label>
-                                            <input type="number" class="form-control" id="sweepTargetHours" value="24" min="1">
-                                            <div class="form-text">For adaptive mode only.</div>
-                                        </div>
-                                        <div class="mb-3">
-                                            <label class="form-label">Min Delay (ms)</label>
-                                            <input type="number" class="form-control" id="sweepMinDelay" value="3000" min="1000">
-                                            <div class="form-text">Minimum delay between requests.</div>
-                                        </div>
-                                        <div class="d-grid">
-                                            <button type="submit" class="btn btn-primary btn-sm">
-                                                <i class="bi bi-save me-1"></i>Apply Config
-                                            </button>
-                                        </div>
-                                    </form>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="col-lg-4">
-                            <div class="card shadow-sm h-100">
-                                <div class="card-header bg-white">
-                                    <i class="bi bi-activity me-2"></i>Live Status
-                                </div>
-                                <div class="card-body">
-                                    <div id="sweepStatusNotReady" class="text-center py-4 text-muted">
-                                        <i class="bi bi-hourglass display-4 d-block mb-2"></i>
-                                        <p>Sweep not running. Click Start to begin.</p>
-                                    </div>
-                                    <div id="sweepStatusContent" style="display: none;">
-                                        <div class="mb-3">
-                                            <small class="text-muted">Status</small>
-                                            <div class="d-flex align-items-center">
-                                                <span class="badge me-2" id="sweepStatusBadge">-</span>
-                                                <span id="sweepStatusText">-</span>
-                                            </div>
-                                        </div>
-                                        <div class="mb-3">
-                                            <small class="text-muted">Progress</small>
-                                            <div class="progress mb-1" style="height: 20px;">
-                                                <div class="progress-bar progress-bar-striped progress-bar-animated" id="sweepProgressBar" role="progressbar" style="width: 0%;">0%</div>
-                                            </div>
-                                            <small class="text-muted">
-                                                Route <span id="sweepRouteIndex">0</span> of <span id="sweepTotalRoutes">0</span>
-                                            </small>
-                                        </div>
-                                        <div class="row g-2 mb-3">
-                                            <div class="col-6">
-                                                <small class="text-muted">Sweep #</small>
-                                                <div class="fw-bold" id="sweepNumber">-</div>
-                                            </div>
-                                            <div class="col-6">
-                                                <small class="text-muted">Queries/hour</small>
-                                                <div class="fw-bold" id="sweepQueriesPerHour">-</div>
-                                            </div>
-                                        </div>
-                                        <div class="row g-2 mb-3">
-                                            <div class="col-6">
-                                                <small class="text-muted">Completed</small>
-                                                <div class="fw-bold text-success" id="sweepCompleted">-</div>
-                                            </div>
-                                            <div class="col-6">
-                                                <small class="text-muted">Errors</small>
-                                                <div class="fw-bold text-danger" id="sweepErrors">-</div>
-                                            </div>
-                                        </div>
-                                        <div class="mb-3">
-                                            <small class="text-muted">Current Route</small>
-                                            <div class="fw-bold" id="sweepCurrentRoute">-</div>
-                                        </div>
-                                        <div class="mb-3">
-                                            <small class="text-muted">Current Delay</small>
-                                            <div id="sweepCurrentDelay">-</div>
-                                        </div>
-                                        <div class="mb-3">
-                                            <small class="text-muted">Est. Completion</small>
-                                            <div id="sweepEstCompletion">-</div>
-                                        </div>
-                                        <div id="sweepLastError" class="alert alert-danger py-2 mb-0" style="display: none;">
-                                            <small><strong>Last Error:</strong> <span id="sweepLastErrorText"></span></small>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="row mt-4">
-                        <div class="col-12">
-                            <div class="card shadow-sm">
-                                <div class="card-header bg-white d-flex justify-content-between align-items-center">
-                                    <span><i class="bi bi-clock-history me-2"></i>Historical Sweep Stats</span>
-                                    <button class="btn btn-outline-secondary btn-sm" id="refreshSweepStatsBtn">
-                                        <i class="bi bi-arrow-clockwise me-1"></i>Refresh
-                                    </button>
-                                </div>
-                                <div class="card-body p-0">
-                                    <div class="table-responsive">
-                                        <table class="table table-sm table-striped table-hover mb-0">
-                                            <thead class="table-light">
-                                                <tr>
-                                                    <th>Sweep #</th>
-                                                    <th>Started</th>
-                                                    <th>Completed</th>
-                                                    <th>Duration</th>
-                                                    <th>Routes</th>
-                                                    <th>Success</th>
-                                                    <th>Failed</th>
-                                                    <th>Avg Delay</th>
-                                                    <th>Price Range</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody id="sweepStatsTable">
-                                                <tr>
-                                                    <td colspan="9" class="text-center py-3 text-muted">No historical data yet.</td>
-                                                </tr>
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        <!-- Continuous Sweep Results -->
-                        <div class="col-12">
-                            <div class="card shadow-sm" id="sweepResultsContainer" style="display: none;">
-                                <div class="card-header d-flex justify-content-between align-items-center">
-                                    <span><i class="bi bi-graph-up me-2"></i>Recent Sweep Results (Best Fares)</span>
-                                    <button class="btn btn-outline-secondary btn-sm" id="refreshSweepResultsBtn">
-                                        <i class="bi bi-arrow-clockwise me-1"></i>Refresh
-                                    </button>
-                                </div>
-                                <div class="card-body p-0">
-                                    <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
-                                        <table class="table table-sm table-striped table-hover mb-0">
-                                            <thead class="table-light sticky-top">
-                                                <tr>
-                                                    <th>Origin</th>
-                                                    <th>Destination</th>
-                                                    <th>Departure</th>
-                                                    <th>Return</th>
-                                                    <th>Trip Length</th>
-                                                    <th>Price</th>
-                                                    <th>$/Mile</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody id="sweepResultsTable">
-                                                <tr>
-                                                    <td colspan="7" class="text-center py-3 text-muted">No results captured yet.</td>
-                                                </tr>
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </section>
-
-                <section class="mt-5" id="price-graph">
-                    <div class="d-flex justify-content-between align-items-center mb-3">
-                        <div>
-                            <h2 class="h4 mb-1">Price Graph Sweeps</h2>
-                            <p class="text-muted mb-0">
-                                Launch grid sweeps to capture low-fare snapshots and review recent runs.
-                            </p>
-                        </div>
-                        <button class="btn btn-outline-secondary" id="refreshSweepsBtn">
-                            <i class="bi bi-arrow-clockwise me-1"></i>Refresh Sweeps
-                        </button>
-                    </div>
-
-                    <div class="row g-4">
-                        <div class="col-lg-5">
-                            <div class="card shadow-sm h-100">
-                                <div class="card-header bg-primary text-white">
-                                    <i class="bi bi-rocket-takeoff me-2"></i>Enqueue Price Graph Sweep
-                                </div>
-                                <div class="card-body">
-                                    <form id="priceGraphForm" novalidate>
-                                        <div class="mb-3">
-                                            <label for="pgOrigins" class="form-label">Origins</label>
-                                            <textarea class="form-control" id="pgOrigins" rows="2" placeholder="e.g. JFK, BOS, EWR" required></textarea>
-                                            <div class="form-text">Comma-separated airport codes or <code>REGION:*</code> tokens (e.g. <code>REGION:EUROPE</code>, <code>REGION:WORLD_ALL</code>).</div>
-                                            <div class="input-group input-group-sm mt-2">
-                                                <select class="form-select" id="pgOriginRegionSelect" disabled>
-                                                    <option value="">Add a region…</option>
-                                                </select>
-                                                <button class="btn btn-outline-secondary" type="button" id="pgOriginRegionAddBtn" disabled>Add</button>
-                                            </div>
-                                        </div>
-                                        <div class="mb-3">
-                                            <label for="pgDestinations" class="form-label">Destinations</label>
-                                            <textarea class="form-control" id="pgDestinations" rows="2" placeholder="e.g. LAX, SFO" required></textarea>
-                                            <div class="form-text">Comma-separated airport codes or <code>REGION:*</code> tokens (e.g. <code>REGION:NORTH_AMERICA</code>, <code>REGION:WORLD_ALL</code>).</div>
-                                            <div class="input-group input-group-sm mt-2">
-                                                <select class="form-select" id="pgDestinationRegionSelect" disabled>
-                                                    <option value="">Add a region…</option>
-                                                </select>
-                                                <button class="btn btn-outline-secondary" type="button" id="pgDestinationRegionAddBtn" disabled>Add</button>
-                                            </div>
-                                        </div>
-                                        <div class="row g-3 mb-3">
-                                            <div class="col-md-6">
-                                                <label for="pgDepartureFrom" class="form-label">Departure Start</label>
-                                                <input type="date" class="form-control" id="pgDepartureFrom" required>
-                                            </div>
-                                            <div class="col-md-6">
-                                                <label for="pgDepartureTo" class="form-label">Departure End</label>
-                                                <input type="date" class="form-control" id="pgDepartureTo" required>
-                                            </div>
-                                        </div>
-                                        <div class="mb-3">
-                                            <label for="pgTripLengths" class="form-label">Trip Lengths</label>
-                                            <input type="text" class="form-control" id="pgTripLengths" placeholder="e.g. 3,5,7">
-                                            <div class="form-text">Optional comma-separated nights. Leave blank for 0-night sweeps.</div>
-                                        </div>
-                                        <div class="row g-3 mb-3">
-                                            <div class="col-md-6">
-                                                <label for="pgTripType" class="form-label">Trip Type</label>
-                                                <select class="form-select" id="pgTripType" required>
-                                                    <option value="round_trip" selected>Round trip</option>
-                                                    <option value="one_way">One-way</option>
-                                                </select>
-                                            </div>
-                                            <div class="col-md-6">
-                                                <label class="form-label">Cabin Classes</label>
-                                                <div class="border rounded p-2 bg-light">
-                                                    <div class="form-check">
-                                                        <input class="form-check-input" type="checkbox" value="economy" id="pgClassEconomy" checked>
-                                                        <label class="form-check-label" for="pgClassEconomy">Economy</label>
-                                                    </div>
-                                                    <div class="form-check">
-                                                        <input class="form-check-input" type="checkbox" value="premium_economy" id="pgClassPremiumEconomy">
-                                                        <label class="form-check-label" for="pgClassPremiumEconomy">Premium Economy</label>
-                                                    </div>
-                                                    <div class="form-check">
-                                                        <input class="form-check-input" type="checkbox" value="business" id="pgClassBusiness">
-                                                        <label class="form-check-label" for="pgClassBusiness">Business</label>
-                                                    </div>
-                                                    <div class="form-check">
-                                                        <input class="form-check-input" type="checkbox" value="first" id="pgClassFirst">
-                                                        <label class="form-check-label" for="pgClassFirst">First</label>
-                                                    </div>
-                                                </div>
-                                                <div class="form-text">Select one or more cabins (e.g. Economy + Business).</div>
-                                            </div>
-                                        </div>
-                                        <div class="row g-3 mb-3">
-                                            <div class="col-md-6">
-                                                <label for="pgStops" class="form-label">Stops</label>
-                                                <select class="form-select" id="pgStops" required>
-                                                    <option value="any" selected>Any</option>
-                                                    <option value="nonstop">Nonstop</option>
-                                                    <option value="one_stop">One stop</option>
-                                                    <option value="two_stops">Two stops</option>
-                                                    <option value="two_stops_plus">Two+ stops</option>
-                                                </select>
-                                            </div>
-                                            <div class="col-md-6">
-                                                <label for="pgCurrency" class="form-label">Currency</label>
-                                                <input type="text" class="form-control text-uppercase" id="pgCurrency" value="USD" maxlength="3" required>
-                                            </div>
-                                        </div>
-                                        <div class="row g-3 mb-3">
-                                            <div class="col-md-3">
-                                                <label for="pgAdults" class="form-label">Adults</label>
-                                                <input type="number" class="form-control" id="pgAdults" min="1" value="1" required>
-                                            </div>
-                                            <div class="col-md-3">
-                                                <label for="pgChildren" class="form-label">Children</label>
-                                                <input type="number" class="form-control" id="pgChildren" min="0" value="0">
-                                            </div>
-                                            <div class="col-md-3">
-                                                <label for="pgInfantsLap" class="form-label">Infants (lap)</label>
-                                                <input type="number" class="form-control" id="pgInfantsLap" min="0" value="0">
-                                            </div>
-                                            <div class="col-md-3">
-                                                <label for="pgInfantsSeat" class="form-label">Infants (seat)</label>
-                                                <input type="number" class="form-control" id="pgInfantsSeat" min="0" value="0">
-                                            </div>
-                                        </div>
-                                        <div class="mb-3">
-                                            <label for="pgRateLimit" class="form-label">Rate Limit (ms)</label>
-                                            <input type="number" class="form-control" id="pgRateLimit" min="0" placeholder="750">
-                                            <div class="form-text">Optional delay between Google Flights requests. Defaults to 750ms.</div>
-                                        </div>
-                                        <div class="d-grid">
-                                            <button type="submit" class="btn btn-primary" id="submitPriceGraphBtn">
-                                                <i class="bi bi-play-fill me-1"></i>Enqueue Sweep
-                                            </button>
-                                        </div>
-                                    </form>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-lg-7">
-                            <div class="card shadow-sm mb-4">
-                                <div class="card-header bg-white d-flex justify-content-between align-items-center">
-                                    <span><i class="bi bi-clock-history me-2 text-secondary"></i>Recent Sweeps</span>
-                                    <small class="text-muted" id="sweepsStatus"></small>
-                                </div>
-                                <div class="card-body p-0">
-                                    <div class="table-responsive">
-                                        <table class="table table-striped table-hover mb-0">
-                                            <thead class="table-light">
-                                                <tr>
-                                                    <th scope="col">ID</th>
-                                                    <th scope="col">Status</th>
-                                                    <th scope="col">Coverage</th>
-                                                    <th scope="col">Trip Lengths</th>
-                                                    <th scope="col">Errors</th>
-                                                    <th scope="col">Updated</th>
-                                                    <th scope="col" class="text-end">Actions</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody id="priceGraphTable">
-                                                <tr>
-                                                    <td colspan="7" class="text-center py-4 text-muted" id="priceGraphEmpty">
-                                                        No sweeps yet. Submit the form to get started.
-                                                    </td>
-                                                </tr>
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="card shadow-sm">
-                                <div class="card-header bg-white d-flex justify-content-between align-items-center">
-                                    <span>
-                                        <i class="bi bi-grid-3x3-gap me-2 text-primary"></i>
-                                        Sweep Results
-                                    </span>
-                                    <div class="d-flex align-items-center gap-2">
-                                        <span class="text-muted" id="priceGraphResultsMeta">Select a sweep to view results.</span>
-                                        <button class="btn btn-outline-secondary btn-sm" id="exportResultsBtn" disabled>
-                                            <i class="bi bi-download me-1"></i>Export CSV
-                                        </button>
-                                    </div>
-                                </div>
-                                <div class="card-body p-0">
-                                    <div class="table-responsive">
-                                        <table class="table table-sm table-hover align-middle mb-0">
-                                            <thead class="table-light">
-                                                <tr>
-                                                    <th scope="col">Route</th>
-                                                    <th scope="col">Departs</th>
-                                                    <th scope="col">Returns</th>
-                                                    <th scope="col">Trip</th>
-                                                    <th scope="col" class="text-end">Price</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody id="priceGraphResultsTable">
-                                                <tr>
-                                                    <td colspan="5" class="text-center py-4 text-muted">Results will appear here.</td>
-                                                </tr>
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </section>
-            </main>
-        </div>
+              </div>
+            </div>
+          </section>
+        </main>
+      </div>
     </div>
 
     <div class="modal fade" id="newJobModal" tabindex="-1" aria-hidden="true">
-        <div class="modal-dialog modal-lg modal-dialog-centered">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">Create New Scheduled Job</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title">Create New Scheduled Job</h5>
+            <button
+              type="button"
+              class="btn-close"
+              data-bs-dismiss="modal"
+              aria-label="Close"
+            ></button>
+          </div>
+          <div class="modal-body">
+            <form id="newJobForm" novalidate>
+              <div class="row g-3 mb-3">
+                <div class="col-md-6">
+                  <label for="jobName" class="form-label">Job Name</label>
+                  <input
+                    type="text"
+                    class="form-control"
+                    id="jobName"
+                    required
+                  />
                 </div>
-                <div class="modal-body">
-                    <form id="newJobForm" novalidate>
-                        <div class="row g-3 mb-3">
-                            <div class="col-md-6">
-                                <label for="jobName" class="form-label">Job Name</label>
-                                <input type="text" class="form-control" id="jobName" required>
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label">Schedule</label>
-                                <div class="row g-2">
-                                    <div class="col-sm-6">
-                                        <label for="interval" class="form-label">Interval</label>
-                                        <select class="form-select" id="interval" required onchange="updateCronPreview()">
-                                            <option value="daily">Daily</option>
-                                            <option value="weekly">Weekly</option>
-                                            <option value="monthly">Monthly</option>
-                                        </select>
-                                    </div>
-                                    <div class="col-sm-6">
-                                        <label for="time" class="form-label">Time</label>
-                                        <input type="time" class="form-control" id="time" value="12:00" required onchange="updateCronPreview()">
-                                    </div>
-                                </div>
-                                <small class="text-muted">Cron Expression: <code id="cronPreview">0 12 * * *</code></small>
-                            </div>
-                        </div>
-
-                        <div class="row g-3 mb-3">
-                            <div class="col-md-6">
-                                <label for="origin" class="form-label">Origin</label>
-                                <input type="text" class="form-control" id="origin" placeholder="JFK" required>
-                            </div>
-                            <div class="col-md-6">
-                                <label for="destination" class="form-label">Destination</label>
-                                <input type="text" class="form-control" id="destination" placeholder="LAX" required>
-                            </div>
-                        </div>
-
-                        <div class="form-check form-switch mb-3">
-                            <input class="form-check-input" type="checkbox" id="dynamicDates" onchange="toggleDateMode()">
-                            <label class="form-check-label" for="dynamicDates">Use dynamic dates (relative to run time)</label>
-                        </div>
-
-                        <div id="staticDateFields">
-                            <div class="row g-3 mb-3">
-                                <div class="col-md-6">
-                                    <label for="dateStart" class="form-label">Departure Date Start</label>
-                                    <input type="date" class="form-control" id="dateStart" required>
-                                </div>
-                                <div class="col-md-6">
-                                    <label for="dateEnd" class="form-label">Departure Date End</label>
-                                    <input type="date" class="form-control" id="dateEnd" required>
-                                </div>
-                            </div>
-                            <div class="row g-3 mb-3">
-                                <div class="col-md-6">
-                                    <label for="returnDateStart" class="form-label">Return Date Start</label>
-                                    <input type="date" class="form-control" id="returnDateStart">
-                                </div>
-                                <div class="col-md-6">
-                                    <label for="returnDateEnd" class="form-label">Return Date End</label>
-                                    <input type="date" class="form-control" id="returnDateEnd">
-                                </div>
-                            </div>
-                        </div>
-
-                        <div id="dynamicDateFields" style="display: none;">
-                            <div class="alert alert-info mb-3">
-                                <i class="bi bi-info-circle me-2"></i>
-                                Dynamic jobs calculate search windows relative to the execution time.
-                            </div>
-                            <div class="row g-3 mb-3">
-                                <div class="col-md-4">
-                                    <label for="daysFromExecution" class="form-label">Days from execution</label>
-                                    <input type="number" class="form-control" id="daysFromExecution" min="0" value="14">
-                                </div>
-                                <div class="col-md-4">
-                                    <label for="searchWindowDays" class="form-label">Search window (days)</label>
-                                    <input type="number" class="form-control" id="searchWindowDays" min="1" value="7">
-                                </div>
-                                <div class="col-md-4">
-                                    <label for="tripLength" class="form-label">Trip length (days)</label>
-                                    <input type="number" class="form-control" id="tripLength" min="1" value="7">
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="row g-3 mb-3">
-                            <div class="col-md-4">
-                                <label for="tripType" class="form-label">Trip Type</label>
-                                <select class="form-select" id="tripType" required>
-                                    <option value="one_way">One-way</option>
-                                    <option value="round_trip" selected>Round trip</option>
-                                </select>
-                            </div>
-                            <div class="col-md-4">
-                                <label for="class" class="form-label">Cabin Class</label>
-                                <select class="form-select" id="class" required>
-                                    <option value="economy" selected>Economy</option>
-                                    <option value="premium_economy">Premium Economy</option>
-                                    <option value="business">Business</option>
-                                    <option value="first">First</option>
-                                </select>
-                            </div>
-                            <div class="col-md-4">
-                                <label for="stops" class="form-label">Stops</label>
-                                <select class="form-select" id="stops" required>
-                                    <option value="nonstop">Nonstop</option>
-                                    <option value="one_stop">One stop</option>
-                                    <option value="two_stops">Two stops</option>
-                                    <option value="any" selected>Any</option>
-                                </select>
-                            </div>
-                        </div>
-
-                        <div class="row g-3 mb-3">
-                            <div class="col-md-3">
-                                <label for="adults" class="form-label">Adults</label>
-                                <input type="number" class="form-control" id="adults" min="1" value="1" required>
-                            </div>
-                            <div class="col-md-3">
-                                <label for="children" class="form-label">Children</label>
-                                <input type="number" class="form-control" id="children" min="0" value="0">
-                            </div>
-                            <div class="col-md-3">
-                                <label for="infantsLap" class="form-label">Infants (lap)</label>
-                                <input type="number" class="form-control" id="infantsLap" min="0" value="0">
-                            </div>
-                            <div class="col-md-3">
-                                <label for="infantsSeat" class="form-label">Infants (seat)</label>
-                                <input type="number" class="form-control" id="infantsSeat" min="0" value="0">
-                            </div>
-                        </div>
-
-                        <div class="mb-3">
-                            <label for="currency" class="form-label">Currency</label>
-                            <select class="form-select" id="currency" required>
-                                <option value="USD" selected>USD</option>
-                                <option value="EUR">EUR</option>
-                                <option value="GBP">GBP</option>
-                                <option value="JPY">JPY</option>
-                            </select>
-                        </div>
-                    </form>
+                <div class="col-md-6">
+                  <label class="form-label">Schedule</label>
+                  <div class="row g-2">
+                    <div class="col-sm-6">
+                      <label for="interval" class="form-label">Interval</label>
+                      <select
+                        class="form-select"
+                        id="interval"
+                        required
+                        onchange="updateCronPreview()"
+                      >
+                        <option value="daily">Daily</option>
+                        <option value="weekly">Weekly</option>
+                        <option value="monthly">Monthly</option>
+                      </select>
+                    </div>
+                    <div class="col-sm-6">
+                      <label for="time" class="form-label">Time</label>
+                      <input
+                        type="time"
+                        class="form-control"
+                        id="time"
+                        value="12:00"
+                        required
+                        onchange="updateCronPreview()"
+                      />
+                    </div>
+                  </div>
+                  <small class="text-muted"
+                    >Cron Expression:
+                    <code id="cronPreview">0 12 * * *</code></small
+                  >
                 </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
-                    <button type="button" class="btn btn-primary" id="saveJobBtn">Save Job</button>
+              </div>
+
+              <div class="row g-3 mb-3">
+                <div class="col-md-6">
+                  <label for="origin" class="form-label">Origin</label>
+                  <input
+                    type="text"
+                    class="form-control"
+                    id="origin"
+                    placeholder="JFK"
+                    required
+                  />
                 </div>
-            </div>
+                <div class="col-md-6">
+                  <label for="destination" class="form-label"
+                    >Destination</label
+                  >
+                  <input
+                    type="text"
+                    class="form-control"
+                    id="destination"
+                    placeholder="LAX"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div class="form-check form-switch mb-3">
+                <input
+                  class="form-check-input"
+                  type="checkbox"
+                  id="dynamicDates"
+                  onchange="toggleDateMode()"
+                />
+                <label class="form-check-label" for="dynamicDates"
+                  >Use dynamic dates (relative to run time)</label
+                >
+              </div>
+
+              <div id="staticDateFields">
+                <div class="row g-3 mb-3">
+                  <div class="col-md-6">
+                    <label for="dateStart" class="form-label"
+                      >Departure Date Start</label
+                    >
+                    <input
+                      type="date"
+                      class="form-control"
+                      id="dateStart"
+                      required
+                    />
+                  </div>
+                  <div class="col-md-6">
+                    <label for="dateEnd" class="form-label"
+                      >Departure Date End</label
+                    >
+                    <input
+                      type="date"
+                      class="form-control"
+                      id="dateEnd"
+                      required
+                    />
+                  </div>
+                </div>
+                <div class="row g-3 mb-3">
+                  <div class="col-md-6">
+                    <label for="returnDateStart" class="form-label"
+                      >Return Date Start</label
+                    >
+                    <input
+                      type="date"
+                      class="form-control"
+                      id="returnDateStart"
+                    />
+                  </div>
+                  <div class="col-md-6">
+                    <label for="returnDateEnd" class="form-label"
+                      >Return Date End</label
+                    >
+                    <input
+                      type="date"
+                      class="form-control"
+                      id="returnDateEnd"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div id="dynamicDateFields" style="display: none">
+                <div class="alert alert-info mb-3">
+                  <i class="bi bi-info-circle me-2"></i>
+                  Dynamic jobs calculate search windows relative to the
+                  execution time.
+                </div>
+                <div class="row g-3 mb-3">
+                  <div class="col-md-4">
+                    <label for="daysFromExecution" class="form-label"
+                      >Days from execution</label
+                    >
+                    <input
+                      type="number"
+                      class="form-control"
+                      id="daysFromExecution"
+                      min="0"
+                      value="14"
+                    />
+                  </div>
+                  <div class="col-md-4">
+                    <label for="searchWindowDays" class="form-label"
+                      >Search window (days)</label
+                    >
+                    <input
+                      type="number"
+                      class="form-control"
+                      id="searchWindowDays"
+                      min="1"
+                      value="7"
+                    />
+                  </div>
+                  <div class="col-md-4">
+                    <label for="tripLength" class="form-label"
+                      >Trip length (days)</label
+                    >
+                    <input
+                      type="number"
+                      class="form-control"
+                      id="tripLength"
+                      min="1"
+                      value="7"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div class="row g-3 mb-3">
+                <div class="col-md-4">
+                  <label for="tripType" class="form-label">Trip Type</label>
+                  <select class="form-select" id="tripType" required>
+                    <option value="one_way">One-way</option>
+                    <option value="round_trip" selected>Round trip</option>
+                  </select>
+                </div>
+                <div class="col-md-4">
+                  <label for="class" class="form-label">Cabin Class</label>
+                  <select class="form-select" id="class" required>
+                    <option value="economy" selected>Economy</option>
+                    <option value="premium_economy">Premium Economy</option>
+                    <option value="business">Business</option>
+                    <option value="first">First</option>
+                  </select>
+                </div>
+                <div class="col-md-4">
+                  <label for="stops" class="form-label">Stops</label>
+                  <select class="form-select" id="stops" required>
+                    <option value="nonstop">Nonstop</option>
+                    <option value="one_stop">One stop</option>
+                    <option value="two_stops">Two stops</option>
+                    <option value="any" selected>Any</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="row g-3 mb-3">
+                <div class="col-md-3">
+                  <label for="adults" class="form-label">Adults</label>
+                  <input
+                    type="number"
+                    class="form-control"
+                    id="adults"
+                    min="1"
+                    value="1"
+                    required
+                  />
+                </div>
+                <div class="col-md-3">
+                  <label for="children" class="form-label">Children</label>
+                  <input
+                    type="number"
+                    class="form-control"
+                    id="children"
+                    min="0"
+                    value="0"
+                  />
+                </div>
+                <div class="col-md-3">
+                  <label for="infantsLap" class="form-label"
+                    >Infants (lap)</label
+                  >
+                  <input
+                    type="number"
+                    class="form-control"
+                    id="infantsLap"
+                    min="0"
+                    value="0"
+                  />
+                </div>
+                <div class="col-md-3">
+                  <label for="infantsSeat" class="form-label"
+                    >Infants (seat)</label
+                  >
+                  <input
+                    type="number"
+                    class="form-control"
+                    id="infantsSeat"
+                    min="0"
+                    value="0"
+                  />
+                </div>
+              </div>
+
+              <div class="mb-3">
+                <label for="currency" class="form-label">Currency</label>
+                <select class="form-select" id="currency" required>
+                  <option value="USD" selected>USD</option>
+                  <option value="EUR">EUR</option>
+                  <option value="GBP">GBP</option>
+                  <option value="JPY">JPY</option>
+                </select>
+              </div>
+            </form>
+          </div>
+          <div class="modal-footer">
+            <button
+              type="button"
+              class="btn btn-outline-secondary"
+              data-bs-dismiss="modal"
+            >
+              Cancel
+            </button>
+            <button type="button" class="btn btn-primary" id="saveJobBtn">
+              Save Job
+            </button>
+          </div>
         </div>
+      </div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="admin.js"></script>
-</body>
+  </body>
 </html>
