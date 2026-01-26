@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -2381,17 +2382,152 @@ func GetQueueStatus(q queue.Queue) gin.HandlerFunc {
 	}
 }
 
+func isAllowedQueueName(queueName string) bool {
+	switch queueName {
+	case "flight_search", "bulk_search", "price_graph_sweep", "continuous_price_graph":
+		return true
+	default:
+		return false
+	}
+}
+
+// GetQueueBacklog returns recent unacked stream entries for a queue (admin/debug endpoint).
+func GetQueueBacklog(q queue.Queue) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		queueName := c.Param("name")
+		if !isAllowedQueueName(queueName) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid queue name"})
+			return
+		}
+
+		limit := 200
+		if v := c.Query("limit"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				limit = n
+			}
+		}
+
+		jobs, err := q.GetBacklog(c.Request.Context(), queueName, limit)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"queue": queueName,
+			"limit": limit,
+			"jobs":  jobs,
+		})
+	}
+}
+
+// ListQueueJobs lists jobs from a queue status set (admin/debug endpoint).
+func ListQueueJobs(q queue.Queue) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		queueName := c.Param("name")
+		if !isAllowedQueueName(queueName) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid queue name"})
+			return
+		}
+
+		state := c.DefaultQuery("state", "failed")
+		limit := 100
+		offset := 0
+		if v := c.Query("limit"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				limit = n
+			}
+		}
+		if v := c.Query("offset"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+				offset = n
+			}
+		}
+
+		jobs, err := q.ListJobs(c.Request.Context(), queueName, state, limit, offset)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"queue":  queueName,
+			"state":  state,
+			"limit":  limit,
+			"offset": offset,
+			"count":  len(jobs),
+			"jobs":   jobs,
+		})
+	}
+}
+
+// GetQueueJob fetches a persisted job by ID (admin/debug endpoint).
+func GetQueueJob(q queue.Queue) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		queueName := c.Param("name")
+		if !isAllowedQueueName(queueName) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid queue name"})
+			return
+		}
+
+		jobID := c.Param("id")
+		if jobID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Missing job id"})
+			return
+		}
+
+		job, err := q.GetJob(c.Request.Context(), jobID)
+		if err != nil {
+			if errors.Is(err, redis.Nil) {
+				c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"queue": queueName,
+			"job":   job,
+		})
+	}
+}
+
+// GetQueueEnqueueMetrics shows who/what is enqueueing jobs (admin/debug endpoint).
+func GetQueueEnqueueMetrics(q queue.Queue) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		queueName := c.Param("name")
+		if !isAllowedQueueName(queueName) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid queue name"})
+			return
+		}
+
+		minutes := 60
+		if v := c.Query("minutes"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				minutes = n
+			}
+		}
+
+		stats, err := q.GetEnqueueMetrics(c.Request.Context(), queueName, minutes)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"queue":   queueName,
+			"minutes": minutes,
+			"sources": stats,
+		})
+	}
+}
+
 // ClearQueue clears pending jobs from a queue (admin/debug endpoint).
 func ClearQueue(q queue.Queue) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		queueName := c.Param("name")
-		allowed := map[string]struct{}{
-			"flight_search":          {},
-			"bulk_search":            {},
-			"price_graph_sweep":      {},
-			"continuous_price_graph": {},
-		}
-		if _, ok := allowed[queueName]; !ok {
+		if !isAllowedQueueName(queueName) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid queue name"})
 			return
 		}

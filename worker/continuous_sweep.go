@@ -145,7 +145,8 @@ func (r *ContinuousSweepRunner) Start() error {
 	}
 
 	// Create long-lived context (not tied to HTTP request)
-	r.ctx, r.cancelCtx = context.WithCancel(context.Background())
+	baseCtx := queue.WithEnqueueMeta(context.Background(), queue.EnqueueMeta{Actor: "continuous_sweep"})
+	r.ctx, r.cancelCtx = context.WithCancel(baseCtx)
 
 	// Reinitialize channels for restartability
 	r.stopCh = make(chan struct{})

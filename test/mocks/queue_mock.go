@@ -65,5 +65,37 @@ func (m *MockQueue) ClearQueue(ctx context.Context, queueName string) (int64, er
 	return cleared, args.Error(1)
 }
 
+func (m *MockQueue) GetJob(ctx context.Context, jobID string) (*queue.Job, error) {
+	args := m.Called(ctx, jobID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*queue.Job), args.Error(1)
+}
+
+func (m *MockQueue) ListJobs(ctx context.Context, queueName, state string, limit, offset int) ([]*queue.Job, error) {
+	args := m.Called(ctx, queueName, state, limit, offset)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*queue.Job), args.Error(1)
+}
+
+func (m *MockQueue) GetBacklog(ctx context.Context, queueName string, limit int) ([]*queue.Job, error) {
+	args := m.Called(ctx, queueName, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*queue.Job), args.Error(1)
+}
+
+func (m *MockQueue) GetEnqueueMetrics(ctx context.Context, queueName string, minutes int) (map[string]int64, error) {
+	args := m.Called(ctx, queueName, minutes)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[string]int64), args.Error(1)
+}
+
 // Ensure MockQueue implements the interface
 var _ queue.Queue = (*MockQueue)(nil)

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -15,6 +16,7 @@ import (
 )
 
 const jobTTL = 24 * time.Hour
+const enqueueMetricTTL = 48 * time.Hour
 
 // Job represents a flight search job
 type Job struct {
@@ -26,6 +28,7 @@ type Job struct {
 	MaxAttempts int             `json:"max_attempts"`
 	Status      string          `json:"status"`
 	StreamID    string          `json:"stream_id,omitempty"`
+	EnqueueMeta *EnqueueMeta    `json:"enqueue_meta,omitempty"`
 }
 
 // Queue defines the interface for a job queue
@@ -36,6 +39,14 @@ type Queue interface {
 	Nack(ctx context.Context, queueName, jobID string) error
 	GetJobStatus(ctx context.Context, jobID string) (string, error)
 	GetQueueStats(ctx context.Context, queueName string) (map[string]int64, error)
+	// GetJob fetches persisted job details by job ID.
+	GetJob(ctx context.Context, jobID string) (*Job, error)
+	// ListJobs lists jobs from the status set (pending/processing/completed/failed).
+	ListJobs(ctx context.Context, queueName, state string, limit, offset int) ([]*Job, error)
+	// GetBacklog returns the most recent unacked stream entries for the queue.
+	GetBacklog(ctx context.Context, queueName string, limit int) ([]*Job, error)
+	// GetEnqueueMetrics aggregates enqueue sources over the last N minutes.
+	GetEnqueueMetrics(ctx context.Context, queueName string, minutes int) (map[string]int64, error)
 	// ClearQueue removes all pending jobs from the named queue without touching in-flight processing jobs.
 	// It is intended for admin/debug use when a backlog needs to be drained safely.
 	ClearQueue(ctx context.Context, queueName string) (cleared int64, err error)
@@ -103,6 +114,9 @@ func (q *RedisQueue) Enqueue(ctx context.Context, jobType string, payload interf
 		MaxAttempts: 3,
 		Status:      "pending",
 	}
+	if meta := EnqueueMetaFromContext(ctx); !meta.isEmpty() {
+		job.EnqueueMeta = &meta
+	}
 
 	enqueueBytes, err := json.Marshal(job)
 	if err != nil {
@@ -128,6 +142,9 @@ func (q *RedisQueue) Enqueue(ctx context.Context, jobType string, payload interf
 	if err := q.client.SAdd(ctx, q.pendingKey(jobType), jobID).Err(); err != nil {
 		return "", fmt.Errorf("failed to record pending job: %w", err)
 	}
+
+	// Best-effort enqueue metrics (do not fail enqueue if metrics cannot be recorded).
+	_ = q.recordEnqueueMetric(ctx, jobType, job.EnqueueMeta)
 
 	return jobID, nil
 }
@@ -320,6 +337,189 @@ func (q *RedisQueue) GetQueueStats(ctx context.Context, queueName string) (map[s
 	return stats, nil
 }
 
+func (q *RedisQueue) GetJob(ctx context.Context, jobID string) (*Job, error) {
+	job, _, err := q.getStoredJob(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+	return job, nil
+}
+
+func (q *RedisQueue) ListJobs(ctx context.Context, queueName, state string, limit, offset int) ([]*Job, error) {
+	if err := q.ensureStream(ctx, queueName); err != nil {
+		return nil, err
+	}
+
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	var setKey string
+	switch strings.ToLower(strings.TrimSpace(state)) {
+	case "pending":
+		setKey = q.pendingKey(queueName)
+	case "processing":
+		setKey = q.processingKey(queueName)
+	case "completed":
+		setKey = q.completedKey(queueName)
+	case "failed":
+		setKey = q.failedKey(queueName)
+	default:
+		return nil, fmt.Errorf("invalid state %q", state)
+	}
+
+	jobIDs, err := q.client.SMembers(ctx, setKey).Result()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list %s jobs: %w", state, err)
+	}
+
+	jobs := make([]*Job, 0, len(jobIDs))
+	for _, jobID := range jobIDs {
+		job, err := q.GetJob(ctx, jobID)
+		if err != nil {
+			if errors.Is(err, redis.Nil) {
+				continue
+			}
+			return nil, err
+		}
+		jobs = append(jobs, job)
+	}
+
+	sort.Slice(jobs, func(i, j int) bool {
+		return jobs[i].CreatedAt.After(jobs[j].CreatedAt)
+	})
+
+	if offset >= len(jobs) {
+		return []*Job{}, nil
+	}
+	end := offset + limit
+	if end > len(jobs) {
+		end = len(jobs)
+	}
+	return jobs[offset:end], nil
+}
+
+func (q *RedisQueue) GetBacklog(ctx context.Context, queueName string, limit int) ([]*Job, error) {
+	if err := q.ensureStream(ctx, queueName); err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = 200
+	}
+	if limit > 500 {
+		limit = 500
+	}
+
+	stream := q.streamName(queueName)
+	msgs, err := q.client.XRevRangeN(ctx, stream, "+", "-", int64(limit)).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return []*Job{}, nil
+		}
+		return nil, fmt.Errorf("failed to read queue backlog: %w", err)
+	}
+
+	out := make([]*Job, 0, len(msgs))
+	for _, msg := range msgs {
+		rawJob, ok := msg.Values["job"]
+		if !ok {
+			continue
+		}
+
+		var jobID string
+		switch v := rawJob.(type) {
+		case string:
+			var tmp Job
+			if err := json.Unmarshal([]byte(v), &tmp); err == nil {
+				jobID = tmp.ID
+			}
+		case []byte:
+			var tmp Job
+			if err := json.Unmarshal(v, &tmp); err == nil {
+				jobID = tmp.ID
+			}
+		}
+
+		var job *Job
+		if jobID != "" {
+			stored, err := q.GetJob(ctx, jobID)
+			if err == nil && stored != nil {
+				job = stored
+			}
+		}
+		if job == nil {
+			var tmp Job
+			var jobBytes []byte
+			switch v := rawJob.(type) {
+			case string:
+				jobBytes = []byte(v)
+			case []byte:
+				jobBytes = v
+			}
+			if err := json.Unmarshal(jobBytes, &tmp); err != nil {
+				continue
+			}
+			tmp.StreamID = msg.ID
+			job = &tmp
+		} else {
+			job.StreamID = msg.ID
+		}
+
+		if job.Status == "" {
+			job.Status = "pending"
+		}
+
+		out = append(out, job)
+	}
+
+	return out, nil
+}
+
+func (q *RedisQueue) GetEnqueueMetrics(ctx context.Context, queueName string, minutes int) (map[string]int64, error) {
+	if minutes <= 0 {
+		minutes = 60
+	}
+	if minutes > 24*60 {
+		minutes = 24 * 60
+	}
+
+	now := time.Now().UTC().Truncate(time.Minute)
+	keys := make([]string, 0, minutes)
+	for i := 0; i < minutes; i++ {
+		keys = append(keys, q.enqueueMetricKey(queueName, now.Add(-time.Duration(i)*time.Minute)))
+	}
+
+	pipe := q.client.Pipeline()
+	cmds := make([]*redis.MapStringStringCmd, 0, len(keys))
+	for _, key := range keys {
+		cmds = append(cmds, pipe.HGetAll(ctx, key))
+	}
+	_, err := pipe.Exec(ctx)
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return nil, fmt.Errorf("failed to read enqueue metrics: %w", err)
+	}
+
+	out := make(map[string]int64)
+	for _, cmd := range cmds {
+		m, err := cmd.Result()
+		if err != nil && !errors.Is(err, redis.Nil) {
+			return nil, fmt.Errorf("failed to read enqueue metrics: %w", err)
+		}
+		for source, countStr := range m {
+			var n int64
+			_, _ = fmt.Sscan(countStr, &n)
+			out[source] += n
+		}
+	}
+	return out, nil
+}
+
 func (q *RedisQueue) ClearQueue(ctx context.Context, queueName string) (int64, error) {
 	if err := q.ensureStream(ctx, queueName); err != nil {
 		return 0, err
@@ -508,6 +708,36 @@ func (q *RedisQueue) completedKey(queueName string) string {
 
 func (q *RedisQueue) failedKey(queueName string) string {
 	return fmt.Sprintf("queue:%s:failed", queueName)
+}
+
+func (q *RedisQueue) enqueueMetricKey(queueName string, ts time.Time) string {
+	// minute bucket key, e.g. queue:flight_search:enqueues:202601261505
+	return fmt.Sprintf("queue:%s:enqueues:%s", queueName, ts.Format("200601021504"))
+}
+
+func (q *RedisQueue) recordEnqueueMetric(ctx context.Context, queueName string, meta *EnqueueMeta) error {
+	source := "unknown"
+	if meta != nil {
+		if meta.Actor != "" && meta.Method != "" && meta.Path != "" {
+			source = fmt.Sprintf("%s %s %s", meta.Actor, meta.Method, meta.Path)
+		} else if meta.Method != "" && meta.Path != "" {
+			source = fmt.Sprintf("%s %s", meta.Method, meta.Path)
+		} else if meta.Actor != "" {
+			source = meta.Actor
+		} else if meta.RequestID != "" {
+			source = fmt.Sprintf("request_id:%s", meta.RequestID)
+		}
+	}
+
+	key := q.enqueueMetricKey(queueName, time.Now().UTC().Truncate(time.Minute))
+	pipe := q.client.Pipeline()
+	pipe.HIncrBy(ctx, key, source, 1)
+	pipe.Expire(ctx, key, enqueueMetricTTL)
+	_, err := pipe.Exec(ctx)
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return err
+	}
+	return nil
 }
 
 // GetClient returns the underlying Redis client for advanced operations like distributed locking

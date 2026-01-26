@@ -344,3 +344,35 @@ func (m *Queue) ClearQueue(ctx context.Context, queueName string) (int64, error)
 	}
 	return cleared, args.Error(1)
 }
+
+func (m *Queue) GetJob(ctx context.Context, jobID string) (*queue.Job, error) {
+	args := m.Called(ctx, jobID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*queue.Job), args.Error(1)
+}
+
+func (m *Queue) ListJobs(ctx context.Context, queueName, state string, limit, offset int) ([]*queue.Job, error) {
+	args := m.Called(ctx, queueName, state, limit, offset)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*queue.Job), args.Error(1)
+}
+
+func (m *Queue) GetBacklog(ctx context.Context, queueName string, limit int) ([]*queue.Job, error) {
+	args := m.Called(ctx, queueName, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*queue.Job), args.Error(1)
+}
+
+func (m *Queue) GetEnqueueMetrics(ctx context.Context, queueName string, minutes int) (map[string]int64, error) {
+	args := m.Called(ctx, queueName, minutes)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[string]int64), args.Error(1)
+}

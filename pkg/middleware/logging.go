@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/gilby125/google-flights-api/pkg/logger"
+	"github.com/gilby125/google-flights-api/queue"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
@@ -21,6 +22,20 @@ func RequestID() gin.HandlerFunc {
 
 		c.Set("request_id", id)
 		c.Writer.Header().Set(requestIDHeader, id)
+
+		// Attach enqueue attribution to the request context so queue.Enqueue can persist it on jobs.
+		if c.Request != nil {
+			meta := queue.EnqueueMeta{
+				Actor:     "http",
+				RequestID: id,
+				Method:    c.Request.Method,
+				Path:      c.Request.URL.Path,
+				RemoteIP:  c.ClientIP(),
+				UserAgent: c.Request.UserAgent(),
+			}
+			c.Request = c.Request.WithContext(queue.WithEnqueueMeta(c.Request.Context(), meta))
+		}
+
 		c.Next()
 	}
 }

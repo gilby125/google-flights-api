@@ -94,7 +94,8 @@ func (s *Scheduler) AddJob(payload []byte) error {
 
 	// Add the job to the queue
 	queueName := "scheduled_jobs"
-	_, err = s.queue.Enqueue(context.Background(), queueName, jobBytes)
+	ctx := queue.WithEnqueueMeta(context.Background(), queue.EnqueueMeta{Actor: "scheduler"})
+	_, err = s.queue.Enqueue(ctx, queueName, jobBytes)
 	if err != nil {
 		return fmt.Errorf("failed to enqueue job: %w", err)
 	}
@@ -158,7 +159,7 @@ func (s *Scheduler) loadScheduledBulkSearches() error {
 
 // executeScheduledBulkSearch executes a scheduled bulk search job
 func (s *Scheduler) executeScheduledBulkSearch(jobID int, jobName string) {
-	ctx := context.Background()
+	ctx := queue.WithEnqueueMeta(context.Background(), queue.EnqueueMeta{Actor: "scheduler"})
 	log.Printf("Executing scheduled bulk search: %s (ID: %d)", jobName, jobID)
 
 	// Get job details from database
