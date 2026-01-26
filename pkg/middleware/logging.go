@@ -1,11 +1,42 @@
 package middleware
 
 import (
+	"strings"
 	"time"
 
 	"github.com/gilby125/google-flights-api/pkg/logger"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
+
+const requestIDHeader = "X-Request-ID"
+
+// RequestID ensures every request has an X-Request-ID header and stores it in gin.Context.
+func RequestID() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		id := strings.TrimSpace(c.GetHeader(requestIDHeader))
+		if id == "" {
+			id = uuid.NewString()
+		}
+
+		c.Set("request_id", id)
+		c.Writer.Header().Set(requestIDHeader, id)
+		c.Next()
+	}
+}
+
+// GetRequestID returns the request_id set by RequestID middleware (if present).
+func GetRequestID(c *gin.Context) string {
+	if c == nil {
+		return ""
+	}
+	if v, ok := c.Get("request_id"); ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
 
 // RequestLogger creates a structured logging middleware for Gin
 func RequestLogger() gin.HandlerFunc {
