@@ -2452,8 +2452,8 @@ func DirectFlightSearch() gin.HandlerFunc {
 		}
 
 		// Validate required fields
-		if searchRequest.Origin == "" || searchRequest.Destination == "" || searchRequest.DepartureDate == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Origin, destination, and departure date are required"})
+		if searchRequest.Origin == "" || searchRequest.DepartureDate == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Origin and departure date are required"})
 			return
 		}
 
@@ -2533,73 +2533,113 @@ func DirectFlightSearch() gin.HandlerFunc {
 			cur = currency.USD
 		}
 
-		// Perform the flight search
-		offers, priceRange, err := session.GetOffers(
-			c.Request.Context(),
-			flights.Args{
-				Date:        departureDate,
-				ReturnDate:  returnDate,
-				SrcAirports: []string{searchRequest.Origin},
-				DstAirports: []string{searchRequest.Destination},
-				Options: flights.Options{
-					Travelers: flights.Travelers{
-						Adults:       searchRequest.Adults,
-						Children:     searchRequest.Children,
-						InfantOnLap:  searchRequest.InfantsLap,
-						InfantInSeat: searchRequest.InfantsSeat,
-					},
-					Currency: cur,
-					Stops:    stops,
-					Class:    class,
-					TripType: tripType,
-					Lang:     language.English,
-				},
-			},
-		)
-
+		origins, destinations, err := ParseRouteInputs(searchRequest.Origin, searchRequest.Destination)
 		if err != nil {
-			log.Printf("Error searching flights: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to search flights: " + err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
 
-		// Convert offers to response format
-		responseOffers := make([]map[string]interface{}, 0, len(offers))
-		for i, offer := range offers {
-			// Create segments from flights and collect airline codes
-			segments := make([]map[string]interface{}, 0, len(offer.Flight))
-			airlineCodes := make([]string, 0, len(offer.Flight))
-			for _, flight := range offer.Flight {
-				airlineCode := macros.ExtractAirlineCodeFromFlightNumber(flight.FlightNumber)
-				segment := map[string]interface{}{
-					"departure_airport": flight.DepAirportCode,
-					"arrival_airport":   flight.ArrAirportCode,
-					"departure_time":    flight.DepTime.Format(time.RFC3339),
-					"arrival_time":      flight.ArrTime.Format(time.RFC3339),
-					"airline":           flight.AirlineName,
-					"airline_code":      airlineCode,
-					"flight_number":     flight.FlightNumber,
-					"duration":          int(flight.Duration.Minutes()),
-					"airplane":          flight.Airplane,
-					"legroom":           flight.Legroom,
-				}
-				segments = append(segments, segment)
+		const maxDirectRoutes = 16
+		totalRoutes := len(origins) * len(destinations)
+		if totalRoutes > maxDirectRoutes {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": fmt.Sprintf("too many origin/destination combinations: %d (max %d)", totalRoutes, maxDirectRoutes),
+			})
+			return
+		}
 
-				// Extract airline code from flight number for tagging
-				if airlineCode != "" {
-					airlineCodes = append(airlineCodes, airlineCode)
+		convertOffers := func(routeOrigin, routeDestination string, offers []flights.FullOffer) ([]map[string]interface{}, float64, map[string]interface{}, bool) {
+			responseOffers := make([]map[string]interface{}, 0, len(offers))
+			var cheapest map[string]interface{}
+			var cheapestPrice float64
+			cheapestSet := false
+
+			for i, offer := range offers {
+				segments := make([]map[string]interface{}, 0, len(offer.Flight))
+				airlineCodes := make([]string, 0, len(offer.Flight))
+				for _, flight := range offer.Flight {
+					airlineCode := macros.ExtractAirlineCodeFromFlightNumber(flight.FlightNumber)
+					segment := map[string]interface{}{
+						"departure_airport": flight.DepAirportCode,
+						"arrival_airport":   flight.ArrAirportCode,
+						"departure_time":    flight.DepTime.Format(time.RFC3339),
+						"arrival_time":      flight.ArrTime.Format(time.RFC3339),
+						"airline":           flight.AirlineName,
+						"airline_code":      airlineCode,
+						"flight_number":     flight.FlightNumber,
+						"duration":          int(flight.Duration.Minutes()),
+						"airplane":          flight.Airplane,
+						"legroom":           flight.Legroom,
+					}
+					segments = append(segments, segment)
+					if airlineCode != "" {
+						airlineCodes = append(airlineCodes, airlineCode)
+					}
 				}
+
+				airlineGroups := macros.AirlineGroupsForCodes(airlineCodes)
+
+				googleFlightsUrl, err := session.SerializeURL(
+					c.Request.Context(),
+					flights.Args{
+						Date:        offer.StartDate,
+						ReturnDate:  offer.ReturnDate,
+						SrcAirports: []string{routeOrigin},
+						DstAirports: []string{routeDestination},
+						Options: flights.Options{
+							Travelers: flights.Travelers{
+								Adults:       searchRequest.Adults,
+								Children:     searchRequest.Children,
+								InfantOnLap:  searchRequest.InfantsLap,
+								InfantInSeat: searchRequest.InfantsSeat,
+							},
+							Currency: cur,
+							Stops:    stops,
+							Class:    class,
+							TripType: tripType,
+							Lang:     language.English,
+						},
+					},
+				)
+				if err != nil {
+					log.Printf("Error generating Google Flights URL: %v", err)
+					googleFlightsUrl = ""
+				}
+
+				responseOffer := map[string]interface{}{
+					"id":                 fmt.Sprintf("offer%d", i+1),
+					"price":              offer.Price,
+					"currency":           searchRequest.Currency,
+					"total_duration":     int(offer.FlightDuration.Minutes()),
+					"segments":           segments,
+					"departure_date":     offer.StartDate.Format("2006-01-02"),
+					"return_date":        offer.ReturnDate.Format("2006-01-02"),
+					"google_flights_url": googleFlightsUrl,
+					"airline_groups":     airlineGroups,
+				}
+
+				if !cheapestSet || offer.Price < cheapestPrice {
+					cheapestSet = true
+					cheapestPrice = offer.Price
+					cheapest = responseOffer
+				}
+
+				responseOffers = append(responseOffers, responseOffer)
 			}
 
-			// Compute airline groups for this offer
-			airlineGroups := macros.AirlineGroupsForCodes(airlineCodes)
+			return responseOffers, cheapestPrice, cheapest, cheapestSet
+		}
 
-			// Generate Google Flights URL
-			googleFlightsUrl, err := session.SerializeURL(
+		// Single route: preserve the legacy response shape.
+		if len(origins) == 1 && len(destinations) == 1 {
+			searchRequest.Origin = origins[0]
+			searchRequest.Destination = destinations[0]
+
+			offers, priceRange, err := session.GetOffers(
 				c.Request.Context(),
 				flights.Args{
-					Date:        offer.StartDate,
-					ReturnDate:  offer.ReturnDate,
+					Date:        departureDate,
+					ReturnDate:  returnDate,
 					SrcAirports: []string{searchRequest.Origin},
 					DstAirports: []string{searchRequest.Destination},
 					Options: flights.Options{
@@ -2617,37 +2657,127 @@ func DirectFlightSearch() gin.HandlerFunc {
 					},
 				},
 			)
+
 			if err != nil {
-				log.Printf("Error generating Google Flights URL: %v", err)
-				googleFlightsUrl = ""
+				log.Printf("Error searching flights: %v", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to search flights: " + err.Error()})
+				return
 			}
 
-			responseOffer := map[string]interface{}{
-				"id":                 fmt.Sprintf("offer%d", i+1),
-				"price":              offer.Price,
-				"currency":           searchRequest.Currency,
-				"total_duration":     int(offer.FlightDuration.Minutes()),
-				"segments":           segments,
-				"departure_date":     offer.StartDate.Format("2006-01-02"),
-				"return_date":        offer.ReturnDate.Format("2006-01-02"),
-				"google_flights_url": googleFlightsUrl,
-				"airline_groups":     airlineGroups,
+			responseOffers, _, _, _ := convertOffers(searchRequest.Origin, searchRequest.Destination, offers)
+			response := map[string]interface{}{
+				"offers":        responseOffers,
+				"search_params": searchRequest,
 			}
 
-			responseOffers = append(responseOffers, responseOffer)
+			if priceRange != nil {
+				response["price_range"] = map[string]interface{}{
+					"low":  priceRange.Low,
+					"high": priceRange.High,
+				}
+			}
+
+			c.JSON(http.StatusOK, response)
+			return
 		}
 
-		// Build the response
+		// Multi-route: origin×destination groups.
+		routes := make([]map[string]interface{}, 0, totalRoutes)
+		var overallCheapestOffer map[string]interface{}
+		var overallCheapestOrigin string
+		var overallCheapestDestination string
+		var overallCheapestPrice float64
+		overallCheapestSet := false
+
+		for _, origin := range origins {
+			for _, destination := range destinations {
+				offers, priceRange, err := session.GetOffers(
+					c.Request.Context(),
+					flights.Args{
+						Date:        departureDate,
+						ReturnDate:  returnDate,
+						SrcAirports: []string{origin},
+						DstAirports: []string{destination},
+						Options: flights.Options{
+							Travelers: flights.Travelers{
+								Adults:       searchRequest.Adults,
+								Children:     searchRequest.Children,
+								InfantOnLap:  searchRequest.InfantsLap,
+								InfantInSeat: searchRequest.InfantsSeat,
+							},
+							Currency: cur,
+							Stops:    stops,
+							Class:    class,
+							TripType: tripType,
+							Lang:     language.English,
+						},
+					},
+				)
+
+				route := map[string]interface{}{
+					"origin":      origin,
+					"destination": destination,
+				}
+
+				if err != nil {
+					log.Printf("Error searching flights for %s->%s: %v", origin, destination, err)
+					route["error"] = "Failed to search flights: " + err.Error()
+					routes = append(routes, route)
+					continue
+				}
+
+				routeOffers, routeCheapestPrice, routeCheapestOffer, routeCheapestSet := convertOffers(origin, destination, offers)
+				route["offers"] = routeOffers
+
+				routeParams := searchRequest
+				routeParams.Origin = origin
+				routeParams.Destination = destination
+				route["search_params"] = routeParams
+
+				if priceRange != nil {
+					route["price_range"] = map[string]interface{}{
+						"low":  priceRange.Low,
+						"high": priceRange.High,
+					}
+				}
+
+				if routeCheapestSet && routeCheapestOffer != nil && (!overallCheapestSet || routeCheapestPrice < overallCheapestPrice) {
+					overallCheapestSet = true
+					overallCheapestPrice = routeCheapestPrice
+					overallCheapestOffer = routeCheapestOffer
+					overallCheapestOrigin = origin
+					overallCheapestDestination = destination
+				}
+
+				routes = append(routes, route)
+			}
+		}
+
 		response := map[string]interface{}{
-			"offers":        responseOffers,
-			"search_params": searchRequest,
+			"routes": routes,
+			"search_params": map[string]interface{}{
+				"origins":         origins,
+				"destinations":    destinations,
+				"departure_date":  searchRequest.DepartureDate,
+				"return_date":     searchRequest.ReturnDate,
+				"trip_type":       searchRequest.TripType,
+				"class":           searchRequest.Class,
+				"stops":           searchRequest.Stops,
+				"adults":          searchRequest.Adults,
+				"children":        searchRequest.Children,
+				"infants_lap":     searchRequest.InfantsLap,
+				"infants_seat":    searchRequest.InfantsSeat,
+				"currency":        searchRequest.Currency,
+				"route_count":     totalRoutes,
+				"max_route_count": maxDirectRoutes,
+			},
 		}
 
-		// Add price range if available
-		if priceRange != nil {
-			response["price_range"] = map[string]interface{}{
-				"low":  priceRange.Low,
-				"high": priceRange.High,
+		if overallCheapestSet && overallCheapestOffer != nil {
+			response["cheapest"] = map[string]interface{}{
+				"origin":      overallCheapestOrigin,
+				"destination": overallCheapestDestination,
+				"offer":       overallCheapestOffer,
 			}
 		}
 

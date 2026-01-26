@@ -81,7 +81,7 @@
                   type="text"
                   id="origin"
                   class="form-control"
-                  placeholder="e.g. JFK, New York"
+                  placeholder="e.g. JFK or MKE,MSN>FLL,MIA"
                   required
                 />
               </div>
@@ -91,7 +91,7 @@
                   type="text"
                   id="destination"
                   class="form-control"
-                  placeholder="e.g. LAX, Los Angeles"
+                  placeholder="e.g. LAX or FLL,MIA"
                   required
                 />
               </div>
@@ -220,16 +220,138 @@
               <button type="submit" class="btn btn-primary px-4">
                 <i class="bi bi-search me-2"></i>Search Flights
               </button>
-              <div
-                id="loadingIndicator"
-                class="loading-indicator text-muted"
+              <button
+                type="button"
+                class="btn btn-outline-secondary px-4"
+                id="recurringBtn"
               >
+                <i class="bi bi-calendar2-event me-2"></i>Recurring
+              </button>
+              <div id="loadingIndicator" class="loading-indicator text-muted">
                 <div
                   class="spinner-border spinner-border-sm me-2"
                   role="status"
                   aria-hidden="true"
                 ></div>
                 Searching fares…
+              </div>
+            </div>
+
+            <div id="recurringOptions" class="mt-4" style="display: none">
+              <div class="border rounded-3 p-3 bg-white">
+                <div
+                  class="d-flex flex-wrap align-items-center justify-content-between gap-2"
+                >
+                  <div>
+                    <div class="fw-semibold">Recurring searches</div>
+                    <div class="text-muted small">
+                      Create scheduled searches for the entered
+                      origin/destination set.
+                    </div>
+                  </div>
+                </div>
+
+                <div class="row g-3 mt-2">
+                  <div class="col-md-6">
+                    <label for="recurringName" class="form-label">Name</label>
+                    <input
+                      type="text"
+                      id="recurringName"
+                      class="form-control"
+                      placeholder="Optional (e.g. Florida weekend watch)"
+                    />
+                  </div>
+                  <div class="col-md-3">
+                    <label for="recurringInterval" class="form-label"
+                      >Interval</label
+                    >
+                    <select id="recurringInterval" class="form-select">
+                      <option value="daily" selected>Daily</option>
+                      <option value="weekly">Weekly (Mon)</option>
+                      <option value="monthly">Monthly (1st)</option>
+                    </select>
+                  </div>
+                  <div class="col-md-3">
+                    <label for="recurringTime" class="form-label">Time</label>
+                    <input
+                      type="time"
+                      id="recurringTime"
+                      class="form-control"
+                      value="07:00"
+                    />
+                  </div>
+
+                  <div class="col-12">
+                    <div class="form-check">
+                      <input
+                        class="form-check-input"
+                        type="checkbox"
+                        id="recurringDynamicDates"
+                        checked
+                      />
+                      <label
+                        class="form-check-label"
+                        for="recurringDynamicDates"
+                      >
+                        Use dynamic dates (relative to execution time)
+                      </label>
+                      <div class="text-muted small">
+                        Example: “search 14 days from now across a 7-day
+                        window”.
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="col-md-4 recurringDynamicField">
+                    <label for="recurringDaysFromExecution" class="form-label"
+                      >Days from execution</label
+                    >
+                    <input
+                      type="number"
+                      id="recurringDaysFromExecution"
+                      class="form-control"
+                      value="14"
+                      min="0"
+                    />
+                  </div>
+                  <div class="col-md-4 recurringDynamicField">
+                    <label for="recurringSearchWindowDays" class="form-label"
+                      >Search window (days)</label
+                    >
+                    <input
+                      type="number"
+                      id="recurringSearchWindowDays"
+                      class="form-control"
+                      value="7"
+                      min="1"
+                    />
+                  </div>
+                  <div class="col-md-4 recurringDynamicField">
+                    <label for="recurringTripLength" class="form-label"
+                      >Trip length (nights)</label
+                    >
+                    <input
+                      type="number"
+                      id="recurringTripLength"
+                      class="form-control"
+                      value="7"
+                      min="0"
+                    />
+                    <div class="text-muted small">Used for round trips.</div>
+                  </div>
+
+                  <div class="col-12 d-flex flex-wrap align-items-center gap-2">
+                    <button
+                      type="button"
+                      class="btn btn-success"
+                      id="createRecurringBtn"
+                    >
+                      <i class="bi bi-plus-circle me-2"></i>Create recurring
+                      search
+                    </button>
+                    <div class="text-muted small" id="recurringStatus"></div>
+                  </div>
+                </div>
               </div>
             </div>
           </form>
