@@ -2553,11 +2553,18 @@ func DirectFlightSearch() gin.HandlerFunc {
 		warnings := append([]string{}, originWarnings...)
 		warnings = append(warnings, destinationWarnings...)
 
-		const maxDirectRoutes = 64
 		totalRoutes := len(expandedOrigins) * len(expandedDestinations)
-		if totalRoutes > maxDirectRoutes {
+		const maxDirectAirportsPerSide = 30
+		const maxDirectAirportsTotal = 60
+		if len(expandedOrigins) > maxDirectAirportsPerSide || len(expandedDestinations) > maxDirectAirportsPerSide || (len(expandedOrigins)+len(expandedDestinations)) > maxDirectAirportsTotal {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error":    fmt.Sprintf("too many origin/destination combinations: %d (max %d). Narrow your inputs or use /api/v1/bulk-search for large grids.", totalRoutes, maxDirectRoutes),
+				"error": fmt.Sprintf(
+					"too many airports after expansion (origins=%d, destinations=%d; max %d per side, %d total). Narrow your inputs or use /api/v1/bulk-search for large grids.",
+					len(expandedOrigins),
+					len(expandedDestinations),
+					maxDirectAirportsPerSide,
+					maxDirectAirportsTotal,
+				),
 				"warnings": warnings,
 			})
 			return
@@ -2696,64 +2703,94 @@ func DirectFlightSearch() gin.HandlerFunc {
 			return
 		}
 
-		// Multi-route: origin×destination groups.
-		routes := make([]map[string]interface{}, 0, totalRoutes)
+		// Multi-route: single query with multiple Src/Dst airports, then group offers by route.
 		var overallCheapestOffer map[string]interface{}
 		var overallCheapestOrigin string
 		var overallCheapestDestination string
 		var overallCheapestPrice float64
 		overallCheapestSet := false
 
+		offers, _, err := session.GetOffers(
+			c.Request.Context(),
+			flights.Args{
+				Date:        departureDate,
+				ReturnDate:  returnDate,
+				SrcAirports: expandedOrigins,
+				DstAirports: expandedDestinations,
+				Options: flights.Options{
+					Travelers: flights.Travelers{
+						Adults:       searchRequest.Adults,
+						Children:     searchRequest.Children,
+						InfantOnLap:  searchRequest.InfantsLap,
+						InfantInSeat: searchRequest.InfantsSeat,
+					},
+					Currency: cur,
+					Stops:    stops,
+					Class:    class,
+					TripType: tripType,
+					Lang:     language.English,
+				},
+			},
+		)
+		if err != nil {
+			log.Printf("Error searching flights: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to search flights: " + err.Error()})
+			return
+		}
+
+		offersByRoute := make(map[string][]flights.FullOffer, len(offers))
+		for _, offer := range offers {
+			if offer.SrcAirportCode == "" || offer.DstAirportCode == "" {
+				continue
+			}
+			key := offer.SrcAirportCode + "->" + offer.DstAirportCode
+			offersByRoute[key] = append(offersByRoute[key], offer)
+		}
+
+		routes := make([]map[string]interface{}, 0, len(offersByRoute))
 		for _, origin := range expandedOrigins {
 			for _, destination := range expandedDestinations {
-				offers, priceRange, err := session.GetOffers(
-					c.Request.Context(),
-					flights.Args{
-						Date:        departureDate,
-						ReturnDate:  returnDate,
-						SrcAirports: []string{origin},
-						DstAirports: []string{destination},
-						Options: flights.Options{
-							Travelers: flights.Travelers{
-								Adults:       searchRequest.Adults,
-								Children:     searchRequest.Children,
-								InfantOnLap:  searchRequest.InfantsLap,
-								InfantInSeat: searchRequest.InfantsSeat,
-							},
-							Currency: cur,
-							Stops:    stops,
-							Class:    class,
-							TripType: tripType,
-							Lang:     language.English,
-						},
-					},
-				)
-
-				route := map[string]interface{}{
-					"origin":      origin,
-					"destination": destination,
-				}
-
-				if err != nil {
-					log.Printf("Error searching flights for %s->%s: %v", origin, destination, err)
-					route["error"] = "Failed to search flights: " + err.Error()
-					routes = append(routes, route)
+				key := origin + "->" + destination
+				fullOffers := offersByRoute[key]
+				if len(fullOffers) == 0 {
 					continue
 				}
 
-				routeOffers, routeCheapestPrice, routeCheapestOffer, routeCheapestSet := convertOffers(origin, destination, offers)
-				route["offers"] = routeOffers
+				routeOffers, routeCheapestPrice, routeCheapestOffer, routeCheapestSet := convertOffers(origin, destination, fullOffers)
+				route := map[string]interface{}{
+					"origin":      origin,
+					"destination": destination,
+					"offers":      routeOffers,
+				}
 
 				routeParams := searchRequest
 				routeParams.Origin = origin
 				routeParams.Destination = destination
 				route["search_params"] = routeParams
 
-				if priceRange != nil {
-					route["price_range"] = map[string]interface{}{
-						"low":  priceRange.Low,
-						"high": priceRange.High,
+				low := 0.0
+				high := 0.0
+				haveRange := false
+				for _, offer := range routeOffers {
+					price, ok := offer["price"].(float64)
+					if !ok {
+						continue
 					}
+					if !haveRange {
+						haveRange = true
+						low = price
+						high = price
+						continue
+					}
+					if price < low {
+						low = price
+					}
+					if price > high {
+						high = price
+					}
+				}
+				if haveRange {
+					route["price_range"] = map[string]interface{}{"low": low, "high": high}
 				}
 
 				if routeCheapestSet && routeCheapestOffer != nil && (!overallCheapestSet || routeCheapestPrice < overallCheapestPrice) {
@@ -2771,20 +2808,20 @@ func DirectFlightSearch() gin.HandlerFunc {
 		response := map[string]interface{}{
 			"routes": routes,
 			"search_params": map[string]interface{}{
-				"origins":         expandedOrigins,
-				"destinations":    expandedDestinations,
-				"departure_date":  searchRequest.DepartureDate,
-				"return_date":     searchRequest.ReturnDate,
-				"trip_type":       searchRequest.TripType,
-				"class":           searchRequest.Class,
-				"stops":           searchRequest.Stops,
-				"adults":          searchRequest.Adults,
-				"children":        searchRequest.Children,
-				"infants_lap":     searchRequest.InfantsLap,
-				"infants_seat":    searchRequest.InfantsSeat,
-				"currency":        searchRequest.Currency,
-				"route_count":     totalRoutes,
-				"max_route_count": maxDirectRoutes,
+				"origins":               expandedOrigins,
+				"destinations":          expandedDestinations,
+				"departure_date":        searchRequest.DepartureDate,
+				"return_date":           searchRequest.ReturnDate,
+				"trip_type":             searchRequest.TripType,
+				"class":                 searchRequest.Class,
+				"stops":                 searchRequest.Stops,
+				"adults":                searchRequest.Adults,
+				"children":              searchRequest.Children,
+				"infants_lap":           searchRequest.InfantsLap,
+				"infants_seat":          searchRequest.InfantsSeat,
+				"currency":              searchRequest.Currency,
+				"requested_route_count": totalRoutes,
+				"returned_route_count":  len(routes),
 			},
 		}
 		if len(warnings) > 0 {
