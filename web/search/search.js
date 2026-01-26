@@ -932,11 +932,48 @@ function displayMultiRouteResults(searchResult) {
   tabsContent.className =
     "tab-content border border-top-0 rounded-bottom p-3 bg-white";
 
+  const formatCurrencyShort = (currency, amount) => {
+    const code = String(currency || "")
+      .trim()
+      .toUpperCase();
+    if (!code || typeof amount !== "number" || !Number.isFinite(amount)) {
+      return "";
+    }
+    try {
+      return new Intl.NumberFormat(undefined, {
+        style: "currency",
+        currency: code,
+        maximumFractionDigits: 0,
+      }).format(amount);
+    } catch {
+      return `${code} ${Math.round(amount)}`;
+    }
+  };
+
   currentRoutes.forEach((route, index) => {
     const origin = route?.origin || "";
     const destination = route?.destination || "";
     const tabId = `route-tab-${index}`;
     const paneId = `route-pane-${index}`;
+    const routeCurrency =
+      route?.search_params?.currency || currentSearchParams?.currency || "USD";
+    const routeMinPrice = Array.isArray(route?.offers)
+      ? route.offers.reduce((min, offer) => {
+          const price =
+            typeof offer?.price === "number" &&
+            Number.isFinite(offer.price) &&
+            offer.price > 0
+              ? offer.price
+              : null;
+          if (price == null) return min;
+          if (min == null) return price;
+          return Math.min(min, price);
+        }, null)
+      : null;
+    const priceSuffix =
+      typeof routeMinPrice === "number" && Number.isFinite(routeMinPrice)
+        ? ` ${formatCurrencyShort(routeCurrency, routeMinPrice)}`
+        : "";
 
     const li = document.createElement("li");
     li.className = "nav-item";
@@ -948,7 +985,7 @@ function displayMultiRouteResults(searchResult) {
     btn.id = tabId;
     btn.setAttribute("aria-controls", paneId);
     btn.setAttribute("aria-selected", index === 0 ? "true" : "false");
-    btn.textContent = `${origin}→${destination}`;
+    btn.textContent = `${origin}→${destination}${priceSuffix}`;
     btn.addEventListener("click", () => {
       currentActiveRouteIndex = index;
 
@@ -1122,12 +1159,18 @@ function createFlightCard(offer, searchParamsOverride, options) {
   card.className = "flight-card";
 
   // Format departure and arrival times
-  const departureSegment = offer.segments[0];
+  const segments = Array.isArray(offer.segments) ? offer.segments : [];
+  const departureSegment = segments[0];
+  const arrivalSegment = segments.length ? segments[segments.length - 1] : null;
   const effectiveSearchParams = searchParamsOverride || currentSearchParams;
   const tripType = effectiveSearchParams?.trip_type || "round_trip";
 
-  const departureTime = new Date(departureSegment.departure_time);
-  const arrivalTime = new Date(departureSegment.arrival_time);
+  const departureTime = departureSegment
+    ? new Date(departureSegment.departure_time)
+    : new Date(0);
+  const arrivalTime = arrivalSegment
+    ? new Date(arrivalSegment.arrival_time)
+    : new Date(0);
 
   const formattedDepartureTime = departureTime.toLocaleTimeString([], {
     hour: "2-digit",
@@ -1147,9 +1190,11 @@ function createFlightCard(offer, searchParamsOverride, options) {
   let googleFlightsUrl = offer.google_flights_url;
   if (!googleFlightsUrl) {
     // Fallback to client-side URL generation if backend URL is not available
+    const originAirport = departureSegment?.departure_airport || "";
+    const destinationAirport = arrivalSegment?.arrival_airport || "";
     googleFlightsUrl = createGoogleFlightsUrl(
-      departureSegment.departure_airport,
-      departureSegment.arrival_airport,
+      originAirport,
+      destinationAirport,
       departureTime,
       tripType,
     );
@@ -1162,6 +1207,25 @@ function createFlightCard(offer, searchParamsOverride, options) {
   const airlineLogo = airlineCode
     ? `https://www.gstatic.com/flights/airline_logos/70px/${airlineCode}.png`
     : "https://via.placeholder.com/70x40?text=Air";
+
+  const flightNumber =
+    segments.length > 1
+      ? `${departureSegment.flight_number || ""} +${segments.length - 1} more`
+      : departureSegment.flight_number || "";
+
+  const routeLabel =
+    departureSegment && arrivalSegment
+      ? `${departureSegment.departure_airport} - ${arrivalSegment.arrival_airport}`
+      : "";
+
+  const airplaneLabel =
+    segments.length <= 1
+      ? departureSegment.airplane || "Aircraft information unavailable"
+      : "Multiple aircraft";
+
+  const stopAirports = getStopAirports(segments);
+  const stopDetails =
+    stopAirports.length > 0 ? `Stops: ${stopAirports.join(", ")}` : "";
 
   const airlineGroupBadges = renderAirlineGroupBadges(offer.airline_groups);
   const currency = offer.currency || effectiveSearchParams?.currency || "";
@@ -1190,17 +1254,22 @@ function createFlightCard(offer, searchParamsOverride, options) {
             <div class="col-md-2">
                 <img src="${airlineLogo}"
                      alt="${airlineCode || "Airline"}" class="airline-logo">
-                <div>${escapeHtml(airlineCode || "Unknown")} ${escapeHtml(departureSegment.flight_number || "")}</div>
+                <div>${escapeHtml(airlineCode || "Unknown")} ${escapeHtml(flightNumber)}</div>
                 <div class="mt-2">${airlineGroupBadges}</div>
             </div>
             <div class="col-md-3">
                 <div class="flight-time">${formattedDepartureTime} - ${formattedArrivalTime}</div>
                 <div class="flight-duration">${formattedDuration}</div>
-                <div>${departureSegment.departure_airport} - ${departureSegment.arrival_airport}</div>
+                <div>${escapeHtml(routeLabel)}</div>
             </div>
             <div class="col-md-3">
-                <div>${getStopsLabel(offer.segments)}</div>
-                <div>${departureSegment.airplane || "Aircraft information unavailable"}</div>
+                <div>${escapeHtml(getStopsLabel(segments))}</div>
+                ${
+                  stopDetails
+                    ? `<div class="text-muted small">${escapeHtml(stopDetails)}</div>`
+                    : ""
+                }
+                <div>${escapeHtml(airplaneLabel)}</div>
             </div>
             <div class="col-md-2 text-end">
                 <div class="flight-price">${priceLabel}</div>
@@ -1224,6 +1293,22 @@ function getStopsLabel(segments) {
     return `${segments.length - 1} stops`;
   }
   return "";
+}
+
+function getStopAirports(segments) {
+  if (!Array.isArray(segments) || segments.length <= 1) return [];
+  const out = [];
+  const seen = new Set();
+  for (let i = 0; i < segments.length - 1; i++) {
+    const code = String(segments[i]?.arrival_airport || "")
+      .trim()
+      .toUpperCase();
+    if (!code) continue;
+    if (seen.has(code)) continue;
+    seen.add(code);
+    out.push(code);
+  }
+  return out;
 }
 
 // Create Google Flights URL based on flight details
