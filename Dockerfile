@@ -3,11 +3,11 @@
 ###############################################
 # Build stage
 ###############################################
-FROM golang:1.24-alpine AS builder
+FROM golang:1.24.1-alpine AS builder
 WORKDIR /src
 ENV CGO_ENABLED=0 \
     GOOS=linux \
-    GOTOOLCHAIN=auto
+    GOTOOLCHAIN=local
 
 RUN apk add --no-cache ca-certificates git
 
