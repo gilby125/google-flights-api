@@ -172,7 +172,7 @@ INSERT INTO deal_config (key, value, description) VALUES
     ('cpm_economy', '0.05', 'Cost-per-mile threshold for economy class'),
     ('cpm_business', '0.10', 'Cost-per-mile threshold for business class'),
     ('cpm_first', '0.15', 'Cost-per-mile threshold for first class'),
-    ('baseline_window_days', '0', 'Days of history for baseline calculation (0 = all history)'),
+    ('baseline_window_days', '90', 'Days of history for baseline calculation'),
     ('baseline_min_samples', '10', 'Minimum samples required for baseline'),
     ('deal_ttl_hours', '24', 'Default deal expiration in hours'),
     ('auto_publish', 'true', 'Auto-publish deals meeting thresholds')
