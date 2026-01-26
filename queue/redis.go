@@ -18,6 +18,47 @@ import (
 const jobTTL = 24 * time.Hour
 const enqueueMetricTTL = 48 * time.Hour
 
+// EnqueueMeta carries best-effort attribution for who/what enqueued a job.
+// It is stored on the Job and can be surfaced by admin/debug endpoints.
+type EnqueueMeta struct {
+	Actor     string `json:"actor,omitempty"` // e.g. "http", "scheduler", "continuous_sweep"
+	RequestID string `json:"request_id,omitempty"`
+	Method    string `json:"method,omitempty"`
+	Path      string `json:"path,omitempty"`
+	RemoteIP  string `json:"remote_ip,omitempty"`
+	UserAgent string `json:"user_agent,omitempty"`
+}
+
+func (m EnqueueMeta) isEmpty() bool {
+	return m.Actor == "" && m.RequestID == "" && m.Method == "" && m.Path == "" && m.RemoteIP == "" && m.UserAgent == ""
+}
+
+type enqueueMetaKey struct{}
+
+// WithEnqueueMeta attaches enqueue attribution to the provided context.
+func WithEnqueueMeta(ctx context.Context, meta EnqueueMeta) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if meta.isEmpty() {
+		return ctx
+	}
+	return context.WithValue(ctx, enqueueMetaKey{}, meta)
+}
+
+// EnqueueMetaFromContext returns enqueue attribution stored on the context, if present.
+func EnqueueMetaFromContext(ctx context.Context) EnqueueMeta {
+	if ctx == nil {
+		return EnqueueMeta{}
+	}
+	if v := ctx.Value(enqueueMetaKey{}); v != nil {
+		if meta, ok := v.(EnqueueMeta); ok {
+			return meta
+		}
+	}
+	return EnqueueMeta{}
+}
+
 // Job represents a flight search job
 type Job struct {
 	ID          string          `json:"id"`
