@@ -1600,17 +1600,17 @@ async function loadContinuousSweepStatus() {
   try {
     const response = await fetch(`${ENDPOINTS.CONTINUOUS_SWEEP}/status`);
 
-    if (response.status === 503) {
-      // Sweep not initialized
-      showSweepNotReady();
-      return;
-    }
-
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
 
-    const status = await response.json();
+    const body = await response.json();
+    if (!body || body.initialized === false) {
+      showSweepNotReady();
+      return;
+    }
+
+    const status = body.status ?? body;
     updateSweepStatusUI(status);
   } catch (error) {
     console.error("Error loading sweep status:", error);

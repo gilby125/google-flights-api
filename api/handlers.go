@@ -3479,17 +3479,28 @@ func equalIntSlice(a, b []int) bool {
 // getContinuousSweepStatus returns the current status of the continuous sweep
 func getContinuousSweepStatus(workerManager *worker.Manager) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if workerManager == nil {
+			c.JSON(http.StatusOK, gin.H{
+				"initialized": false,
+				"message":     "Worker manager not available",
+			})
+			return
+		}
+
 		runner := workerManager.GetSweepRunner()
 		if runner == nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{
-				"error":   "Continuous sweep runner not initialized",
-				"message": "The sweep runner has not been configured. Start the sweep first.",
+			c.JSON(http.StatusOK, gin.H{
+				"initialized": false,
+				"message":     "Continuous sweep runner not initialized. Start the sweep first.",
 			})
 			return
 		}
 
 		status := runner.GetStatus()
-		c.JSON(http.StatusOK, status)
+		c.JSON(http.StatusOK, gin.H{
+			"initialized": true,
+			"status":      status,
+		})
 	}
 }
 
