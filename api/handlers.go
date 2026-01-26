@@ -2533,17 +2533,32 @@ func DirectFlightSearch() gin.HandlerFunc {
 			cur = currency.USD
 		}
 
-		origins, destinations, err := ParseRouteInputs(searchRequest.Origin, searchRequest.Destination)
+		originTokens, destinationTokens, err := ParseRouteInputs(searchRequest.Origin, searchRequest.Destination)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
 
-		const maxDirectRoutes = 16
-		totalRoutes := len(origins) * len(destinations)
+		expandedOrigins, originWarnings, err := macros.ExpandAirportTokens(originTokens)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid origin: " + err.Error()})
+			return
+		}
+		expandedDestinations, destinationWarnings, err := macros.ExpandAirportTokens(destinationTokens)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid destination: " + err.Error()})
+			return
+		}
+
+		warnings := append([]string{}, originWarnings...)
+		warnings = append(warnings, destinationWarnings...)
+
+		const maxDirectRoutes = 64
+		totalRoutes := len(expandedOrigins) * len(expandedDestinations)
 		if totalRoutes > maxDirectRoutes {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": fmt.Sprintf("too many origin/destination combinations: %d (max %d)", totalRoutes, maxDirectRoutes),
+				"error":    fmt.Sprintf("too many origin/destination combinations: %d (max %d). Narrow your inputs or use /api/v1/bulk-search for large grids.", totalRoutes, maxDirectRoutes),
+				"warnings": warnings,
 			})
 			return
 		}
@@ -2631,9 +2646,9 @@ func DirectFlightSearch() gin.HandlerFunc {
 		}
 
 		// Single route: preserve the legacy response shape.
-		if len(origins) == 1 && len(destinations) == 1 {
-			searchRequest.Origin = origins[0]
-			searchRequest.Destination = destinations[0]
+		if len(expandedOrigins) == 1 && len(expandedDestinations) == 1 {
+			searchRequest.Origin = expandedOrigins[0]
+			searchRequest.Destination = expandedDestinations[0]
 
 			offers, priceRange, err := session.GetOffers(
 				c.Request.Context(),
@@ -2689,8 +2704,8 @@ func DirectFlightSearch() gin.HandlerFunc {
 		var overallCheapestPrice float64
 		overallCheapestSet := false
 
-		for _, origin := range origins {
-			for _, destination := range destinations {
+		for _, origin := range expandedOrigins {
+			for _, destination := range expandedDestinations {
 				offers, priceRange, err := session.GetOffers(
 					c.Request.Context(),
 					flights.Args{
@@ -2756,8 +2771,8 @@ func DirectFlightSearch() gin.HandlerFunc {
 		response := map[string]interface{}{
 			"routes": routes,
 			"search_params": map[string]interface{}{
-				"origins":         origins,
-				"destinations":    destinations,
+				"origins":         expandedOrigins,
+				"destinations":    expandedDestinations,
 				"departure_date":  searchRequest.DepartureDate,
 				"return_date":     searchRequest.ReturnDate,
 				"trip_type":       searchRequest.TripType,
@@ -2771,6 +2786,9 @@ func DirectFlightSearch() gin.HandlerFunc {
 				"route_count":     totalRoutes,
 				"max_route_count": maxDirectRoutes,
 			},
+		}
+		if len(warnings) > 0 {
+			response["warnings"] = warnings
 		}
 
 		if overallCheapestSet && overallCheapestOffer != nil {

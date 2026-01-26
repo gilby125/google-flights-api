@@ -96,6 +96,49 @@ function normalizeAirportToken(value) {
     .replace(/^[,;]+|[,;]+$/g, "");
 }
 
+const REGION_ALIAS_TO_TOKEN = {
+  AFRICA: "REGION:AFRICA",
+  ASIA: "REGION:ASIA",
+  CARIBBEAN: "REGION:CARIBBEAN",
+  EUROPE: "REGION:EUROPE",
+  MIDDLEEAST: "REGION:MIDDLE_EAST",
+  MIDEAST: "REGION:MIDDLE_EAST",
+  NORTHAMERICA: "REGION:NORTH_AMERICA",
+  OCEANIA: "REGION:OCEANIA",
+  SOUTHAMERICA: "REGION:SOUTH_AMERICA",
+  WORLD: "REGION:WORLD",
+  WORLDALL: "REGION:WORLD_ALL",
+};
+
+function normalizeRegionAlias(value) {
+  const upper = String(value || "")
+    .trim()
+    .toUpperCase();
+  const withoutPrefix = upper.startsWith("REGION:")
+    ? upper.slice("REGION:".length)
+    : upper;
+
+  // Keep only A-Z0-9 and normalize separators away to allow "NORTH AMERICA" / "NORTH_AMERICA".
+  return withoutPrefix.replace(/[^A-Z0-9]+/g, "");
+}
+
+function canonicalizeRegionToken(value) {
+  const token = String(value || "")
+    .trim()
+    .toUpperCase();
+  if (!token) return "";
+
+  if (token.startsWith("REGION:")) {
+    // Accept canonical REGION:* tokens.
+    const key = normalizeRegionAlias(token);
+    const mapped = REGION_ALIAS_TO_TOKEN[key];
+    return mapped || token;
+  }
+
+  const key = normalizeRegionAlias(token);
+  return REGION_ALIAS_TO_TOKEN[key] || "";
+}
+
 function splitAirportList(raw) {
   const input = String(raw || "").trim();
   if (!input) return [];
@@ -113,11 +156,18 @@ function splitAirportList(raw) {
   const out = [];
   const seen = new Set();
   for (const part of parts) {
-    const code = normalizeAirportToken(part);
-    if (!/^[A-Z0-9]{3}$/.test(code)) continue;
-    if (seen.has(code)) continue;
-    seen.add(code);
-    out.push(code);
+    let token = normalizeAirportToken(part);
+    if (!token) continue;
+
+    if (!/^[A-Z0-9]{3}$/.test(token)) {
+      const regionToken = canonicalizeRegionToken(token);
+      if (!regionToken) continue;
+      token = regionToken;
+    }
+
+    if (seen.has(token)) continue;
+    seen.add(token);
+    out.push(token);
   }
   return out;
 }
@@ -155,10 +205,10 @@ function parseRouteInputs(originRaw, destinationRaw) {
   const destinations = splitAirportList(destinationPart);
 
   if (!origins.length) {
-    throw new Error("No valid origin airport codes found.");
+    throw new Error("No valid origin airport/region tokens found.");
   }
   if (!destinations.length) {
-    throw new Error("No valid destination airport codes found.");
+    throw new Error("No valid destination airport/region tokens found.");
   }
 
   return { origins, destinations };

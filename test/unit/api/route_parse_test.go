@@ -45,6 +45,13 @@ func TestParseRouteInputs_SpaceSeparatedCodes(t *testing.T) {
 	assert.Equal(t, []string{"FLL"}, destinations)
 }
 
+func TestParseRouteInputs_RegionAlias(t *testing.T) {
+	origins, destinations, err := api.ParseRouteInputs("MKE,MSN,ORD", "asia")
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"MKE", "MSN", "ORD"}, origins)
+	assert.Equal(t, []string{"REGION:ASIA"}, destinations)
+}
+
 func TestParseRouteInputs_MissingDestination(t *testing.T) {
 	_, _, err := api.ParseRouteInputs("JFK", "")
 	assert.Error(t, err)
