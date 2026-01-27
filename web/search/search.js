@@ -61,7 +61,6 @@ const inputs = {
   includeStar: document.getElementById("includeStar"),
   includeOneworld: document.getElementById("includeOneworld"),
   includeSkyTeam: document.getElementById("includeSkyTeam"),
-  googleAlliance: document.getElementById("googleAlliance"),
   googleCarriers: document.getElementById("googleCarriers"),
   recurringName: document.getElementById("recurringName"),
   recurringInterval: document.getElementById("recurringInterval"),
@@ -1065,13 +1064,8 @@ async function handleSearch(event) {
     };
 
     const carrierTokens = parseCarrierTokens(inputs.googleCarriers?.value);
-    const allianceToken = String(inputs.googleAlliance?.value || "")
-      .trim()
-      .toUpperCase();
     if (carrierTokens.length > 0) {
       searchData.carriers = carrierTokens;
-    } else if (allianceToken) {
-      searchData.carriers = [allianceToken];
     }
 
     if (inputs.debugBatches?.checked) {
