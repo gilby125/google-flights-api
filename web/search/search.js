@@ -458,16 +458,17 @@ function renderPriceHistoryChart(canvas, priceHistory) {
     .trim()
     .toUpperCase();
   const formatMoney = (value) => {
-    if (typeof value !== "number" || !Number.isFinite(value)) return "";
+    const num = typeof value === "number" ? value : Number(value);
+    if (!Number.isFinite(num)) return "";
     if (!currency) return Math.round(value).toString();
     try {
       return new Intl.NumberFormat(undefined, {
         style: "currency",
         currency,
         maximumFractionDigits: 0,
-      }).format(value);
+      }).format(num);
     } catch {
-      return `${currency} ${Math.round(value)}`;
+      return `${currency} ${Math.round(num)}`;
     }
   };
 
@@ -577,16 +578,17 @@ function renderGooglePriceGraphChart(canvas, priceGraph, errorEl) {
     .trim()
     .toUpperCase();
   const formatMoney = (value) => {
-    if (typeof value !== "number" || !Number.isFinite(value)) return "";
+    const num = typeof value === "number" ? value : Number(value);
+    if (!Number.isFinite(num)) return "";
     if (!currency) return Math.round(value).toString();
     try {
       return new Intl.NumberFormat(undefined, {
         style: "currency",
         currency,
         maximumFractionDigits: 0,
-      }).format(value);
+      }).format(num);
     } catch {
-      return `${currency} ${Math.round(value)}`;
+      return `${currency} ${Math.round(num)}`;
     }
   };
 
