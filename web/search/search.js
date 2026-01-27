@@ -977,6 +977,24 @@ function displayGooglePriceGraph(priceGraph) {
           text: `${priceGraph?.origin || ""} → ${priceGraph?.destination || ""}`,
         },
       },
+      onHover: (_event, activeElements) => {
+        const canvas = elements.googlePriceGraph;
+        if (!canvas) return;
+        canvas.style.cursor =
+          Array.isArray(activeElements) && activeElements.length
+            ? "pointer"
+            : "default";
+      },
+      onClick: (_event, activeElements) => {
+        if (!Array.isArray(activeElements) || activeElements.length === 0) {
+          return;
+        }
+        const index = activeElements[0].index;
+        const url = points?.[index]?.google_flights_url;
+        if (url) {
+          window.open(url, "_blank", "noopener");
+        }
+      },
       scales: {
         y: {
           beginAtZero: false,

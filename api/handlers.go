@@ -2899,7 +2899,37 @@ func DirectFlightSearch() gin.HandlerFunc {
 			}
 
 			offers, parseErrors, pgErr := session.GetPriceGraph(c.Request.Context(), args)
-			return SerializePriceGraphResponse(routeOrigin, routeDestination, searchRequest.Currency, args, offers, parseErrors, pgErr)
+			response := SerializePriceGraphResponse(routeOrigin, routeDestination, searchRequest.Currency, args, offers, parseErrors, pgErr)
+			if pgErr != nil {
+				return response
+			}
+
+			points, ok := response["points"].([]map[string]interface{})
+			if !ok || len(points) == 0 {
+				return response
+			}
+
+			for i := range points {
+				if i >= len(offers) {
+					break
+				}
+
+				url, urlErr := session.SerializeURL(
+					c.Request.Context(),
+					flights.Args{
+						Date:        offers[i].StartDate,
+						ReturnDate:  offers[i].ReturnDate,
+						SrcAirports: []string{routeOrigin},
+						DstAirports: []string{routeDestination},
+						Options:     baseOptions,
+					},
+				)
+				if urlErr == nil && url != "" {
+					points[i]["google_flights_url"] = url
+				}
+			}
+			response["points"] = points
+			return response
 		}
 
 		originTokens, destinationTokens, err := ParseRouteInputs(searchRequest.Origin, searchRequest.Destination)
