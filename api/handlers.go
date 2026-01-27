@@ -1126,6 +1126,33 @@ func getPriceHistory(neo4jDB db.Neo4jDatabase) gin.HandlerFunc {
 		origin := c.Param("origin")
 		destination := c.Param("destination")
 
+		includeGroups := c.QueryArray("include_airline_groups")
+		excludeGroups := c.QueryArray("exclude_airline_groups")
+
+		includeSet := make(map[string]struct{})
+		if len(includeGroups) > 0 {
+			codes, _, err := macros.ExpandAirlineTokens(includeGroups)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid include_airline_groups: " + err.Error()})
+				return
+			}
+			for _, code := range codes {
+				includeSet[code] = struct{}{}
+			}
+		}
+
+		excludeSet := make(map[string]struct{})
+		if len(excludeGroups) > 0 {
+			codes, _, err := macros.ExpandAirlineTokens(excludeGroups)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid exclude_airline_groups: " + err.Error()})
+				return
+			}
+			for _, code := range codes {
+				excludeSet[code] = struct{}{}
+			}
+		}
+
 		query := "MATCH (origin:Airport {code: $originCode})-[r:PRICE_POINT]->(dest:Airport {code: $destCode}) " +
 			"RETURN r.date AS date, r.price AS price, r.airline AS airline ORDER BY r.date"
 		params := map[string]interface{}{
@@ -1146,6 +1173,20 @@ func getPriceHistory(neo4jDB db.Neo4jDatabase) gin.HandlerFunc {
 			date, _ := record.Get("date")
 			price, _ := record.Get("price")
 			airline, _ := record.Get("airline")
+
+			airlineCode := strings.ToUpper(strings.TrimSpace(fmt.Sprint(airline)))
+			if airlineCode != "" {
+				if _, excluded := excludeSet[airlineCode]; excluded {
+					continue
+				}
+				if len(includeSet) > 0 {
+					if _, ok := includeSet[airlineCode]; !ok {
+						continue
+					}
+				}
+			} else if len(includeSet) > 0 {
+				continue
+			}
 
 			var dateVal interface{}
 			if dt, ok := date.(neo4j.Date); ok {
@@ -1169,6 +1210,10 @@ func getPriceHistory(neo4jDB db.Neo4jDatabase) gin.HandlerFunc {
 			"origin":      origin,
 			"destination": destination,
 			"history":     priceHistory,
+			"filter": map[string]interface{}{
+				"include_airline_groups": includeGroups,
+				"exclude_airline_groups": excludeGroups,
+			},
 		})
 	}
 }
@@ -2973,6 +3018,13 @@ func DirectFlightSearch(pgDB db.PostgresDB, neo4jDB db.Neo4jDatabase) gin.Handle
 
 			offers, parseErrors, pgErr := session.GetPriceGraph(c.Request.Context(), args)
 			response := SerializePriceGraphResponse(routeOrigin, routeDestination, searchRequest.Currency, args, offers, parseErrors, pgErr)
+			if len(searchRequest.IncludeAirlineGroups) > 0 || len(searchRequest.ExcludeAirlineGroups) > 0 {
+				response["filter_warning"] = "Google price graph cannot be filtered by airline groups; it reflects all carriers returned by Google for the route/date range."
+				response["filter"] = map[string]interface{}{
+					"include_airline_groups": searchRequest.IncludeAirlineGroups,
+					"exclude_airline_groups": searchRequest.ExcludeAirlineGroups,
+				}
+			}
 			if pgErr != nil {
 				return response
 			}
