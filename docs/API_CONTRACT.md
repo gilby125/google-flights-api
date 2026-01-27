@@ -39,4 +39,7 @@ This document formalizes the public contract for the Google Flights API service 
 
 ## Legacy Endpoints
 - `/api/search` (POST) executes an immediate search without queueing; response includes raw flight offers. Reserved for internal tooling—external clients should prefer the queued endpoints.
+  - Optional: add `"include_price_graph": true` to request a Google Flights calendar-style price graph alongside the offers.
+  - Fixed-date mode (default): provide `"price_graph_window_days"` (2–161, default 30) to fetch a window around `"departure_date"`, using the derived trip length (return - departure).
+  - Open-date mode: provide `"price_graph_departure_date_from"` + `"price_graph_departure_date_to"` (YYYY-MM-DD) and optionally `"price_graph_trip_length_days"` to fetch a flexible-date graph for that range.
 - `/api/airports` and `/api/price-history` serve cached or mock data for development. They are not part of the supported contract and may be removed without notice.

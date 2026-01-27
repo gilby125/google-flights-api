@@ -2744,6 +2744,12 @@ type DirectSearchRequest struct {
 	InfantsLap    int    `json:"infants_lap" form:"infants_lap"`
 	InfantsSeat   int    `json:"infants_seat" form:"infants_seat"`
 	Currency      string `json:"currency" form:"currency"`
+
+	IncludePriceGraph           bool   `json:"include_price_graph" form:"include_price_graph"`
+	PriceGraphWindowDays        int    `json:"price_graph_window_days" form:"price_graph_window_days"`
+	PriceGraphDepartureDateFrom string `json:"price_graph_departure_date_from" form:"price_graph_departure_date_from"`
+	PriceGraphDepartureDateTo   string `json:"price_graph_departure_date_to" form:"price_graph_departure_date_to"`
+	PriceGraphTripLengthDays    int    `json:"price_graph_trip_length_days" form:"price_graph_trip_length_days"`
 }
 
 // DirectFlightSearch handles direct flight searches (bypasses queue for immediate results)
@@ -2860,6 +2866,42 @@ func DirectFlightSearch() gin.HandlerFunc {
 			cur = currency.USD
 		}
 
+		baseOptions := flights.Options{
+			Travelers: flights.Travelers{
+				Adults:       searchRequest.Adults,
+				Children:     searchRequest.Children,
+				InfantOnLap:  searchRequest.InfantsLap,
+				InfantInSeat: searchRequest.InfantsSeat,
+			},
+			Currency: cur,
+			Stops:    stops,
+			Class:    class,
+			TripType: tripType,
+			Lang:     language.English,
+		}
+
+		priceGraphParams := PriceGraphBuildParams{
+			Include:           searchRequest.IncludePriceGraph,
+			WindowDays:        searchRequest.PriceGraphWindowDays,
+			DepartureDateFrom: searchRequest.PriceGraphDepartureDateFrom,
+			DepartureDateTo:   searchRequest.PriceGraphDepartureDateTo,
+			TripLengthDays:    searchRequest.PriceGraphTripLengthDays,
+		}
+
+		maybeGetPriceGraph := func(routeOrigin, routeDestination string) map[string]interface{} {
+			if !searchRequest.IncludePriceGraph {
+				return nil
+			}
+
+			args, err := BuildPriceGraphArgs(time.Now().UTC(), routeOrigin, routeDestination, departureDate, returnDate, baseOptions, priceGraphParams)
+			if err != nil {
+				return SerializePriceGraphResponse(routeOrigin, routeDestination, searchRequest.Currency, flights.PriceGraphArgs{}, nil, nil, err)
+			}
+
+			offers, parseErrors, pgErr := session.GetPriceGraph(c.Request.Context(), args)
+			return SerializePriceGraphResponse(routeOrigin, routeDestination, searchRequest.Currency, args, offers, parseErrors, pgErr)
+		}
+
 		originTokens, destinationTokens, err := ParseRouteInputs(searchRequest.Origin, searchRequest.Destination)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -2935,19 +2977,7 @@ func DirectFlightSearch() gin.HandlerFunc {
 						ReturnDate:  offer.ReturnDate,
 						SrcAirports: []string{routeOrigin},
 						DstAirports: []string{routeDestination},
-						Options: flights.Options{
-							Travelers: flights.Travelers{
-								Adults:       searchRequest.Adults,
-								Children:     searchRequest.Children,
-								InfantOnLap:  searchRequest.InfantsLap,
-								InfantInSeat: searchRequest.InfantsSeat,
-							},
-							Currency: cur,
-							Stops:    stops,
-							Class:    class,
-							TripType: tripType,
-							Lang:     language.English,
-						},
+						Options:     baseOptions,
 					},
 				)
 				if err != nil {
@@ -2992,19 +3022,7 @@ func DirectFlightSearch() gin.HandlerFunc {
 					ReturnDate:  returnDate,
 					SrcAirports: []string{searchRequest.Origin},
 					DstAirports: []string{searchRequest.Destination},
-					Options: flights.Options{
-						Travelers: flights.Travelers{
-							Adults:       searchRequest.Adults,
-							Children:     searchRequest.Children,
-							InfantOnLap:  searchRequest.InfantsLap,
-							InfantInSeat: searchRequest.InfantsSeat,
-						},
-						Currency: cur,
-						Stops:    stops,
-						Class:    class,
-						TripType: tripType,
-						Lang:     language.English,
-					},
+					Options:     baseOptions,
 				},
 			)
 
@@ -3025,6 +3043,10 @@ func DirectFlightSearch() gin.HandlerFunc {
 					"low":  priceRange.Low,
 					"high": priceRange.High,
 				}
+			}
+
+			if priceGraph := maybeGetPriceGraph(searchRequest.Origin, searchRequest.Destination); priceGraph != nil {
+				response["price_graph"] = priceGraph
 			}
 
 			c.JSON(http.StatusOK, response)
@@ -3051,19 +3073,7 @@ func DirectFlightSearch() gin.HandlerFunc {
 							ReturnDate:  returnDate,
 							SrcAirports: []string{origin},
 							DstAirports: []string{destination},
-							Options: flights.Options{
-								Travelers: flights.Travelers{
-									Adults:       searchRequest.Adults,
-									Children:     searchRequest.Children,
-									InfantOnLap:  searchRequest.InfantsLap,
-									InfantInSeat: searchRequest.InfantsSeat,
-								},
-								Currency: cur,
-								Stops:    stops,
-								Class:    class,
-								TripType: tripType,
-								Lang:     language.English,
-							},
+							Options:     baseOptions,
 						},
 					)
 
@@ -3133,6 +3143,12 @@ func DirectFlightSearch() gin.HandlerFunc {
 					"origin":      overallCheapestOrigin,
 					"destination": overallCheapestDestination,
 					"offer":       overallCheapestOffer,
+				}
+			}
+
+			if overallCheapestSet {
+				if priceGraph := maybeGetPriceGraph(overallCheapestOrigin, overallCheapestDestination); priceGraph != nil {
+					response["price_graph"] = priceGraph
 				}
 			}
 

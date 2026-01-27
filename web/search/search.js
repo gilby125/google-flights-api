@@ -20,6 +20,8 @@ const elements = {
   loadingIndicator: document.getElementById("loadingIndicator"),
   priceGraphCard: document.getElementById("priceGraphCard"),
   priceGraph: document.getElementById("priceGraph"),
+  googlePriceGraphCard: document.getElementById("googlePriceGraphCard"),
+  googlePriceGraph: document.getElementById("googlePriceGraph"),
   resultsCard: document.getElementById("resultsCard"),
   flightResults: document.getElementById("flightResults"),
   sortResults: document.getElementById("sortResults"),
@@ -43,6 +45,10 @@ const inputs = {
   infantsLap: document.getElementById("infantsLap"),
   infantsSeat: document.getElementById("infantsSeat"),
   currency: document.getElementById("currency"),
+  includePriceGraph: document.getElementById("includePriceGraph"),
+  priceGraphMode: document.getElementById("priceGraphMode"),
+  priceGraphWindowDays: document.getElementById("priceGraphWindowDays"),
+  priceGraphTripLengthDays: document.getElementById("priceGraphTripLengthDays"),
   recurringName: document.getElementById("recurringName"),
   recurringInterval: document.getElementById("recurringInterval"),
   recurringTime: document.getElementById("recurringTime"),
@@ -58,6 +64,7 @@ const inputs = {
 
 // Chart instance
 let priceChart = null;
+let googlePriceGraphChart = null;
 let currentOffers = [];
 let currentSearchParams = null;
 let currentRoutes = null;
@@ -286,6 +293,20 @@ function initSearchPage() {
     });
   }
 
+  if (inputs.includePriceGraph) {
+    inputs.includePriceGraph.addEventListener(
+      "change",
+      setPriceGraphFieldVisibility,
+    );
+  }
+  if (inputs.priceGraphMode) {
+    inputs.priceGraphMode.addEventListener(
+      "change",
+      setPriceGraphFieldVisibility,
+    );
+  }
+  setPriceGraphFieldVisibility();
+
   if (elements.createRecurringBtn) {
     elements.createRecurringBtn.addEventListener(
       "click",
@@ -304,6 +325,38 @@ function setRecurringDynamicFieldVisibility(show) {
   document.querySelectorAll(".recurringDynamicField").forEach((el) => {
     el.style.display = show ? "block" : "none";
   });
+}
+
+function setPriceGraphFieldVisibility() {
+  const enabled = !!inputs.includePriceGraph?.checked;
+  document.querySelectorAll(".priceGraphOption").forEach((el) => {
+    el.style.display = enabled ? "block" : "none";
+  });
+
+  const mode = String(inputs.priceGraphMode?.value || "around_date");
+  const showOpen = enabled && mode === "open_dates";
+  document.querySelectorAll(".priceGraphOptionOpen").forEach((el) => {
+    el.style.display = showOpen ? "block" : "none";
+  });
+}
+
+function addDaysToDateString(dateStr, days) {
+  const input = String(dateStr || "").trim();
+  if (!input) return "";
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(input);
+  if (!match) return "";
+
+  const year = parseInt(match[1], 10);
+  const monthIndex = parseInt(match[2], 10) - 1;
+  const day = parseInt(match[3], 10);
+  const date = new Date(Date.UTC(year, monthIndex, day));
+  if (Number.isNaN(date.getTime())) return "";
+
+  date.setUTCDate(date.getUTCDate() + (parseInt(days, 10) || 0));
+  const outYear = date.getUTCFullYear();
+  const outMonth = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const outDay = String(date.getUTCDate()).padStart(2, "0");
+  return `${outYear}-${outMonth}-${outDay}`;
 }
 
 function stopsToApiValue(stopsValue) {
@@ -617,6 +670,8 @@ async function handleSearch(event) {
 
   setLoadingState(true);
   if (elements.priceGraphCard) elements.priceGraphCard.style.display = "none";
+  if (elements.googlePriceGraphCard)
+    elements.googlePriceGraphCard.style.display = "none";
   if (elements.resultsCard) elements.resultsCard.style.display = "none";
 
   try {
@@ -685,6 +740,50 @@ async function handleSearch(event) {
       searchData.return_date = returnDate;
     }
 
+    const includePriceGraph = !!inputs.includePriceGraph?.checked;
+    if (includePriceGraph) {
+      searchData.include_price_graph = true;
+
+      const windowDays = parseInt(
+        inputs.priceGraphWindowDays?.value || "30",
+        10,
+      );
+      if (Number.isFinite(windowDays) && windowDays > 0) {
+        searchData.price_graph_window_days = windowDays;
+      }
+
+      const mode = String(inputs.priceGraphMode?.value || "around_date");
+      if (mode === "open_dates") {
+        const rangeStart = departureDate;
+        const rangeEnd = addDaysToDateString(
+          departureDate,
+          windowDays || 30,
+        );
+        if (rangeStart && rangeEnd) {
+          searchData.price_graph_departure_date_from = rangeStart;
+          searchData.price_graph_departure_date_to = rangeEnd;
+        }
+
+        let tripLengthDays = 0;
+        if (tripType === "round_trip" && returnDate) {
+          const dep = new Date(`${departureDate}T00:00:00Z`);
+          const ret = new Date(`${returnDate}T00:00:00Z`);
+          tripLengthDays = Math.round(
+            (ret - dep) / (24 * 60 * 60 * 1000),
+          );
+        }
+        if (!tripLengthDays) {
+          tripLengthDays = parseInt(
+            inputs.priceGraphTripLengthDays?.value || "7",
+            10,
+          );
+        }
+        if (Number.isFinite(tripLengthDays) && tripLengthDays >= 0) {
+          searchData.price_graph_trip_length_days = tripLengthDays;
+        }
+      }
+    }
+
     console.log("Sending search request:", searchData);
 
     // Send search request
@@ -705,6 +804,8 @@ async function handleSearch(event) {
 
     const searchResult = await response.json();
     console.log("Search results:", searchResult);
+
+    displayGooglePriceGraph(searchResult?.price_graph);
 
     // Load price history for the route (single or cheapest route).
     let priceHistoryOrigin = splitAirportList(origin)[0] || "";
@@ -803,6 +904,77 @@ function displayPriceGraph(priceHistory) {
           title: {
             display: true,
             text: "Date",
+          },
+        },
+      },
+    },
+  });
+}
+
+function displayGooglePriceGraph(priceGraph) {
+  if (!elements.googlePriceGraphCard || !elements.googlePriceGraph) return;
+
+  if (priceGraph?.error) {
+    elements.googlePriceGraphCard.style.display = "none";
+    return;
+  }
+
+  const points = Array.isArray(priceGraph?.points) ? priceGraph.points : null;
+  if (!points || points.length === 0) {
+    elements.googlePriceGraphCard.style.display = "none";
+    return;
+  }
+
+  const labels = points.map((p) => p.departure_date);
+  const prices = points.map((p) => {
+    const value = Number(p.price);
+    return Number.isFinite(value) && value > 0 ? value : null;
+  });
+
+  elements.googlePriceGraphCard.style.display = "block";
+
+  if (googlePriceGraphChart) {
+    googlePriceGraphChart.destroy();
+  }
+
+  const ctx = elements.googlePriceGraph.getContext("2d");
+  googlePriceGraphChart = new Chart(ctx, {
+    type: "line",
+    data: {
+      labels,
+      datasets: [
+        {
+          label: "Price",
+          data: prices,
+          borderColor: "rgba(13, 110, 253, 1)",
+          backgroundColor: "rgba(13, 110, 253, 0.12)",
+          tension: 0.2,
+          spanGaps: true,
+          fill: true,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        title: {
+          display: true,
+          text: `${priceGraph?.origin || ""} → ${priceGraph?.destination || ""}`,
+        },
+      },
+      scales: {
+        y: {
+          beginAtZero: false,
+          title: {
+            display: true,
+            text: "Price",
+          },
+        },
+        x: {
+          title: {
+            display: true,
+            text: "Departure date",
           },
         },
       },
