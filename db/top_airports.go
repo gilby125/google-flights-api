@@ -12,6 +12,7 @@ type TopAirport struct {
 //   - All routes (n*(n-1)): 95*94 = 8,930 routes
 //   - International routes (different countries): ~8,096 routes
 //   - With 2 trip lengths (7,14 days): ~16,192 queries per sweep
+//
 // Source: ACI World Airport Traffic Rankings 2023
 var Top100Airports = []TopAirport{
 	// North America - United States (25)

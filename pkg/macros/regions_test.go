@@ -145,6 +145,7 @@ func TestGetRegionAirports_AllRegions(t *testing.T) {
 		RegionEurope,
 		RegionNorthAmerica,
 		RegionAsia,
+		RegionCaribbean,
 		RegionOceania,
 		RegionMiddleEast,
 		RegionAfrica,
@@ -160,22 +161,51 @@ func TestGetRegionAirports_AllRegions(t *testing.T) {
 	}
 }
 
-func TestExpandAirportTokens_EmptyRegion(t *testing.T) {
-	// REGION:CARIBBEAN is advertised but has zero airports in Top100
-	// It should NOT error - it should return empty with a warning
+func TestExpandAirportTokens_Caribbean(t *testing.T) {
 	inputs := []string{RegionCaribbean}
 
 	airports, warnings, err := ExpandAirportTokens(inputs)
 	if err != nil {
-		t.Fatalf("%s should be recognized even with zero airports, got error: %v", RegionCaribbean, err)
+		t.Fatalf("%s should be recognized, got error: %v", RegionCaribbean, err)
 	}
 
-	if len(airports) != 0 {
-		t.Errorf("expected 0 airports for %s, got %d", RegionCaribbean, len(airports))
+	if len(airports) == 0 {
+		t.Fatalf("expected some airports for %s, got 0", RegionCaribbean)
 	}
 
-	if len(warnings) == 0 {
-		t.Fatalf("expected warning for empty region %s, got none", RegionCaribbean)
+	if len(warnings) != 0 {
+		t.Fatalf("expected no warnings for %s, got %v", RegionCaribbean, warnings)
+	}
+
+	expected := []string{
+		"HAV", // Cuba
+		"SJU", // Puerto Rico
+		"SDQ", // Dominican Republic
+		"KIN", // Jamaica
+		"NAS", // Bahamas
+		"PLS", // Turks & Caicos
+		"GCM", // Cayman Islands
+		"AUA", // Aruba
+		"SXM", // Sint Maarten
+		"RTB", // Honduras (Roatán)
+	}
+
+	seen := make(map[string]struct{}, len(airports))
+	for _, a := range airports {
+		seen[a] = struct{}{}
+	}
+
+	for _, code := range expected {
+		if _, ok := seen[code]; !ok {
+			t.Fatalf("expected %s to be included in %s expansion", code, RegionCaribbean)
+		}
+	}
+}
+
+func TestExpandAirportTokens_WorldAllRequiresOverride(t *testing.T) {
+	_, _, err := ExpandAirportTokens([]string{RegionWorldAll})
+	if err == nil {
+		t.Fatalf("expected %s to require an override and return an error", RegionWorldAll)
 	}
 }
 

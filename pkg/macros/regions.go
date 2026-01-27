@@ -1,10 +1,10 @@
 // Package macros provides expansion utilities for region and airline group tokens.
 //
 // IMPORTANT: v1 Limitations
-// - Region expansion uses ONLY the canonical Top100Airports set from db package
-// - This means REGION:EUROPE contains only ~31 major airports, not all European airports
-// - REGION:WORLD = "all airports in Top100Airports" (~95 airports), not all world airports
-// - Airline group membership is best-effort and may drift over time; safe for tagging, not for filtering
+//   - Region expansion is a curated set (primarily db.Top100Airports, plus small
+//     explicit lists for regions that are underrepresented in that list).
+//   - REGION:* is not a complete list of all airports in that region.
+//   - Airline group membership is best-effort and may drift over time; safe for tagging, not for filtering
 package macros
 
 import (
@@ -20,7 +20,8 @@ import (
 const regionPrefix = "REGION:"
 
 // Region tokens supported by the API.
-// NOTE: These expand to airports from db.Top100Airports only (v1 constraint).
+// NOTE: These expand to airports from db.Top100Airports plus small explicit lists
+// for regions that are underrepresented in that list (v1 constraint).
 const (
 	RegionEurope       = "REGION:EUROPE"
 	RegionNorthAmerica = "REGION:NORTH_AMERICA"
@@ -99,6 +100,13 @@ var countryToRegion = map[string]string{
 	"EG": RegionAfrica,
 
 	// Caribbean (not currently in Top100Airports, but defined for completeness)
+	"PR": RegionCaribbean, // Puerto Rico
+	"DO": RegionCaribbean, // Dominican Republic
+	"JM": RegionCaribbean, // Jamaica
+	"BS": RegionCaribbean, // Bahamas
+	"BB": RegionCaribbean, // Barbados
+	"TT": RegionCaribbean, // Trinidad and Tobago
+	"AW": RegionCaribbean, // Aruba
 }
 
 // regionAirportsCache stores precomputed airport lists by region.
@@ -108,7 +116,90 @@ var (
 	regionCacheOnce     sync.Once
 )
 
-// initRegionCache builds the region -> airports mapping from Top100Airports.
+// explicitRegionAirports augments region expansion beyond db.Top100Airports for regions that
+// would otherwise be empty or severely underrepresented.
+var explicitRegionAirports = map[string][]string{
+	RegionCaribbean: {
+		// ABC islands + southern Caribbean
+		"AUA", // Aruba (Queen Beatrix)
+		"BON", // Bonaire (Flamingo)
+		"CUR", // Curaçao (Hato)
+		// French Antilles / Leeward islands
+		"SBH", // Saint Barthélemy (Gustaf III)
+		"SFG", // Saint Martin (Grand Case; French side)
+		"SXM", // Sint Maarten (Princess Juliana; Dutch side)
+		"PTP", // Guadeloupe (Pointe-à-Pitre)
+		"FDF", // Martinique (Fort-de-France)
+		// Northern / Eastern Caribbean
+		"AXA", // Anguilla (Clayton J. Lloyd)
+		"ANU", // Antigua (V. C. Bird)
+		"BBQ", // Barbuda (Codrington)
+		"SKB", // St Kitts & Nevis (Robert L. Bradshaw)
+		"NEV", // Nevis (Vance W. Amory)
+		"MNI", // Montserrat (John A. Osborne)
+		"SAB", // Saba (Juancho E. Yrausquin)
+		"EUX", // Sint Eustatius (F.D. Roosevelt)
+		"DOM", // Dominica (Douglas-Charles)
+		"UVF", // Saint Lucia (Hewanorra)
+		"SLU", // Saint Lucia (George F. L. Charles; intra-island)
+		"SVD", // St Vincent & the Grenadines (Argyle)
+		"GND", // Grenada (Maurice Bishop)
+		"BGI", // Barbados (Grantley Adams)
+		// Greater Antilles
+		"HAV", // Cuba (Havana)
+		"SJU", // Puerto Rico (San Juan)
+		"STT", // U.S. Virgin Islands (St Thomas)
+		"STX", // U.S. Virgin Islands (St Croix)
+		"EIS", // British Virgin Islands (Tortola)
+		"KIN", // Jamaica (Kingston)
+		"MBJ", // Jamaica (Montego Bay)
+		"PAP", // Haiti (Port-au-Prince)
+		"CAP", // Haiti (Cap-Haïtien)
+		"SDQ", // Dominican Republic (Santo Domingo)
+		"PUJ", // Dominican Republic (Punta Cana)
+		"POP", // Dominican Republic (Puerto Plata)
+		// Bahamas + nearby island territories
+		"NAS", // Bahamas (Nassau)
+		"FPO", // Bahamas (Freeport; Grand Bahama)
+		"GGT", // Bahamas (Exuma)
+		"MHH", // Bahamas (Marsh Harbour; Abaco)
+		"ELH", // Bahamas (North Eleuthera)
+		"ZSA", // Bahamas (San Salvador)
+		"PLS", // Turks & Caicos (Providenciales)
+		"GDT", // Turks & Caicos (Grand Turk)
+		"GCM", // Cayman Islands (Grand Cayman)
+		"CYB", // Cayman Islands (Cayman Brac)
+		"LYB", // Cayman Islands (Little Cayman)
+		"BDA", // Bermuda (often grouped with Caribbean travel)
+		// Wider Caribbean basin islands (commonly searched as "Caribbean")
+		"ADZ", // Colombia (San Andrés Island)
+		"BOC", // Panama (Bocas del Toro)
+		"CZM", // Mexico (Cozumel)
+		"SPR", // Belize (San Pedro; Ambergris Caye)
+		"GJA", // Honduras (Guanaja)
+		"RTB", // Honduras (Roatán)
+		"UII", // Honduras (Utila)
+		"RNI", // Nicaragua (Corn Islands)
+		"PMV", // Venezuela (Margarita / Porlamar)
+		"POS", // Trinidad (Port of Spain)
+		"TAB", // Tobago (A.N.R. Robinson)
+	},
+	RegionOceania: {
+		"ADL", // Adelaide
+		"AKL", // Auckland
+		"BNE", // Brisbane
+		"CHC", // Christchurch
+		"GUM", // Guam
+		"MEL", // Melbourne
+		"NAN", // Fiji (Nadi)
+		"PER", // Perth
+		"PPT", // Tahiti
+		"SYD", // Sydney
+		"WLG", // Wellington
+	},
+}
+
+// initRegionCache builds the region -> airports mapping from Top100Airports + explicitRegionAirports.
 // Thread-safe via sync.Once.
 func initRegionCache() {
 	regionCacheOnce.Do(func() {
@@ -132,8 +223,58 @@ func initRegionCache() {
 			}
 		}
 
-		// REGION:WORLD expands to all canonical airports (Top100Airports only in v1)
-		regionAirportsCache[RegionWorld] = allAirports
+		// Merge explicit region airports.
+		for region, airports := range explicitRegionAirports {
+			for _, code := range airports {
+				normalized := strings.ToUpper(strings.TrimSpace(code))
+				if !airportCodePattern.MatchString(normalized) {
+					continue
+				}
+				regionAirportsCache[region] = append(regionAirportsCache[region], normalized)
+			}
+		}
+
+		// Deduplicate each region in insertion order.
+		for region, airports := range regionAirportsCache {
+			if len(airports) == 0 {
+				continue
+			}
+			seen := make(map[string]struct{}, len(airports))
+			out := make([]string, 0, len(airports))
+			for _, code := range airports {
+				if _, ok := seen[code]; ok {
+					continue
+				}
+				seen[code] = struct{}{}
+				out = append(out, code)
+			}
+			regionAirportsCache[region] = out
+		}
+
+		// REGION:WORLD expands to the union of all known region airports (excluding WORLD_ALL).
+		worldSeen := make(map[string]struct{})
+		world := make([]string, 0, len(allAirports))
+		for _, code := range allAirports {
+			if _, ok := worldSeen[code]; ok {
+				continue
+			}
+			worldSeen[code] = struct{}{}
+			world = append(world, code)
+		}
+		for region, airports := range regionAirportsCache {
+			if region == RegionWorld || region == RegionWorldAll {
+				continue
+			}
+			for _, code := range airports {
+				if _, ok := worldSeen[code]; ok {
+					continue
+				}
+				worldSeen[code] = struct{}{}
+				world = append(world, code)
+			}
+		}
+
+		regionAirportsCache[RegionWorld] = world
 	})
 }
 
@@ -163,6 +304,7 @@ func AllRegions() []string {
 		RegionMiddleEast,
 		RegionAfrica,
 		RegionWorld,
+		RegionWorldAll,
 	}
 }
 
@@ -244,17 +386,17 @@ func ExpandAirportTokensWithOverrides(inputs []string, overrides map[string][]st
 			if override, ok := normalizedOverrides[token]; ok {
 				regionAirports = override
 			} else {
+				if token == RegionWorldAll {
+					return nil, nil, fmt.Errorf("%s requires a server-side airport list override and is only supported by endpoints that explicitly enable it", RegionWorldAll)
+				}
 				regionAirports = GetRegionAirports(token)
 				if regionAirports == nil {
-					if token == RegionWorldAll {
-						return nil, nil, fmt.Errorf("%s requires a server-side airport list override and is only supported by endpoints that explicitly enable it", RegionWorldAll)
-					}
 					return nil, nil, fmt.Errorf("unknown region token: %s", token)
 				}
 			}
 
 			if len(regionAirports) == 0 {
-				warnings = append(warnings, fmt.Sprintf("region %s contains no airports in canonical set", token))
+				warnings = append(warnings, fmt.Sprintf("region %s contains no airports in configured set", token))
 				continue
 			}
 
