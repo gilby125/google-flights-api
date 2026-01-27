@@ -3039,6 +3039,11 @@ func DirectFlightSearch(pgDB db.PostgresDB, neo4jDB db.Neo4jDatabase) gin.Handle
 					break
 				}
 
+				var returnDate sql.NullTime
+				if !offers[i].ReturnDate.IsZero() {
+					returnDate = sql.NullTime{Time: offers[i].ReturnDate, Valid: true}
+				}
+
 				url, urlErr := session.SerializeURL(
 					c.Request.Context(),
 					flights.Args{
@@ -3051,6 +3056,34 @@ func DirectFlightSearch(pgDB db.PostgresDB, neo4jDB db.Neo4jDatabase) gin.Handle
 				)
 				if urlErr == nil && url != "" {
 					points[i]["google_flights_url"] = url
+				}
+
+				// Best-effort persistence of price graph points for history/tracking.
+				// We store these in Postgres (price_graph_results) under sweep_id=0.
+				if pgDB != nil && offers[i].Price > 0 {
+					record := db.PriceGraphResultRecord{
+						SweepID:       0,
+						Origin:        routeOrigin,
+						Destination:   routeDestination,
+						DepartureDate: offers[i].StartDate,
+						ReturnDate:    returnDate,
+						TripLength:    sql.NullInt32{Int32: int32(args.TripLength), Valid: true},
+						Price:         offers[i].Price,
+						Currency:      searchRequest.Currency,
+						Adults:        searchRequest.Adults,
+						Children:      searchRequest.Children,
+						InfantsLap:    searchRequest.InfantsLap,
+						InfantsSeat:   searchRequest.InfantsSeat,
+						TripType:      searchRequest.TripType,
+						Class:         searchRequest.Class,
+						Stops:         searchRequest.Stops,
+						SearchURL:     sql.NullString{String: url, Valid: url != ""},
+						QueriedAt:     time.Now().UTC(),
+					}
+					if insertErr := pgDB.InsertPriceGraphResult(c.Request.Context(), record); insertErr != nil {
+						log.Printf("Failed to persist price graph point %s->%s %s: %v",
+							routeOrigin, routeDestination, offers[i].StartDate.Format("2006-01-02"), insertErr)
+					}
 				}
 			}
 			response["points"] = points
@@ -3457,14 +3490,18 @@ func DirectFlightSearch(pgDB db.PostgresDB, neo4jDB db.Neo4jDatabase) gin.Handle
 		}
 
 		type batchDebugEntry struct {
-			Mode         string   `json:"mode"`
-			Origin       string   `json:"origin,omitempty"`
-			Destination  string   `json:"destination,omitempty"`
-			Origins      []string `json:"origins,omitempty"`
-			Destinations []string `json:"destinations,omitempty"`
-			Offers       int      `json:"offers"`
-			DurationMs   int64    `json:"duration_ms"`
-			Error        string   `json:"error,omitempty"`
+			Mode                string         `json:"mode"`
+			Origin              string         `json:"origin,omitempty"`
+			Destination         string         `json:"destination,omitempty"`
+			Origins             []string       `json:"origins,omitempty"`
+			Destinations        []string       `json:"destinations,omitempty"`
+			Offers              int            `json:"offers"`
+			DurationMs          int64          `json:"duration_ms"`
+			Error               string         `json:"error,omitempty"`
+			DestinationOfferMap map[string]int `json:"destination_offer_map,omitempty"`
+			OriginOfferMap      map[string]int `json:"origin_offer_map,omitempty"`
+			MissingDestinations []string       `json:"missing_destinations,omitempty"`
+			MissingOrigins      []string       `json:"missing_origins,omitempty"`
 		}
 
 		diag := batchDiagnostics{ChunkSize: maxAirportsPerRequestSide}
@@ -3548,12 +3585,30 @@ func DirectFlightSearch(pgDB db.PostgresDB, neo4jDB db.Neo4jDatabase) gin.Handle
 					if len(batchOffers) == 0 {
 						diag.Empty++
 					}
+					destCounts := make(map[string]int, len(destChunk))
+					for _, code := range destChunk {
+						destCounts[code] = 0
+					}
+					for _, offer := range batchOffers {
+						if offer.DstAirportCode == "" {
+							continue
+						}
+						destCounts[offer.DstAirportCode]++
+					}
+					missingDests := make([]string, 0)
+					for _, code := range destChunk {
+						if destCounts[code] == 0 {
+							missingDests = append(missingDests, code)
+						}
+					}
 					appendDebug(batchDebugEntry{
-						Mode:         diag.Mode,
-						Origin:       origin,
-						Destinations: destChunk,
-						Offers:       len(batchOffers),
-						DurationMs:   batchMs,
+						Mode:                diag.Mode,
+						Origin:              origin,
+						Destinations:        destChunk,
+						Offers:              len(batchOffers),
+						DurationMs:          batchMs,
+						DestinationOfferMap: destCounts,
+						MissingDestinations: missingDests,
 					})
 					offers = append(offers, batchOffers...)
 				}
@@ -3598,12 +3653,30 @@ func DirectFlightSearch(pgDB db.PostgresDB, neo4jDB db.Neo4jDatabase) gin.Handle
 					if len(batchOffers) == 0 {
 						diag.Empty++
 					}
+					originCounts := make(map[string]int, len(originChunk))
+					for _, code := range originChunk {
+						originCounts[code] = 0
+					}
+					for _, offer := range batchOffers {
+						if offer.SrcAirportCode == "" {
+							continue
+						}
+						originCounts[offer.SrcAirportCode]++
+					}
+					missingOrigins := make([]string, 0)
+					for _, code := range originChunk {
+						if originCounts[code] == 0 {
+							missingOrigins = append(missingOrigins, code)
+						}
+					}
 					appendDebug(batchDebugEntry{
-						Mode:        diag.Mode,
-						Destination: destination,
-						Origins:     originChunk,
-						Offers:      len(batchOffers),
-						DurationMs:  batchMs,
+						Mode:           diag.Mode,
+						Destination:    destination,
+						Origins:        originChunk,
+						Offers:         len(batchOffers),
+						DurationMs:     batchMs,
+						OriginOfferMap: originCounts,
+						MissingOrigins: missingOrigins,
 					})
 					offers = append(offers, batchOffers...)
 				}

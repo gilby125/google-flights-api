@@ -1005,13 +1005,27 @@ func (p *PostgresDBImpl) InsertPriceGraphResult(ctx context.Context, record Pric
 	if record.QueriedAt.IsZero() {
 		record.QueriedAt = time.Now()
 	}
+
+	// Ensure TripLength participates in upsert key (avoid NULL breaking ON CONFLICT).
+	if !record.TripLength.Valid {
+		record.TripLength = sql.NullInt32{Int32: 0, Valid: true}
+	}
+
 	_, err := p.db.ExecContext(ctx,
 		`INSERT INTO price_graph_results
 				(sweep_id, origin, destination, departure_date, return_date,
 				 trip_length, price, currency, distance_miles, cost_per_mile,
 				 adults, children, infants_lap, infants_seat, trip_type, class, stops, search_url,
 				 queried_at)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+			 ON CONFLICT (sweep_id, origin, destination, departure_date, trip_length, currency, adults, children, infants_lap, infants_seat, trip_type, class, stops)
+			 DO UPDATE SET
+				return_date = EXCLUDED.return_date,
+				price = EXCLUDED.price,
+				distance_miles = COALESCE(EXCLUDED.distance_miles, price_graph_results.distance_miles),
+				cost_per_mile = COALESCE(EXCLUDED.cost_per_mile, price_graph_results.cost_per_mile),
+				search_url = COALESCE(EXCLUDED.search_url, price_graph_results.search_url),
+				queried_at = EXCLUDED.queried_at`,
 		record.SweepID,
 		record.Origin,
 		record.Destination,
