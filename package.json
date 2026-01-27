@@ -1,7 +1,7 @@
 {
   "name": "google-flights-api",
   "version": "1.0.0",
-  "description": "[![Go Reference](https://pkg.go.dev/badge/github.com/krisukox/google-flights-api/flights.svg)](https://pkg.go.dev/github.com/krisukox/google-flights-api/flights)",
+  "description": "[![Go Reference](https://pkg.go.dev/badge/github.com/gilby125/google-flights-api/flights.svg)](https://pkg.go.dev/github.com/gilby125/google-flights-api/flights)",
   "main": "index.js",
   "directories": {
     "example": "examples",

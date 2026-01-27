@@ -1,6 +1,6 @@
 # Google Flights API Server & Library
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/krisukox/google-flights-api/flights.svg)](https://pkg.go.dev/github.com/krisukox/google-flights-api/flights)
+[![Go Reference](https://pkg.go.dev/badge/github.com/gilby125/google-flights-api/flights.svg)](https://pkg.go.dev/github.com/gilby125/google-flights-api/flights)
 
 This project provides both a Go client library (`flights` package) for the undocumented Google Flights API and a full web service that uses this library to perform flight searches, schedule jobs, and store results.
 
