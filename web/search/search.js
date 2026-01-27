@@ -56,6 +56,7 @@ const inputs = {
   priceGraphMode: document.getElementById("priceGraphMode"),
   priceGraphWindowDays: document.getElementById("priceGraphWindowDays"),
   priceGraphTripLengthDays: document.getElementById("priceGraphTripLengthDays"),
+  debugBatches: document.getElementById("debugBatches"),
   recurringName: document.getElementById("recurringName"),
   recurringInterval: document.getElementById("recurringInterval"),
   recurringTime: document.getElementById("recurringTime"),
@@ -932,6 +933,10 @@ async function handleSearch(event) {
       currency,
     };
 
+    if (inputs.debugBatches?.checked) {
+      searchData.debug_batches = true;
+    }
+
     if (tripType === "round_trip" && returnDate) {
       searchData.return_date = returnDate;
     }
@@ -1383,6 +1388,38 @@ function displayMultiRouteResults(searchResult) {
     elements.googlePriceGraphCard.style.display = "none";
 
   elements.flightResults.innerHTML = "";
+
+  const batchSummary = searchResult?.batch_summary || null;
+  if (batchSummary && typeof batchSummary === "object") {
+    const totalBatches = Number(batchSummary.total_batches) || 0;
+    const failedBatches = Number(batchSummary.failed_batches) || 0;
+    const emptyBatches = Number(batchSummary.empty_batches) || 0;
+    if (totalBatches > 0) {
+      const alert = document.createElement("div");
+      alert.className =
+        failedBatches > 0
+          ? "alert alert-warning mb-3"
+          : emptyBatches > 0
+            ? "alert alert-info mb-3"
+            : "alert alert-success mb-3";
+      alert.innerHTML = `
+        <div class="fw-semibold mb-1">Batch diagnostics</div>
+        <div class="small">
+          ${totalBatches} batches • ${failedBatches} failed • ${emptyBatches} returned 0 offers.
+          ${
+            inputs.debugBatches?.checked
+              ? "See console for batch_debug."
+              : "Enable “Debug multi-route batches” to include per-batch details."
+          }
+        </div>
+      `;
+      elements.flightResults.appendChild(alert);
+    }
+
+    if (inputs.debugBatches?.checked && Array.isArray(searchResult?.batch_debug)) {
+      console.log("Batch debug:", searchResult.batch_debug);
+    }
+  }
 
   currentRoutes = Array.isArray(searchResult.routes) ? searchResult.routes : [];
   let cheapest = null;

@@ -2776,6 +2776,10 @@ type DirectSearchRequest struct {
 	PriceGraphDepartureDateFrom string `json:"price_graph_departure_date_from" form:"price_graph_departure_date_from"`
 	PriceGraphDepartureDateTo   string `json:"price_graph_departure_date_to" form:"price_graph_departure_date_to"`
 	PriceGraphTripLengthDays    int    `json:"price_graph_trip_length_days" form:"price_graph_trip_length_days"`
+
+	// DebugBatches enables per-batch diagnostics in multi-route searches.
+	// Intended for troubleshooting missing origin→destination pairs.
+	DebugBatches bool `json:"debug_batches" form:"debug_batches"`
 }
 
 // DirectFlightSearch handles direct flight searches (bypasses queue for immediate results)
@@ -3280,6 +3284,31 @@ func DirectFlightSearch(pgDB db.PostgresDB, neo4jDB db.Neo4jDatabase) gin.Handle
 		const maxAirportsPerRequestSide = 10
 		const maxBatchedRequests = 64
 
+		type batchDiagnostics struct {
+			Mode         string `json:"mode"`
+			ChunkSize    int    `json:"chunk_size"`
+			TotalBatches int    `json:"total_batches"`
+			Failed       int    `json:"failed_batches"`
+			Empty        int    `json:"empty_batches"`
+			TotalOffers  int    `json:"total_offers"`
+			DurationMs   int64  `json:"duration_ms"`
+		}
+
+		type batchDebugEntry struct {
+			Mode         string   `json:"mode"`
+			Origin       string   `json:"origin,omitempty"`
+			Destination  string   `json:"destination,omitempty"`
+			Origins      []string `json:"origins,omitempty"`
+			Destinations []string `json:"destinations,omitempty"`
+			Offers       int      `json:"offers"`
+			DurationMs   int64    `json:"duration_ms"`
+			Error        string   `json:"error,omitempty"`
+		}
+
+		diag := batchDiagnostics{ChunkSize: maxAirportsPerRequestSide}
+		debugEntries := make([]batchDebugEntry, 0, 16)
+		batchStartOverall := time.Now()
+
 		queryArgs := func(srcAirports, dstAirports []string) flights.Args {
 			return flights.Args{
 				Date:        departureDate,
@@ -3302,9 +3331,26 @@ func DirectFlightSearch(pgDB db.PostgresDB, neo4jDB db.Neo4jDatabase) gin.Handle
 			}
 		}
 
+		appendDebug := func(entry batchDebugEntry) {
+			if !searchRequest.DebugBatches {
+				return
+			}
+			// Avoid leaking giant payloads: cap stored codes.
+			const maxCodes = 12
+			if len(entry.Origins) > maxCodes {
+				entry.Origins = append(entry.Origins[:maxCodes], fmt.Sprintf("…(+%d)", len(entry.Origins)-maxCodes))
+			}
+			if len(entry.Destinations) > maxCodes {
+				entry.Destinations = append(entry.Destinations[:maxCodes], fmt.Sprintf("…(+%d)", len(entry.Destinations)-maxCodes))
+			}
+			debugEntries = append(debugEntries, entry)
+		}
+
 		if len(expandedOrigins) <= len(expandedDestinations) {
+			diag.Mode = "origin_x_dest_chunks"
 			destChunks := chunkStrings(expandedDestinations, maxAirportsPerRequestSide)
 			totalBatches := len(expandedOrigins) * len(destChunks)
+			diag.TotalBatches = totalBatches
 			if totalBatches > maxBatchedRequests {
 				c.JSON(http.StatusBadRequest, gin.H{
 					"error": fmt.Sprintf(
@@ -3319,18 +3365,42 @@ func DirectFlightSearch(pgDB db.PostgresDB, neo4jDB db.Neo4jDatabase) gin.Handle
 
 			for _, origin := range expandedOrigins {
 				for _, destChunk := range destChunks {
+					batchStart := time.Now()
 					batchOffers, _, err := session.GetOffers(c.Request.Context(), queryArgs([]string{origin}, destChunk))
+					batchMs := time.Since(batchStart).Milliseconds()
 					if err != nil {
 						log.Printf("Error searching flights for %s->* (chunk): %v", origin, err)
 						warnings = append(warnings, fmt.Sprintf("search failed for origin %s: %v", origin, err))
+						diag.Failed++
+						appendDebug(batchDebugEntry{
+							Mode:         diag.Mode,
+							Origin:       origin,
+							Destinations: destChunk,
+							Offers:       0,
+							DurationMs:   batchMs,
+							Error:        err.Error(),
+						})
 						continue
 					}
+					diag.TotalOffers += len(batchOffers)
+					if len(batchOffers) == 0 {
+						diag.Empty++
+					}
+					appendDebug(batchDebugEntry{
+						Mode:         diag.Mode,
+						Origin:       origin,
+						Destinations: destChunk,
+						Offers:       len(batchOffers),
+						DurationMs:   batchMs,
+					})
 					offers = append(offers, batchOffers...)
 				}
 			}
 		} else {
+			diag.Mode = "dest_x_origin_chunks"
 			originChunks := chunkStrings(expandedOrigins, maxAirportsPerRequestSide)
 			totalBatches := len(expandedDestinations) * len(originChunks)
+			diag.TotalBatches = totalBatches
 			if totalBatches > maxBatchedRequests {
 				c.JSON(http.StatusBadRequest, gin.H{
 					"error": fmt.Sprintf(
@@ -3345,16 +3415,40 @@ func DirectFlightSearch(pgDB db.PostgresDB, neo4jDB db.Neo4jDatabase) gin.Handle
 
 			for _, destination := range expandedDestinations {
 				for _, originChunk := range originChunks {
+					batchStart := time.Now()
 					batchOffers, _, err := session.GetOffers(c.Request.Context(), queryArgs(originChunk, []string{destination}))
+					batchMs := time.Since(batchStart).Milliseconds()
 					if err != nil {
 						log.Printf("Error searching flights for *->%s (chunk): %v", destination, err)
 						warnings = append(warnings, fmt.Sprintf("search failed for destination %s: %v", destination, err))
+						diag.Failed++
+						appendDebug(batchDebugEntry{
+							Mode:        diag.Mode,
+							Destination: destination,
+							Origins:     originChunk,
+							Offers:      0,
+							DurationMs:  batchMs,
+							Error:       err.Error(),
+						})
 						continue
 					}
+					diag.TotalOffers += len(batchOffers)
+					if len(batchOffers) == 0 {
+						diag.Empty++
+					}
+					appendDebug(batchDebugEntry{
+						Mode:        diag.Mode,
+						Destination: destination,
+						Origins:     originChunk,
+						Offers:      len(batchOffers),
+						DurationMs:  batchMs,
+					})
 					offers = append(offers, batchOffers...)
 				}
 			}
 		}
+
+		diag.DurationMs = time.Since(batchStartOverall).Milliseconds()
 
 		offersByRoute := make(map[string][]flights.FullOffer, len(offers))
 		for _, offer := range offers {
@@ -3450,13 +3544,16 @@ func DirectFlightSearch(pgDB db.PostgresDB, neo4jDB db.Neo4jDatabase) gin.Handle
 					"search returned %d offers, but none could be grouped into routes; try narrowing the search or switching to /api/v1/bulk-search",
 					len(offers),
 				),
-				"warnings": warnings,
+				"warnings":      warnings,
+				"batch_summary": diag,
+				"batch_debug":   debugEntries,
 			})
 			return
 		}
 
 		response := map[string]interface{}{
-			"routes": routes,
+			"routes":        routes,
+			"batch_summary": diag,
 			"search_params": map[string]interface{}{
 				"origins":               expandedOrigins,
 				"destinations":          expandedDestinations,
@@ -3474,6 +3571,9 @@ func DirectFlightSearch(pgDB db.PostgresDB, neo4jDB db.Neo4jDatabase) gin.Handle
 				"requested_route_count": totalRoutes,
 				"returned_route_count":  len(routes),
 			},
+		}
+		if searchRequest.DebugBatches {
+			response["batch_debug"] = debugEntries
 		}
 		if len(warnings) > 0 {
 			response["warnings"] = warnings
