@@ -417,50 +417,78 @@ function normalizePriceHistorySeries(priceHistory) {
 
 function renderPriceHistoryChart(canvas, priceHistory) {
   if (!canvas) return null;
+  if (typeof ApexCharts !== "function") {
+    console.error("ApexCharts is not available on the page.");
+    return null;
+  }
 
   const { dates, prices } = normalizePriceHistorySeries(priceHistory);
   if (dates.length === 0) return null;
 
-  const ctx = canvas.getContext("2d");
-  return new Chart(ctx, {
-    type: "line",
-    data: {
-      labels: dates,
-      datasets: [
-        {
-          label: "Price",
-          data: prices,
-          borderColor: "rgba(75, 192, 192, 1)",
-          backgroundColor: "rgba(75, 192, 192, 0.2)",
-          tension: 0.1,
-          fill: true,
-        },
-      ],
+  canvas.innerHTML = "";
+
+  const currency = String(priceHistory?.currency || inputs.currency?.value || "")
+    .trim()
+    .toUpperCase();
+  const formatMoney = (value) => {
+    if (typeof value !== "number" || !Number.isFinite(value)) return "";
+    if (!currency) return Math.round(value).toString();
+    try {
+      return new Intl.NumberFormat(undefined, {
+        style: "currency",
+        currency,
+        maximumFractionDigits: 0,
+      }).format(value);
+    } catch {
+      return `${currency} ${Math.round(value)}`;
+    }
+  };
+
+  const chart = new ApexCharts(canvas, {
+    chart: {
+      type: "area",
+      height: "100%",
+      toolbar: { show: false },
+      zoom: { enabled: false },
+      animations: { enabled: true },
     },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      scales: {
-        y: {
-          beginAtZero: false,
-          title: {
-            display: true,
-            text: "Price",
-          },
-        },
-        x: {
-          title: {
-            display: true,
-            text: "Date",
-          },
-        },
+    series: [{ name: "Price", data: prices }],
+    stroke: { curve: "smooth", width: 2 },
+    fill: {
+      type: "gradient",
+      gradient: { shadeIntensity: 0.3, opacityFrom: 0.35, opacityTo: 0.05 },
+    },
+    markers: { size: 3, hover: { size: 5 } },
+    dataLabels: { enabled: false },
+    xaxis: {
+      type: "category",
+      categories: dates,
+      labels: { rotate: -45, hideOverlappingLabels: true },
+    },
+    yaxis: {
+      labels: {
+        formatter: (value) => formatMoney(value),
       },
     },
+    tooltip: {
+      y: {
+        formatter: (value) => formatMoney(value),
+      },
+    },
+    grid: { borderColor: "rgba(15, 23, 42, 0.12)" },
+    colors: ["#20c997"],
   });
+
+  chart.render();
+  return chart;
 }
 
 function renderGooglePriceGraphChart(canvas, priceGraph, errorEl) {
   if (!canvas) return null;
+  if (typeof ApexCharts !== "function") {
+    console.error("ApexCharts is not available on the page.");
+    return null;
+  }
 
   if (priceGraph?.error) {
     if (errorEl) {
@@ -485,72 +513,91 @@ function renderGooglePriceGraphChart(canvas, priceGraph, errorEl) {
     errorEl.textContent = "";
   }
 
-  const labels = points.map((p) => p.departure_date);
+  canvas.innerHTML = "";
+
+  const currency = String(priceGraph?.currency || inputs.currency?.value || "")
+    .trim()
+    .toUpperCase();
+  const formatMoney = (value) => {
+    if (typeof value !== "number" || !Number.isFinite(value)) return "";
+    if (!currency) return Math.round(value).toString();
+    try {
+      return new Intl.NumberFormat(undefined, {
+        style: "currency",
+        currency,
+        maximumFractionDigits: 0,
+      }).format(value);
+    } catch {
+      return `${currency} ${Math.round(value)}`;
+    }
+  };
+
+  const categories = points.map((p) => String(p?.departure_date || "").trim());
   const prices = points.map((p) => {
-    const value = Number(p.price);
+    const value = Number(p?.price);
     return Number.isFinite(value) && value > 0 ? value : null;
   });
+  const urls = points.map((p) => String(p?.google_flights_url || "").trim());
 
-  const ctx = canvas.getContext("2d");
-  const chart = new Chart(ctx, {
-    type: "line",
-    data: {
-      labels,
-      datasets: [
-        {
-          label: "Price",
-          data: prices,
-          borderColor: "rgba(13, 110, 253, 1)",
-          backgroundColor: "rgba(13, 110, 253, 0.12)",
-          tension: 0.2,
-          spanGaps: true,
-          fill: true,
+  const chartTitle = `${priceGraph?.origin || ""} → ${priceGraph?.destination || ""}`.trim();
+
+  const options = {
+    chart: {
+      type: "area",
+      height: "100%",
+      toolbar: { show: false },
+      zoom: { enabled: false },
+      animations: { enabled: true },
+      events: {
+        dataPointMouseEnter: () => {
+          canvas.style.cursor = "pointer";
         },
-      ],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: {
-        title: {
-          display: true,
-          text: `${priceGraph?.origin || ""} → ${priceGraph?.destination || ""}`,
+        dataPointMouseLeave: () => {
+          canvas.style.cursor = "default";
         },
-      },
-      onHover: (_event, activeElements) => {
-        canvas.style.cursor =
-          Array.isArray(activeElements) && activeElements.length
-            ? "pointer"
-            : "default";
-      },
-      onClick: (_event, activeElements) => {
-        if (!Array.isArray(activeElements) || activeElements.length === 0) {
-          return;
-        }
-        const index = activeElements[0].index;
-        const url = points?.[index]?.google_flights_url;
-        if (url) {
-          window.open(url, "_blank", "noopener");
-        }
-      },
-      scales: {
-        y: {
-          beginAtZero: false,
-          title: {
-            display: true,
-            text: "Price",
-          },
-        },
-        x: {
-          title: {
-            display: true,
-            text: "Departure date",
-          },
+        dataPointSelection: (_event, _chartContext, config) => {
+          const index = config?.dataPointIndex;
+          if (typeof index !== "number" || index < 0) return;
+          const url = urls?.[index];
+          if (url) {
+            window.open(url, "_blank", "noopener");
+          }
         },
       },
     },
-  });
+    series: [{ name: "Price", data: prices }],
+    stroke: { curve: "smooth", width: 2 },
+    fill: {
+      type: "gradient",
+      gradient: { shadeIntensity: 0.25, opacityFrom: 0.35, opacityTo: 0.05 },
+    },
+    markers: { size: 3, hover: { size: 6 } },
+    dataLabels: { enabled: false },
+    xaxis: {
+      type: "category",
+      categories,
+      labels: { rotate: -45, hideOverlappingLabels: true },
+    },
+    yaxis: {
+      labels: {
+        formatter: (value) => formatMoney(value),
+      },
+    },
+    tooltip: {
+      y: {
+        formatter: (value) => formatMoney(value),
+      },
+    },
+    grid: { borderColor: "rgba(15, 23, 42, 0.12)" },
+    colors: ["#0d6efd"],
+  };
+  if (chartTitle) {
+    options.title = { text: chartTitle, style: { fontSize: "13px" } };
+  }
 
+  const chart = new ApexCharts(canvas, options);
+
+  chart.render();
   return chart;
 }
 
@@ -1740,7 +1787,7 @@ function renderActiveRoutePane() {
             No price history collected for this route yet.
           </div>
           <div class="chart-container" style="height: 220px;">
-            <canvas class="routePriceHistoryCanvas" role="img" aria-label="Flight price history"></canvas>
+            <div class="routePriceHistoryChart apex-chart" role="img" aria-label="Flight price history"></div>
           </div>
         </div>
       </div>
@@ -1757,7 +1804,7 @@ function renderActiveRoutePane() {
             Enable “Show Google price graph” and re-load this route to fetch the calendar graph.
           </div>
           <div class="chart-container" style="height: 220px;">
-            <canvas class="routeGooglePriceGraphCanvas" role="img" aria-label="Google price graph"></canvas>
+            <div class="routeGooglePriceGraphChart apex-chart" role="img" aria-label="Google price graph"></div>
           </div>
           <div class="text-muted small mt-2">
             Tip: click a point to open it in Google Flights.
@@ -1769,9 +1816,9 @@ function renderActiveRoutePane() {
 
   pane.appendChild(graphsRow);
 
-  const priceHistoryCanvas = graphsRow.querySelector(".routePriceHistoryCanvas");
+  const priceHistoryCanvas = graphsRow.querySelector(".routePriceHistoryChart");
   const priceHistoryEmpty = graphsRow.querySelector(".routePriceHistoryEmpty");
-  const googleCanvas = graphsRow.querySelector(".routeGooglePriceGraphCanvas");
+  const googleCanvas = graphsRow.querySelector(".routeGooglePriceGraphChart");
   const googleEmpty = graphsRow.querySelector(".routeGooglePriceGraphEmpty");
   const googleError = graphsRow.querySelector(".routeGooglePriceGraphError");
 

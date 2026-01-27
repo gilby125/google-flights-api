@@ -43,6 +43,10 @@
         height: 320px;
       }
 
+      .chart-container > .apex-chart {
+        height: 100%;
+      }
+
       #advancedBtn {
         font-weight: 500;
       }
@@ -506,11 +510,12 @@
             No price history collected for this route yet.
           </div>
           <div class="chart-container">
-            <canvas
+            <div
               id="priceGraph"
+              class="apex-chart"
               role="img"
               aria-label="Flight price history"
-            ></canvas>
+            ></div>
           </div>
         </div>
       </div>
@@ -527,11 +532,12 @@
             role="alert"
           ></div>
           <div class="chart-container">
-            <canvas
+            <div
               id="googlePriceGraph"
+              class="apex-chart"
               role="img"
               aria-label="Google price graph"
-            ></canvas>
+            ></div>
           </div>
           <div class="text-muted small mt-2">
             Tip: click a point to open it in Google Flights.
@@ -589,9 +595,9 @@
       crossorigin="anonymous"
     ></script>
     <script
-      src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"
+      src="https://cdn.jsdelivr.net/npm/apexcharts@3.49.1"
       crossorigin="anonymous"
     ></script>
-    <script src="/search.js?v=20260127-10"></script>
+    <script src="/search.js?v=20260127-11"></script>
   </body>
 </html>
