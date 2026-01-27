@@ -26,24 +26,29 @@ func serializeFlight(
 	date time.Time,
 	srcCities, srcAirports, dstCities, dstAirports []string,
 	stops Stops,
+	carriers []string,
 ) *urlpb.Url_Flight {
-	return &urlpb.Url_Flight{
+	flight := &urlpb.Url_Flight{
 		Date:         date.Format(time.DateOnly),
 		SrcLocations: append(serializeLocations(srcCities, urlpb.Url_CITY), serializeLocations(srcAirports, urlpb.Url_AIRPORT)...),
 		DstLocations: append(serializeLocations(dstCities, urlpb.Url_CITY), serializeLocations(dstAirports, urlpb.Url_AIRPORT)...),
 		Stops:        urlpb.Url_Stops(stops).Enum(),
 	}
+	if len(carriers) > 0 {
+		flight.Carriers = append([]string{}, carriers...)
+	}
+	return flight
 }
 
 func serializeFlights(args Args) []*urlpb.Url_Flight {
 	if args.TripType == OneWay {
 		return []*urlpb.Url_Flight{
-			serializeFlight(args.Date, args.SrcCities, args.SrcAirports, args.DstCities, args.DstAirports, args.Stops),
+			serializeFlight(args.Date, args.SrcCities, args.SrcAirports, args.DstCities, args.DstAirports, args.Stops, args.Carriers),
 		}
 	}
 	return []*urlpb.Url_Flight{
-		serializeFlight(args.Date, args.SrcCities, args.SrcAirports, args.DstCities, args.DstAirports, args.Stops),
-		serializeFlight(args.ReturnDate, args.DstCities, args.DstAirports, args.SrcCities, args.SrcAirports, args.Stops),
+		serializeFlight(args.Date, args.SrcCities, args.SrcAirports, args.DstCities, args.DstAirports, args.Stops, args.Carriers),
+		serializeFlight(args.ReturnDate, args.DstCities, args.DstAirports, args.SrcCities, args.SrcAirports, args.Stops, args.Carriers),
 	}
 }
 

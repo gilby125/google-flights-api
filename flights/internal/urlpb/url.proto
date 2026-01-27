@@ -23,6 +23,9 @@ message Url {
 
     message Flight {
         string date = 2;
+        // Carriers optionally restricts results to specific airlines or alliances.
+        // Values are best-effort and may change as Google updates formats.
+        repeated string carriers = 4;
         optional Stops stops = 5;
         repeated Location srcLocations = 13;
         repeated Location dstLocations = 14;

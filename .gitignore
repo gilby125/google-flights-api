@@ -36,6 +36,7 @@ vendor/
 # Build artifacts
 dist/
 bin/
+.bin/
 
 # Logs
 *.log
