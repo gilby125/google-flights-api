@@ -31,7 +31,14 @@ func TestGetPriceGraph(t *testing.T) {
 			time.Now().AddDate(0, 0, daysDiff2),
 			7,
 			[]string{"London"}, []string{}, []string{"Paris"}, []string{},
-			Options{Travelers{Adults: 1}, currency.PLN, AnyStops, Economy, RoundTrip, language.English},
+			Options{
+				Travelers: Travelers{Adults: 1},
+				Currency:  currency.PLN,
+				Stops:     AnyStops,
+				Class:     Economy,
+				TripType:  RoundTrip,
+				Lang:      language.English,
+			},
 		})
 	if err != nil {
 		t.Fatal(err)
@@ -73,7 +80,14 @@ func TestGetPriceGraphTravelers(t *testing.T) {
 		time.Now().AddDate(0, 0, 70),
 		7,
 		[]string{"London"}, []string{}, []string{"Paris"}, []string{},
-		Options{Travelers{Adults: 1}, currency.PLN, AnyStops, Economy, RoundTrip, language.English},
+		Options{
+			Travelers: Travelers{Adults: 1},
+			Currency:  currency.PLN,
+			Stops:     AnyStops,
+			Class:     Economy,
+			TripType:  RoundTrip,
+			Lang:      language.English,
+		},
 	}
 
 	offers, _, err := session.GetPriceGraph(context.Background(), args)
@@ -136,7 +150,14 @@ func TestGetPriceGraphMock(t *testing.T) {
 			time.Now().AddDate(0, 0, 5),
 			0,
 			[]string{"Athens"}, []string{}, []string{"Warsaw"}, []string{},
-			Options{Travelers{}, currency.PLN, AnyStops, Economy, RoundTrip, language.English},
+			Options{
+				Travelers: Travelers{},
+				Currency:  currency.PLN,
+				Stops:     AnyStops,
+				Class:     Economy,
+				TripType:  RoundTrip,
+				Lang:      language.English,
+			},
 		},
 	)
 	if err != nil {
@@ -181,7 +202,14 @@ func TestPriceGraphReqData(t *testing.T) {
 			[]string{"SFO"},
 			[]string{"London"},
 			[]string{"CDG"},
-			Options{Travelers{Adults: 1}, currency.USD, AnyStops, Economy, RoundTrip, language.English},
+			Options{
+				Travelers: Travelers{Adults: 1},
+				Currency:  currency.USD,
+				Stops:     AnyStops,
+				Class:     Economy,
+				TripType:  RoundTrip,
+				Lang:      language.English,
+			},
 		})
 	if err != nil {
 		t.Fatal(err)
@@ -206,7 +234,14 @@ func TestPriceGraphReqData(t *testing.T) {
 			[]string{"SFO"},
 			[]string{"London"},
 			[]string{"CDG"},
-			Options{Travelers{Adults: 2}, currency.USD, Stop2, Business, OneWay, language.English},
+			Options{
+				Travelers: Travelers{Adults: 2},
+				Currency:  currency.USD,
+				Stops:     Stop2,
+				Class:     Business,
+				TripType:  OneWay,
+				Lang:      language.English,
+			},
 		})
 	if err != nil {
 		t.Fatal(err)

@@ -38,7 +38,14 @@ func TestGetOffersUSDPLN(t *testing.T) {
 			[]string{"SFO"},
 			[]string{"London"},
 			[]string{"CDG"},
-			Options{Travelers{Adults: 2}, currency.PLN, Stop1, PremiumEconomy, OneWay, language.English},
+			Options{
+				Travelers: Travelers{Adults: 2},
+				Currency:  currency.PLN,
+				Stops:     Stop1,
+				Class:     PremiumEconomy,
+				TripType:  OneWay,
+				Lang:      language.English,
+			},
 		},
 	)
 
@@ -55,7 +62,14 @@ func TestGetOffersUSDPLN(t *testing.T) {
 			[]string{"SFO"},
 			[]string{"London"},
 			[]string{"CDG"},
-			Options{Travelers{Adults: 2}, currency.USD, Stop1, PremiumEconomy, OneWay, language.English},
+			Options{
+				Travelers: Travelers{Adults: 2},
+				Currency:  currency.USD,
+				Stops:     Stop1,
+				Class:     PremiumEconomy,
+				TripType:  OneWay,
+				Lang:      language.English,
+			},
 		},
 	)
 	if err != nil {
@@ -120,7 +134,14 @@ func TestGetOffersTravelers(t *testing.T) {
 		[]string{"SFO"},
 		[]string{"London"},
 		[]string{"CDG"},
-		Options{Travelers{Adults: 1}, currency.USD, Stop1, PremiumEconomy, OneWay, language.English},
+		Options{
+			Travelers: Travelers{Adults: 1},
+			Currency:  currency.USD,
+			Stops:     Stop1,
+			Class:     PremiumEconomy,
+			TripType:  OneWay,
+			Lang:      language.English,
+		},
 	}
 
 	offers, _, err := session.GetOffers(context.Background(), args)
@@ -245,12 +266,12 @@ func TestGetOffersMock(t *testing.T) {
 			[]string{"Athens"},
 			[]string{},
 			Options{
-				Travelers{},
-				currency.Unit{},
-				Stops(dummyValue),
-				Class(dummyValue),
-				TripType(dummyValue),
-				language.Tag{},
+				Travelers: Travelers{},
+				Currency:  currency.Unit{},
+				Stops:     Stops(dummyValue),
+				Class:     Class(dummyValue),
+				TripType:  TripType(dummyValue),
+				Lang:      language.Tag{},
 			},
 		},
 	)
@@ -307,7 +328,14 @@ func TestFlightReqData(t *testing.T) {
 			[]string{"SFO"},
 			[]string{"London"},
 			[]string{"CDG"},
-			Options{Travelers{Adults: 1}, currency.Unit{}, AnyStops, Economy, RoundTrip, language.English},
+			Options{
+				Travelers: Travelers{Adults: 1},
+				Currency:  currency.Unit{},
+				Stops:     AnyStops,
+				Class:     Economy,
+				TripType:  RoundTrip,
+				Lang:      language.English,
+			},
 		},
 	)
 	if err != nil {
@@ -332,7 +360,14 @@ func TestFlightReqData(t *testing.T) {
 			[]string{"SFO"},
 			[]string{"London"},
 			[]string{"CDG"},
-			Options{Travelers{Adults: 2}, currency.Unit{}, Stop2, Business, OneWay, language.English},
+			Options{
+				Travelers: Travelers{Adults: 2},
+				Currency:  currency.Unit{},
+				Stops:     Stop2,
+				Class:     Business,
+				TripType:  OneWay,
+				Lang:      language.English,
+			},
 		},
 	)
 	if err != nil {
