@@ -427,6 +427,21 @@ function renderPriceHistoryChart(canvas, priceHistory) {
 
   canvas.innerHTML = "";
 
+  const formatShortDate = (dateStr) => {
+    const raw = String(dateStr || "").trim();
+    if (!raw) return "";
+    const parsed = new Date(`${raw}T00:00:00Z`);
+    if (Number.isNaN(parsed.getTime())) return raw;
+    try {
+      return new Intl.DateTimeFormat(undefined, {
+        month: "numeric",
+        day: "numeric",
+      }).format(parsed);
+    } catch {
+      return raw;
+    }
+  };
+
   const currency = String(priceHistory?.currency || inputs.currency?.value || "")
     .trim()
     .toUpperCase();
@@ -463,7 +478,20 @@ function renderPriceHistoryChart(canvas, priceHistory) {
     xaxis: {
       type: "category",
       categories: dates,
-      labels: { rotate: -45, hideOverlappingLabels: true },
+      tickAmount: Math.min(2, dates.length),
+      labels: {
+        rotate: 0,
+        hideOverlappingLabels: true,
+        style: { fontSize: "10px" },
+        formatter: (value) => {
+          const raw = String(value || "").trim();
+          if (!raw) return "";
+          if (raw === dates[0] || raw === dates[dates.length - 1]) {
+            return formatShortDate(raw);
+          }
+          return "";
+        },
+      },
     },
     yaxis: {
       labels: {
@@ -471,6 +499,9 @@ function renderPriceHistoryChart(canvas, priceHistory) {
       },
     },
     tooltip: {
+      x: {
+        formatter: (value) => String(value || ""),
+      },
       y: {
         formatter: (value) => formatMoney(value),
       },
@@ -514,6 +545,21 @@ function renderGooglePriceGraphChart(canvas, priceGraph, errorEl) {
   }
 
   canvas.innerHTML = "";
+
+  const formatShortDate = (dateStr) => {
+    const raw = String(dateStr || "").trim();
+    if (!raw) return "";
+    const parsed = new Date(`${raw}T00:00:00Z`);
+    if (Number.isNaN(parsed.getTime())) return raw;
+    try {
+      return new Intl.DateTimeFormat(undefined, {
+        month: "numeric",
+        day: "numeric",
+      }).format(parsed);
+    } catch {
+      return raw;
+    }
+  };
 
   const currency = String(priceGraph?.currency || inputs.currency?.value || "")
     .trim()
@@ -576,7 +622,20 @@ function renderGooglePriceGraphChart(canvas, priceGraph, errorEl) {
     xaxis: {
       type: "category",
       categories,
-      labels: { rotate: -45, hideOverlappingLabels: true },
+      tickAmount: Math.min(2, categories.length),
+      labels: {
+        rotate: 0,
+        hideOverlappingLabels: true,
+        style: { fontSize: "10px" },
+        formatter: (value) => {
+          const raw = String(value || "").trim();
+          if (!raw) return "";
+          if (raw === categories[0] || raw === categories[categories.length - 1]) {
+            return formatShortDate(raw);
+          }
+          return "";
+        },
+      },
     },
     yaxis: {
       labels: {
@@ -584,6 +643,9 @@ function renderGooglePriceGraphChart(canvas, priceGraph, errorEl) {
       },
     },
     tooltip: {
+      x: {
+        formatter: (value) => String(value || ""),
+      },
       y: {
         formatter: (value) => formatMoney(value),
       },

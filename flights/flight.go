@@ -84,6 +84,56 @@ func serializeFlightTravelers(args Args) string {
 	)
 }
 
+func serializeCarriers(carriers []string) string {
+	if len(carriers) == 0 {
+		return "[]"
+	}
+
+	seen := make(map[string]struct{}, len(carriers))
+	unique := make([]string, 0, len(carriers))
+	for _, raw := range carriers {
+		token := strings.ToUpper(strings.TrimSpace(raw))
+		if token == "" {
+			continue
+		}
+		// Basic hardening: allow only a conservative charset so user input can't break the request encoding.
+		// Airline codes are typically 2 chars; alliance values may contain underscores.
+		valid := true
+		for _, r := range token {
+			if (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' {
+				continue
+			}
+			valid = false
+			break
+		}
+		if !valid {
+			continue
+		}
+		if _, ok := seen[token]; ok {
+			continue
+		}
+		seen[token] = struct{}{}
+		unique = append(unique, token)
+	}
+	if len(unique) == 0 {
+		return "[]"
+	}
+
+	var b strings.Builder
+	b.Grow(2 + len(unique)*6)
+	b.WriteByte('[')
+	for i, carrier := range unique {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(`\"`)
+		b.WriteString(carrier)
+		b.WriteString(`\"`)
+	}
+	b.WriteByte(']')
+	return b.String()
+}
+
 func (s *Session) getRawData(ctx context.Context, args Args) (string, error) {
 	serSrcs, err := s.serializeFlightLocations(ctx, args.SrcCities, args.SrcAirports, args.Lang)
 	if err != nil {
@@ -99,18 +149,19 @@ func (s *Session) getRawData(ctx context.Context, args Args) (string, error) {
 
 	serAdults := serializeFlightTravelers(args)
 	serStops := serializeFlightStop(args.Stops)
+	serCarriers := serializeCarriers(args.Carriers)
 
 	rawData := ""
 
 	rawData += fmt.Sprintf(`[null,null,%d,null,[],%d,%s,null,null,null,null,null,null,[`,
 		args.TripType, args.Class, serAdults)
 
-	rawData += fmt.Sprintf(`[[[%s]],[[%s]],null,%s,[],[],\"%s\",null,[],[],[],null,null,[],3]`,
-		serSrcs, serDsts, serStops, serDate)
+	rawData += fmt.Sprintf(`[[[%s]],[[%s]],null,%s,%s,[],\"%s\",null,[],[],[],null,null,[],3]`,
+		serSrcs, serDsts, serStops, serCarriers, serDate)
 
 	if args.TripType == RoundTrip {
-		rawData += fmt.Sprintf(`,[[[%s]],[[%s]],null,%s,[],[],\"%s\",null,[],[],[],null,null,[],3]`,
-			serDsts, serSrcs, serStops, serReturnDate)
+		rawData += fmt.Sprintf(`,[[[%s]],[[%s]],null,%s,%s,[],\"%s\",null,[],[],[],null,null,[],3]`,
+			serDsts, serSrcs, serStops, serCarriers, serReturnDate)
 	}
 
 	return rawData, nil

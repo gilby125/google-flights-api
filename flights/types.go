@@ -231,6 +231,12 @@ type Options struct {
 	Class     Class        // travel class (Economy, PremiumEconomy, Business, First)
 	TripType  TripType     // round-trip or one-way trip
 	Lang      language.Tag // language in which city names are provided
+	// Carriers optionally restricts results to specific airlines or alliances.
+	//
+	// Values are best-effort and may change as Google updates its internal APIs.
+	// For airlines, use IATA 2-letter codes (e.g., "UA", "DL", "B6").
+	// For alliances, Google currently accepts strings like "STAR_ALLIANCE", "ONEWORLD", "SKYTEAM".
+	Carriers []string
 }
 
 func OptionsDefault() Options {

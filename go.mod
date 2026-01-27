@@ -5,6 +5,7 @@ go 1.23.0
 toolchain go1.24.1
 
 require (
+	github.com/alicebob/miniredis/v2 v2.35.0
 	github.com/anyascii/go v0.3.2
 	github.com/browserutils/kooky v0.2.2
 	github.com/cloudflare/cloudflare-go v0.115.0
@@ -23,18 +24,11 @@ require (
 	google.golang.org/protobuf v1.36.6
 )
 
-// Remove the direct requirement for krisukox/google-flights-api
-// since we're replacing it with our local module
-
-replace github.com/krisukox/google-flights-api => ./
-
 require (
-	github.com/alicebob/miniredis/v2 v2.35.0 // indirect
 	github.com/bytedance/sonic v1.13.2 // indirect
 	github.com/bytedance/sonic/loader v0.2.4 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cloudwego/base64x v0.1.5 // indirect
-	github.com/cloudwego/iasm v0.2.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/gabriel-vasile/mimetype v1.4.8 // indirect

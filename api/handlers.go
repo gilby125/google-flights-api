@@ -3006,6 +3006,58 @@ func DirectFlightSearch(pgDB db.PostgresDB, neo4jDB db.Neo4jDatabase) gin.Handle
 			TripLengthDays:    searchRequest.PriceGraphTripLengthDays,
 		}
 
+		normalizeGroupTokens := func(tokens []string) map[string]struct{} {
+			out := make(map[string]struct{}, len(tokens))
+			for _, raw := range tokens {
+				token := strings.ToUpper(strings.TrimSpace(raw))
+				if token == "" {
+					continue
+				}
+				if !macros.IsAirlineGroupToken(token) {
+					continue
+				}
+				out[token] = struct{}{}
+			}
+			return out
+		}
+
+		includeGroups := normalizeGroupTokens(searchRequest.IncludeAirlineGroups)
+		excludeGroups := normalizeGroupTokens(searchRequest.ExcludeAirlineGroups)
+
+		googleCarrierFilterFromGroups := func(include, exclude map[string]struct{}) []string {
+			// Only support a single alliance include filter for now.
+			// If you need AND/NOT semantics, keep using post-fetch filtering.
+			if len(exclude) > 0 {
+				return nil
+			}
+			if _, ok := include[macros.GroupLowCost]; ok {
+				return nil
+			}
+
+			selected := ""
+			for _, token := range []string{macros.GroupStarAlliance, macros.GroupOneworld, macros.GroupSkyTeam} {
+				if _, ok := include[token]; !ok {
+					continue
+				}
+				if selected != "" {
+					return nil
+				}
+				selected = token
+			}
+			switch selected {
+			case macros.GroupStarAlliance:
+				return []string{"STAR_ALLIANCE"}
+			case macros.GroupOneworld:
+				return []string{"ONEWORLD"}
+			case macros.GroupSkyTeam:
+				return []string{"SKYTEAM"}
+			default:
+				return nil
+			}
+		}
+
+		baseOptions.Carriers = googleCarrierFilterFromGroups(includeGroups, excludeGroups)
+
 		maybeGetPriceGraph := func(routeOrigin, routeDestination string) map[string]interface{} {
 			if !searchRequest.IncludePriceGraph {
 				return nil
@@ -3019,7 +3071,13 @@ func DirectFlightSearch(pgDB db.PostgresDB, neo4jDB db.Neo4jDatabase) gin.Handle
 			offers, parseErrors, pgErr := session.GetPriceGraph(c.Request.Context(), args)
 			response := SerializePriceGraphResponse(routeOrigin, routeDestination, searchRequest.Currency, args, offers, parseErrors, pgErr)
 			if len(searchRequest.IncludeAirlineGroups) > 0 || len(searchRequest.ExcludeAirlineGroups) > 0 {
-				response["filter_warning"] = "Google price graph cannot be filtered by airline groups; it reflects all carriers returned by Google for the route/date range."
+				if len(baseOptions.Carriers) == 0 {
+					response["filter_warning"] = "Google price graph could not apply the selected airline-group filters; it reflects all carriers returned by Google for the route/date range."
+				} else {
+					response["filter_note"] = map[string]interface{}{
+						"google_carriers": baseOptions.Carriers,
+					}
+				}
 				response["filter"] = map[string]interface{}{
 					"include_airline_groups": searchRequest.IncludeAirlineGroups,
 					"exclude_airline_groups": searchRequest.ExcludeAirlineGroups,
@@ -3089,24 +3147,6 @@ func DirectFlightSearch(pgDB db.PostgresDB, neo4jDB db.Neo4jDatabase) gin.Handle
 			response["points"] = points
 			return response
 		}
-
-		normalizeGroupTokens := func(tokens []string) map[string]struct{} {
-			out := make(map[string]struct{}, len(tokens))
-			for _, raw := range tokens {
-				token := strings.ToUpper(strings.TrimSpace(raw))
-				if token == "" {
-					continue
-				}
-				if !macros.IsAirlineGroupToken(token) {
-					continue
-				}
-				out[token] = struct{}{}
-			}
-			return out
-		}
-
-		includeGroups := normalizeGroupTokens(searchRequest.IncludeAirlineGroups)
-		excludeGroups := normalizeGroupTokens(searchRequest.ExcludeAirlineGroups)
 
 		offerAirlineCodes := func(offer flights.FullOffer) []string {
 			out := make([]string, 0, len(offer.Flight)+len(offer.ReturnFlight))
@@ -3514,19 +3554,7 @@ func DirectFlightSearch(pgDB db.PostgresDB, neo4jDB db.Neo4jDatabase) gin.Handle
 				ReturnDate:  returnDate,
 				SrcAirports: srcAirports,
 				DstAirports: dstAirports,
-				Options: flights.Options{
-					Travelers: flights.Travelers{
-						Adults:       searchRequest.Adults,
-						Children:     searchRequest.Children,
-						InfantOnLap:  searchRequest.InfantsLap,
-						InfantInSeat: searchRequest.InfantsSeat,
-					},
-					Currency: cur,
-					Stops:    stops,
-					Class:    class,
-					TripType: tripType,
-					Lang:     language.English,
-				},
+				Options:     baseOptions,
 			}
 		}
 

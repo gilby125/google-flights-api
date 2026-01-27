@@ -29,7 +29,14 @@ func TestSerializeURL1(t *testing.T) {
 			[]string{"SFO"},
 			[]string{"London"},
 			[]string{"CDG"},
-			Options{Travelers{Adults: 1}, currency.USD, Stop1, Economy, RoundTrip, language.English},
+			Options{
+				Travelers: Travelers{Adults: 1},
+				Currency:  currency.USD,
+				Stops:     Stop1,
+				Class:     Economy,
+				TripType:  RoundTrip,
+				Lang:      language.English,
+			},
 		},
 	)
 
@@ -62,7 +69,14 @@ func TestSerializeURL2(t *testing.T) {
 			[]string{"SFO"},
 			[]string{"Miami"},
 			[]string{},
-			Options{Travelers{Adults: 2, Children: 1, InfantOnLap: 1}, currency.USD, Stop2, Economy, RoundTrip, language.English},
+			Options{
+				Travelers: Travelers{Adults: 2, Children: 1, InfantOnLap: 1},
+				Currency:  currency.USD,
+				Stops:     Stop2,
+				Class:     Economy,
+				TripType:  RoundTrip,
+				Lang:      language.English,
+			},
 		},
 	)
 
