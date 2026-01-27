@@ -1030,8 +1030,25 @@ func getBulkSearchById(pgDB db.PostgresDB) gin.HandlerFunc { // Changed paramete
 		results := []db.BulkSearchResult{} // Use the defined struct
 		for rows.Next() {
 			var res db.BulkSearchResult
-			err := rows.Scan(&res.Origin, &res.Destination, &res.DepartureDate,
-				&res.ReturnDate, &res.Price, &res.Currency, &res.AirlineCode, &res.Duration)
+			err := rows.Scan(
+				&res.Origin,
+				&res.Destination,
+				&res.DepartureDate,
+				&res.ReturnDate,
+				&res.Price,
+				&res.Currency,
+				&res.AirlineCode,
+				&res.Duration,
+				&res.SrcAirportCode,
+				&res.DstAirportCode,
+				&res.SrcCity,
+				&res.DstCity,
+				&res.FlightDuration,
+				&res.ReturnFlightDuration,
+				&res.OutboundFlights,
+				&res.ReturnFlights,
+				&res.OfferJSON,
+			)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scan bulk search result: " + err.Error()})
 				return
@@ -1061,12 +1078,21 @@ func getBulkSearchById(pgDB db.PostgresDB) gin.HandlerFunc { // Changed paramete
 			resultsMap = append(resultsMap, resultMap)
 		}
 
+		var jobID interface{}
+		if search.JobID.Valid {
+			jobID = search.JobID.Int32
+		}
+
 		response := map[string]interface{}{
 			"id":             search.ID,
+			"job_id":         jobID,
 			"status":         search.Status,
 			"total_searches": search.TotalSearches,
 			"completed":      search.Completed,
+			"total_offers":   search.TotalOffers,
+			"error_count":    search.ErrorCount,
 			"created_at":     search.CreatedAt,
+			"updated_at":     search.UpdatedAt,
 			"results":        resultsMap, // Use the converted map
 			"pagination": map[string]interface{}{
 				"page":     page,
@@ -2988,15 +3014,17 @@ func DirectFlightSearch(pgDB db.PostgresDB, neo4jDB db.Neo4jDatabase) gin.Handle
 		warnings = append(warnings, destinationWarnings...)
 
 		totalRoutes := len(expandedOrigins) * len(expandedDestinations)
-		const maxDirectAirportsPerSide = 50
 		const maxDirectAirportsTotal = 60
+		// NOTE: We enforce a *total* expansion cap to keep the direct search endpoint safe/fast.
+		// Per-side caps are intentionally kept equal to the total cap so a single large region token
+		// (e.g., REGION:CARIBBEAN) can still be used as either origins or destinations.
+		const maxDirectAirportsPerSide = maxDirectAirportsTotal
 		if len(expandedOrigins) > maxDirectAirportsPerSide || len(expandedDestinations) > maxDirectAirportsPerSide || (len(expandedOrigins)+len(expandedDestinations)) > maxDirectAirportsTotal {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"error": fmt.Sprintf(
-					"too many airports after expansion (origins=%d, destinations=%d; max %d per side, %d total). Narrow your inputs or use /api/v1/bulk-search for large grids.",
+					"too many airports after expansion (origins=%d, destinations=%d; max %d total across origins+destinations). Narrow your inputs or use /api/v1/bulk-search for large grids.",
 					len(expandedOrigins),
 					len(expandedDestinations),
-					maxDirectAirportsPerSide,
 					maxDirectAirportsTotal,
 				),
 				"warnings": warnings,

@@ -52,6 +52,7 @@ type PostgresDB interface {
 	ListBulkSearchOffers(ctx context.Context, searchID int) ([]BulkSearchOffer, error)
 	CreateBulkSearchRecord(ctx context.Context, jobID sql.NullInt32, totalSearches int, currency, status string) (int, error)
 	UpdateBulkSearchStatus(ctx context.Context, bulkSearchID int, status string) error
+	UpdateBulkSearchProgress(ctx context.Context, bulkSearchID int, completed, totalOffers, errorCount int) error
 	CompleteBulkSearch(ctx context.Context, summary BulkSearchSummary) error
 	InsertBulkSearchResult(ctx context.Context, result BulkSearchResultRecord) error
 	InsertBulkSearchResultsBatch(ctx context.Context, results []BulkSearchResultRecord) error
@@ -607,6 +608,25 @@ func (p *PostgresDBImpl) UpdateBulkSearchStatus(ctx context.Context, bulkSearchI
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update bulk search %d status to %s: %w", bulkSearchID, status, err)
+	}
+	return nil
+}
+
+func (p *PostgresDBImpl) UpdateBulkSearchProgress(ctx context.Context, bulkSearchID int, completed, totalOffers, errorCount int) error {
+	_, err := p.db.ExecContext(ctx,
+		`UPDATE bulk_searches
+         SET completed = $1,
+             total_offers = $2,
+             error_count = $3,
+             updated_at = NOW()
+         WHERE id = $4`,
+		completed,
+		totalOffers,
+		errorCount,
+		bulkSearchID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update bulk search %d progress: %w", bulkSearchID, err)
 	}
 	return nil
 }

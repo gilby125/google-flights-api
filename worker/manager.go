@@ -1534,16 +1534,6 @@ func (m *Manager) processBulkSearchCheapFirst(ctx context.Context, worker *Worke
 		}
 	}()
 
-	// Track results
-	type RouteResult struct {
-		Origin      string
-		Destination string
-		BestOffer   flights.FullOffer
-		BestDate    time.Time
-		BestReturn  time.Time
-		DealScore   float64
-	}
-	routeResults := make(map[string]*RouteResult)
 	var searchErrors []error
 
 	// Track stats
@@ -1554,6 +1544,7 @@ func (m *Manager) processBulkSearchCheapFirst(ctx context.Context, worker *Worke
 		minPrice    float64 = math.MaxFloat64
 		maxPrice    float64
 		sumPrice    float64
+		completed   int
 	)
 
 	for _, origin := range payload.Origins {
@@ -1596,11 +1587,20 @@ func (m *Manager) processBulkSearchCheapFirst(ctx context.Context, worker *Worke
 			if err != nil {
 				log.Printf("[CheapFirst] Error getting price graph for %s: %v", routeKey, err)
 				searchErrors = append(searchErrors, fmt.Errorf("price graph for %s failed: %w", routeKey, err))
+				// Count the route as processed for progress reporting even if it failed.
+				completed++
+				if completed%5 == 0 {
+					_ = m.postgresDB.UpdateBulkSearchProgress(ctx, bulkSearchID, completed, totalOffers, len(searchErrors))
+				}
 				continue
 			}
 
 			if len(priceOffers) == 0 {
 				log.Printf("[CheapFirst] No prices found for %s", routeKey)
+				completed++
+				if completed%5 == 0 {
+					_ = m.postgresDB.UpdateBulkSearchProgress(ctx, bulkSearchID, completed, totalOffers, len(searchErrors))
+				}
 				continue
 			}
 
@@ -1615,6 +1615,10 @@ func (m *Manager) processBulkSearchCheapFirst(ctx context.Context, worker *Worke
 			priceOffers = filtered
 			if len(priceOffers) == 0 {
 				log.Printf("[CheapFirst] No priced offers found for %s (all offers were price=0)", routeKey)
+				completed++
+				if completed%5 == 0 {
+					_ = m.postgresDB.UpdateBulkSearchProgress(ctx, bulkSearchID, completed, totalOffers, len(searchErrors))
+				}
 				continue
 			}
 
@@ -1685,15 +1689,6 @@ func (m *Manager) processBulkSearchCheapFirst(ctx context.Context, worker *Worke
 			}
 
 			if bestOffer != nil {
-				routeResults[routeKey] = &RouteResult{
-					Origin:      origin,
-					Destination: destination,
-					BestOffer:   *bestOffer,
-					BestDate:    bestDate,
-					BestReturn:  bestReturn,
-					DealScore:   bestScore,
-				}
-
 				log.Printf("[CheapFirst] Route %s: best deal $%.2f (score: %.2f) on %s",
 					routeKey, bestOffer.Price, bestScore, bestDate.Format("2006-01-02"))
 
@@ -1705,8 +1700,55 @@ func (m *Manager) processBulkSearchCheapFirst(ctx context.Context, worker *Worke
 					maxPrice = bestOffer.Price
 				}
 				sumPrice += bestOffer.Price
+
+				returnDate := sql.NullTime{}
+				if !bestReturn.IsZero() {
+					returnDate = sql.NullTime{Time: bestReturn, Valid: true}
+				}
+
+				airlineCode := ""
+				if len(bestOffer.Flight) > 0 {
+					flightNumber := bestOffer.Flight[0].FlightNumber
+					if len(flightNumber) >= 2 {
+						airlineCode = flightNumber[:2]
+					}
+				}
+
+				flightDuration := int(bestOffer.FlightDuration.Minutes())
+				returnFlightDuration := int(bestOffer.ReturnFlightDuration.Minutes())
+				totalDuration := flightDuration + returnFlightDuration
+
+				record := db.BulkSearchResultRecord{
+					BulkSearchID:         bulkSearchID,
+					Origin:               origin,
+					Destination:          destination,
+					DepartureDate:        bestDate,
+					ReturnDate:           returnDate,
+					Price:                bestOffer.Price,
+					Currency:             strings.ToUpper(payload.Currency),
+					AirlineCode:          nullString(airlineCode),
+					Duration:             nullInt32(totalDuration),
+					SrcAirportCode:       nullString(bestOffer.SrcAirportCode),
+					DstAirportCode:       nullString(bestOffer.DstAirportCode),
+					SrcCity:              nullString(bestOffer.SrcCity),
+					DstCity:              nullString(bestOffer.DstCity),
+					FlightDuration:       durationToNullMinutes(bestOffer.FlightDuration),
+					ReturnFlightDuration: durationToNullMinutes(bestOffer.ReturnFlightDuration),
+					OutboundFlightsJSON:  flightsToJSON(bestOffer.Flight),
+					ReturnFlightsJSON:    flightsToJSON(bestOffer.ReturnFlight),
+					OfferJSON:            offerToJSON(*bestOffer),
+				}
+
+				if insertErr := m.postgresDB.InsertBulkSearchResult(ctx, record); insertErr != nil {
+					log.Printf("[CheapFirst] Failed to insert result for %s -> %s: %v", origin, destination, insertErr)
+				}
 			} else {
 				log.Printf("[CheapFirst] Route %s: no valid offers found", routeKey)
+			}
+
+			completed++
+			if completed%5 == 0 || completed == totalRoutes {
+				_ = m.postgresDB.UpdateBulkSearchProgress(ctx, bulkSearchID, completed, totalOffers, len(searchErrors))
 			}
 		}
 	}
@@ -1715,78 +1757,29 @@ func (m *Manager) processBulkSearchCheapFirst(ctx context.Context, worker *Worke
 		phase1Calls, phase2Calls, phase1Calls+phase2Calls,
 		totalRoutes*len(m.generateDateRange(payload.DepartureDateFrom, payload.DepartureDateTo, payload.TripLength)))
 
-	// Store results (minimal storage - no StoreFlightOffers, no bulk_search_offers)
-	completedRoutes := 0
-	for _, result := range routeResults {
-		departureDate := result.BestDate
-		returnDate := sql.NullTime{}
-		if !result.BestReturn.IsZero() {
-			returnDate = sql.NullTime{Time: result.BestReturn, Valid: true}
-		}
-
-		airlineCode := ""
-		if len(result.BestOffer.Flight) > 0 {
-			flightNumber := result.BestOffer.Flight[0].FlightNumber
-			if len(flightNumber) >= 2 {
-				airlineCode = flightNumber[:2]
-			}
-		}
-
-		flightDuration := int(result.BestOffer.FlightDuration.Minutes())
-		returnFlightDuration := int(result.BestOffer.ReturnFlightDuration.Minutes())
-		totalDuration := flightDuration + returnFlightDuration
-
-		record := db.BulkSearchResultRecord{
-			BulkSearchID:         bulkSearchID,
-			Origin:               result.Origin,
-			Destination:          result.Destination,
-			DepartureDate:        departureDate,
-			ReturnDate:           returnDate,
-			Price:                result.BestOffer.Price,
-			Currency:             strings.ToUpper(payload.Currency),
-			AirlineCode:          nullString(airlineCode),
-			Duration:             nullInt32(totalDuration),
-			SrcAirportCode:       nullString(result.BestOffer.SrcAirportCode),
-			DstAirportCode:       nullString(result.BestOffer.DstAirportCode),
-			SrcCity:              nullString(result.BestOffer.SrcCity),
-			DstCity:              nullString(result.BestOffer.DstCity),
-			FlightDuration:       durationToNullMinutes(result.BestOffer.FlightDuration),
-			ReturnFlightDuration: durationToNullMinutes(result.BestOffer.ReturnFlightDuration),
-			OutboundFlightsJSON:  flightsToJSON(result.BestOffer.Flight),
-			ReturnFlightsJSON:    flightsToJSON(result.BestOffer.ReturnFlight),
-			OfferJSON:            offerToJSON(result.BestOffer),
-		}
-
-		if insertErr := m.postgresDB.InsertBulkSearchResult(ctx, record); insertErr != nil {
-			log.Printf("[CheapFirst] Failed to insert result for %s -> %s: %v",
-				result.Origin, result.Destination, insertErr)
-		}
-		completedRoutes++
-	}
-
 	// Finalize bulk search
 	var minPriceNull, maxPriceNull, avgPriceNull sql.NullFloat64
-	if completedRoutes > 0 {
+	if completed > 0 {
 		minPriceNull = sql.NullFloat64{Float64: minPrice, Valid: true}
 		maxPriceNull = sql.NullFloat64{Float64: maxPrice, Valid: true}
-		avgPriceNull = sql.NullFloat64{Float64: sumPrice / float64(completedRoutes), Valid: true}
+		avgPriceNull = sql.NullFloat64{Float64: sumPrice / float64(completed), Valid: true}
 	}
 
 	status := "completed"
-	if len(searchErrors) > 0 && completedRoutes > 0 {
+	if len(searchErrors) > 0 && completed > 0 {
 		status = "completed_with_errors"
 	}
-	if completedRoutes == 0 {
+	if completed == 0 {
 		status = "failed"
 	}
 
 	log.Printf("[CheapFirst] Bulk search completed: %d routes, %d offers, status=%s",
-		completedRoutes, totalOffers, status)
+		completed, totalOffers, status)
 
 	summary := db.BulkSearchSummary{
 		ID:           bulkSearchID,
 		Status:       status,
-		Completed:    completedRoutes,
+		Completed:    completed,
 		TotalOffers:  totalOffers,
 		ErrorCount:   len(searchErrors),
 		MinPrice:     minPriceNull,

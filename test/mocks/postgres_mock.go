@@ -308,6 +308,11 @@ func (m *MockPostgresDB) UpdateBulkSearchStatus(ctx context.Context, bulkSearchI
 	return args.Error(0)
 }
 
+func (m *MockPostgresDB) UpdateBulkSearchProgress(ctx context.Context, bulkSearchID int, completed, totalOffers, errorCount int) error {
+	args := m.Called(ctx, bulkSearchID, completed, totalOffers, errorCount)
+	return args.Error(0)
+}
+
 func (m *MockPostgresDB) CompleteBulkSearch(ctx context.Context, summary db.BulkSearchSummary) error {
 	args := m.Called(ctx, summary)
 	return args.Error(0)
