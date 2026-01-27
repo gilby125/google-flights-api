@@ -197,12 +197,14 @@ func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Ne
 
 	// Web UI routes
 	router.GET("/search-page/", func(c *gin.Context) {
+		c.Header("Cache-Control", "no-store")
 		c.Header("Content-Type", "text/html")
 		c.File("./web/search/index.html")
 	})
 
 	// Search page route - serve index.html directly
 	router.GET("/search", func(c *gin.Context) {
+		c.Header("Cache-Control", "no-store")
 		c.Header("Content-Type", "text/html")
 		c.File("./web/search/index.html")
 	})
@@ -217,6 +219,10 @@ func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Ne
 	router.Static("/admin", "./web/admin")
 	router.Static("/search", "./web/search")
 	router.Static("/bulk-search", "./web/bulk-search")
-	router.StaticFile("/search.js", "./web/search/search.js")
+	router.GET("/search.js", func(c *gin.Context) {
+		c.Header("Cache-Control", "no-store")
+		c.Header("Content-Type", "application/javascript")
+		c.File("./web/search/search.js")
+	})
 	router.StaticFile("/", "./web/index.html")
 }

@@ -22,6 +22,7 @@ const elements = {
   priceGraph: document.getElementById("priceGraph"),
   googlePriceGraphCard: document.getElementById("googlePriceGraphCard"),
   googlePriceGraph: document.getElementById("googlePriceGraph"),
+  googlePriceGraphError: document.getElementById("googlePriceGraphError"),
   resultsCard: document.getElementById("resultsCard"),
   flightResults: document.getElementById("flightResults"),
   sortResults: document.getElementById("sortResults"),
@@ -672,6 +673,10 @@ async function handleSearch(event) {
   if (elements.priceGraphCard) elements.priceGraphCard.style.display = "none";
   if (elements.googlePriceGraphCard)
     elements.googlePriceGraphCard.style.display = "none";
+  if (elements.googlePriceGraphError) {
+    elements.googlePriceGraphError.classList.add("d-none");
+    elements.googlePriceGraphError.textContent = "";
+  }
   if (elements.resultsCard) elements.resultsCard.style.display = "none";
 
   try {
@@ -915,7 +920,11 @@ function displayGooglePriceGraph(priceGraph) {
   if (!elements.googlePriceGraphCard || !elements.googlePriceGraph) return;
 
   if (priceGraph?.error) {
-    elements.googlePriceGraphCard.style.display = "none";
+    elements.googlePriceGraphCard.style.display = "block";
+    if (elements.googlePriceGraphError) {
+      elements.googlePriceGraphError.textContent = String(priceGraph.error);
+      elements.googlePriceGraphError.classList.remove("d-none");
+    }
     return;
   }
 
@@ -923,6 +932,11 @@ function displayGooglePriceGraph(priceGraph) {
   if (!points || points.length === 0) {
     elements.googlePriceGraphCard.style.display = "none";
     return;
+  }
+
+  if (elements.googlePriceGraphError) {
+    elements.googlePriceGraphError.classList.add("d-none");
+    elements.googlePriceGraphError.textContent = "";
   }
 
   const labels = points.map((p) => p.departure_date);
