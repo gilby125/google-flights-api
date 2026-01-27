@@ -354,6 +354,11 @@ func (w *Worker) StoreFlightInNeo4j(ctx context.Context, offer flights.FullOffer
 		return nil
 	}
 
+	overallAirlineCode := ""
+	if len(offer.Flight) > 0 && len(offer.Flight[0].FlightNumber) >= 2 {
+		overallAirlineCode = offer.Flight[0].FlightNumber[:2]
+	}
+
 	// Create airports in Neo4j
 	for _, flight := range offer.Flight {
 		// Create departure airport
@@ -410,6 +415,27 @@ func (w *Worker) StoreFlightInNeo4j(ctx context.Context, offer flights.FullOffer
 			flight.FlightNumber[:2], // Airline code
 		); err != nil {
 			return fmt.Errorf("failed to add price point in Neo4j: %w", err)
+		}
+	}
+
+	// Also store a route-level price point for the requested origin/destination (not just per-segment),
+	// so price history queries for a route like MKE->RTB return data even when itineraries connect.
+	if offer.SrcAirportCode != "" && offer.DstAirportCode != "" && offer.Price > 0 {
+		if err := w.neo4jDB.CreateAirport(offer.SrcAirportCode, offer.SrcAirportCode, "", "", 0.0, 0.0); err != nil {
+			return fmt.Errorf("failed to create origin airport in Neo4j: %w", err)
+		}
+		if err := w.neo4jDB.CreateAirport(offer.DstAirportCode, offer.DstAirportCode, "", "", 0.0, 0.0); err != nil {
+			return fmt.Errorf("failed to create destination airport in Neo4j: %w", err)
+		}
+
+		if err := w.neo4jDB.AddPricePoint(
+			offer.SrcAirportCode,
+			offer.DstAirportCode,
+			offer.StartDate.Format("2006-01-02"),
+			offer.Price,
+			overallAirlineCode,
+		); err != nil {
+			return fmt.Errorf("failed to add route-level price point in Neo4j: %w", err)
 		}
 	}
 

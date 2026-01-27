@@ -2753,7 +2753,7 @@ type DirectSearchRequest struct {
 }
 
 // DirectFlightSearch handles direct flight searches (bypasses queue for immediate results)
-func DirectFlightSearch() gin.HandlerFunc {
+func DirectFlightSearch(pgDB db.PostgresDB, neo4jDB db.Neo4jDatabase) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		log.Println("Direct search flights handler called")
 
@@ -2816,6 +2816,41 @@ func DirectFlightSearch() gin.HandlerFunc {
 			log.Printf("Error creating flight session: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to initialize flight search"})
 			return
+		}
+
+		searchWorker := worker.NewWorker(pgDB, neo4jDB)
+		persistOffers := func(routeOrigin, routeDestination string, offers []flights.FullOffer, priceRange *flights.PriceRange) {
+			ctx := c.Request.Context()
+			payload := worker.FlightSearchPayload{
+				Origin:        routeOrigin,
+				Destination:   routeDestination,
+				DepartureDate: departureDate,
+				ReturnDate:    returnDate,
+				Adults:        searchRequest.Adults,
+				Children:      searchRequest.Children,
+				InfantsLap:    searchRequest.InfantsLap,
+				InfantsSeat:   searchRequest.InfantsSeat,
+				TripType:      searchRequest.TripType,
+				Class:         searchRequest.Class,
+				Stops:         searchRequest.Stops,
+				Currency:      searchRequest.Currency,
+			}
+
+			switch {
+			case pgDB != nil:
+				if err := searchWorker.StoreFlightOffers(ctx, payload, offers, priceRange); err != nil {
+					log.Printf("Failed to persist direct search %s->%s in Postgres: %v", routeOrigin, routeDestination, err)
+				}
+			case neo4jDB != nil:
+				for _, offer := range offers {
+					if err := searchWorker.StoreFlightInNeo4j(ctx, offer); err != nil {
+						log.Printf("Failed to persist direct search %s->%s in Neo4j: %v", routeOrigin, routeDestination, err)
+						break
+					}
+				}
+			default:
+				return
+			}
 		}
 
 		// Map trip type
@@ -3062,6 +3097,8 @@ func DirectFlightSearch() gin.HandlerFunc {
 				return
 			}
 
+			persistOffers(searchRequest.Origin, searchRequest.Destination, offers, priceRange)
+
 			responseOffers, _, _, _ := convertOffers(searchRequest.Origin, searchRequest.Destination, offers)
 			response := map[string]interface{}{
 				"offers":        responseOffers,
@@ -3118,6 +3155,8 @@ func DirectFlightSearch() gin.HandlerFunc {
 						routes = append(routes, route)
 						continue
 					}
+
+					persistOffers(origin, destination, offers, priceRange)
 
 					routeOffers, routeCheapestPrice, routeCheapestOffer, routeCheapestSet := convertOffers(origin, destination, offers)
 					route["offers"] = routeOffers
@@ -3326,6 +3365,8 @@ func DirectFlightSearch() gin.HandlerFunc {
 			if len(fullOffers) == 0 {
 				continue
 			}
+
+			persistOffers(rk.origin, rk.destination, fullOffers, nil)
 
 			routeOffers, routeCheapestPrice, routeCheapestOffer, routeCheapestSet := convertOffers(rk.origin, rk.destination, fullOffers)
 			route := map[string]interface{}{

@@ -4,7 +4,6 @@
 const API_BASE = "/api";
 const ENDPOINTS = {
   SEARCH: `${API_BASE}/search`,
-  PRICE_HISTORY_LEGACY: `${API_BASE}/price-history`,
   PRICE_HISTORY_V1: "/api/v1/price-history",
   AIRPORTS: `${API_BASE}/airports`,
   ADMIN_BULK_JOBS: "/api/v1/admin/bulk-jobs",
@@ -21,6 +20,7 @@ const elements = {
   loadingIndicator: document.getElementById("loadingIndicator"),
   priceGraphCard: document.getElementById("priceGraphCard"),
   priceGraph: document.getElementById("priceGraph"),
+  priceHistoryEmpty: document.getElementById("priceHistoryEmpty"),
   googlePriceGraphCard: document.getElementById("googlePriceGraphCard"),
   googlePriceGraph: document.getElementById("googlePriceGraph"),
   googlePriceGraphError: document.getElementById("googlePriceGraphError"),
@@ -672,6 +672,11 @@ async function handleSearch(event) {
 
   setLoadingState(true);
   if (elements.priceGraphCard) elements.priceGraphCard.style.display = "none";
+  if (elements.priceHistoryEmpty) {
+    elements.priceHistoryEmpty.classList.add("d-none");
+    elements.priceHistoryEmpty.textContent =
+      "No price history collected for this route yet.";
+  }
   if (elements.googlePriceGraphCard)
     elements.googlePriceGraphCard.style.display = "none";
   if (elements.googlePriceGraphError) {
@@ -841,23 +846,22 @@ async function loadPriceHistory(origin, destination) {
     const originEncoded = encodeURIComponent(origin);
     const destinationEncoded = encodeURIComponent(destination);
 
-    let response = await fetch(
+    const response = await fetch(
       `${ENDPOINTS.PRICE_HISTORY_V1}/${originEncoded}/${destinationEncoded}`,
     );
 
-    if (!response.ok) {
-      response = await fetch(
-        `${ENDPOINTS.PRICE_HISTORY_LEGACY}?origin=${originEncoded}&destination=${destinationEncoded}`,
-      );
-    }
-
-    if (!response.ok) throw new Error("Failed to load price history");
+    if (!response.ok) throw new Error(`Price history unavailable (${response.status})`);
 
     const priceHistory = await response.json();
     displayPriceGraph(priceHistory);
   } catch (error) {
     console.error("Error loading price history:", error);
-    // Don't show an alert for this non-critical error
+    if (elements.priceGraphCard) elements.priceGraphCard.style.display = "block";
+    if (elements.priceHistoryEmpty) {
+      elements.priceHistoryEmpty.textContent =
+        "No price history collected for this route yet.";
+      elements.priceHistoryEmpty.classList.remove("d-none");
+    }
   }
 }
 
@@ -865,13 +869,22 @@ async function loadPriceHistory(origin, destination) {
 function displayPriceGraph(priceHistory) {
   if (!elements.priceGraphCard || !priceHistory) return;
 
+  if (elements.priceHistoryEmpty) {
+    elements.priceHistoryEmpty.classList.add("d-none");
+    elements.priceHistoryEmpty.textContent =
+      "No price history collected for this route yet.";
+  }
+
   const history = Array.isArray(priceHistory.history)
     ? priceHistory.history
     : Array.isArray(priceHistory)
       ? priceHistory
       : null;
   if (!history || history.length === 0) {
-    elements.priceGraphCard.style.display = "none";
+    elements.priceGraphCard.style.display = "block";
+    if (elements.priceHistoryEmpty) {
+      elements.priceHistoryEmpty.classList.remove("d-none");
+    }
     return;
   }
 
@@ -905,7 +918,10 @@ function displayPriceGraph(priceHistory) {
   const prices = dates.map((date) => minByDate.get(date));
 
   if (dates.length === 0) {
-    elements.priceGraphCard.style.display = "none";
+    elements.priceGraphCard.style.display = "block";
+    if (elements.priceHistoryEmpty) {
+      elements.priceHistoryEmpty.classList.remove("d-none");
+    }
     return;
   }
 

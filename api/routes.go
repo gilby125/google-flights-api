@@ -86,7 +86,7 @@ func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Ne
 	}))
 	{
 		// Direct flight search (immediate results, bypasses queue)
-		apiGroup.POST("/search", DirectFlightSearch())
+		apiGroup.POST("/search", DirectFlightSearch(postgresDB, neo4jDB))
 		apiGroup.GET("/search-test", func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"message": "Search test endpoint working"})
 		})
