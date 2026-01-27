@@ -61,6 +61,8 @@ const inputs = {
   includeStar: document.getElementById("includeStar"),
   includeOneworld: document.getElementById("includeOneworld"),
   includeSkyTeam: document.getElementById("includeSkyTeam"),
+  googleAlliance: document.getElementById("googleAlliance"),
+  googleCarriers: document.getElementById("googleCarriers"),
   recurringName: document.getElementById("recurringName"),
   recurringInterval: document.getElementById("recurringInterval"),
   recurringTime: document.getElementById("recurringTime"),
@@ -88,6 +90,17 @@ let advancedOptionsVisible =
   !!elements.advancedOptions &&
   getComputedStyle(elements.advancedOptions).display !== "none";
 let activeBulkSearch = null;
+
+function parseCarrierTokens(input) {
+  const raw = String(input || "")
+    .trim()
+    .toUpperCase();
+  if (!raw) return [];
+  return raw
+    .split(/[,\s]+/)
+    .map((t) => t.trim())
+    .filter((t) => /^[A-Z0-9_]+$/.test(t));
+}
 
 function escapeHtml(value) {
   if (value == null) return "";
@@ -1051,6 +1064,16 @@ async function handleSearch(event) {
       currency,
     };
 
+    const carrierTokens = parseCarrierTokens(inputs.googleCarriers?.value);
+    const allianceToken = String(inputs.googleAlliance?.value || "")
+      .trim()
+      .toUpperCase();
+    if (carrierTokens.length > 0) {
+      searchData.carriers = carrierTokens;
+    } else if (allianceToken) {
+      searchData.carriers = [allianceToken];
+    }
+
     if (inputs.debugBatches?.checked) {
       searchData.debug_batches = true;
     }
@@ -1222,6 +1245,9 @@ async function startBulkSearchFallback(parsedRoutes, baseSearchData, reasonMessa
     stops: baseSearchData?.stops || "any",
     currency: String(baseSearchData?.currency || "USD").toUpperCase(),
   };
+  if (Array.isArray(baseSearchData?.carriers) && baseSearchData.carriers.length > 0) {
+    payload.carriers = baseSearchData.carriers;
+  }
   if (Array.isArray(baseSearchData?.include_airline_groups)) {
     payload.include_airline_groups = baseSearchData.include_airline_groups;
   }
@@ -2017,6 +2043,9 @@ async function ensureRouteLoaded(routeIndex) {
       infants_seat: base.infants_seat,
       currency: base.currency,
     };
+    if (Array.isArray(base.carriers) && base.carriers.length > 0) {
+      payload.carriers = base.carriers;
+    }
     if (Array.isArray(base.include_airline_groups)) {
       payload.include_airline_groups = base.include_airline_groups;
     }
@@ -2159,6 +2188,9 @@ async function ensureRouteGraphsLoaded(routeIndex) {
         currency: (base.currency || "USD").toUpperCase(),
         include_price_graph: true,
       };
+      if (Array.isArray(base.carriers) && base.carriers.length > 0) {
+        payload.carriers = base.carriers;
+      }
       if (Array.isArray(base.include_airline_groups)) {
         payload.include_airline_groups = base.include_airline_groups;
       }

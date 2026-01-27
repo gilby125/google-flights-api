@@ -307,6 +307,43 @@
                   If any are checked, results must match at least one selected
                   alliance.
                 </div>
+                <div class="text-muted small mt-1">
+                  Tip: if exactly one alliance is selected (and no excludes),
+                  we’ll also try to apply it to the Google price graph.
+                </div>
+              </div>
+
+              <div class="col-12">
+                <div class="text-muted small mb-2">
+                  Restrict Google results (affects price graph)
+                </div>
+                <div class="row g-2">
+                  <div class="col-md-4">
+                    <label for="googleAlliance" class="form-label"
+                      >Google alliance</label
+                    >
+                    <select id="googleAlliance" class="form-select">
+                      <option value="" selected>Any</option>
+                      <option value="STAR_ALLIANCE">Star Alliance</option>
+                      <option value="ONEWORLD">oneworld</option>
+                      <option value="SKYTEAM">SkyTeam</option>
+                    </select>
+                  </div>
+                  <div class="col-md-8">
+                    <label for="googleCarriers" class="form-label"
+                      >Google airlines (IATA codes)</label
+                    >
+                    <input
+                      type="text"
+                      id="googleCarriers"
+                      class="form-control"
+                      placeholder="e.g. UA,DL,B6"
+                    />
+                    <div class="text-muted small">
+                      Optional. If set, overrides the alliance selector.
+                    </div>
+                  </div>
+                </div>
               </div>
 
               <div class="col-md-4 priceGraphOption" style="display: none">
@@ -598,6 +635,6 @@
       src="https://cdn.jsdelivr.net/npm/apexcharts@3.49.1"
       crossorigin="anonymous"
     ></script>
-    <script src="/search.js?v=20260127-11"></script>
+    <script src="/search.js?v=20260127-12"></script>
   </body>
 </html>

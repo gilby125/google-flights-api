@@ -1150,6 +1150,7 @@ func (m *Manager) processBulkSearch(ctx context.Context, worker *Worker, session
 							Class:    flightClass,
 							TripType: tripType,
 							Lang:     language.English,
+							Carriers: payload.Carriers,
 						},
 					},
 				)
@@ -1578,6 +1579,7 @@ func (m *Manager) processBulkSearchCheapFirst(ctx context.Context, worker *Worke
 					Class:    flightClass,
 					TripType: tripType,
 					Lang:     language.English,
+					Carriers: payload.Carriers,
 				},
 			}
 
@@ -1658,6 +1660,7 @@ func (m *Manager) processBulkSearchCheapFirst(ctx context.Context, worker *Worke
 						Class:    flightClass,
 						TripType: tripType,
 						Lang:     language.English,
+						Carriers: payload.Carriers,
 					},
 				}
 

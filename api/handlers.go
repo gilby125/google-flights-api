@@ -101,6 +101,7 @@ type BulkSearchRequest struct {
 	Class             string   `json:"class" binding:"required,oneof=economy premium_economy business first"`
 	Stops             string   `json:"stops" binding:"required,oneof=nonstop one_stop two_stops two_stops_plus any"`
 	Currency          string   `json:"currency" binding:"required,len=3"`
+	Carriers          []string `json:"carriers,omitempty"`
 }
 
 // JobRequest represents a scheduled job request
@@ -2298,6 +2299,7 @@ func CreateBulkSearch(q queue.Queue, pgDB db.PostgresDB) gin.HandlerFunc {
 			Class:             req.Class,
 			Stops:             req.Stops,
 			Currency:          currencyCode,
+			Carriers:          req.Carriers,
 			BulkSearchID:      bulkSearchID,
 		}
 
@@ -2833,6 +2835,14 @@ type DirectSearchRequest struct {
 	// Group tokens are like: GROUP:LOW_COST, GROUP:STAR_ALLIANCE, GROUP:ONEWORLD, GROUP:SKYTEAM.
 	IncludeAirlineGroups []string `json:"include_airline_groups" form:"include_airline_groups"`
 	ExcludeAirlineGroups []string `json:"exclude_airline_groups" form:"exclude_airline_groups"`
+
+	// Carriers optionally restricts results at the Google query level (affects offers and calendar graph).
+	// Values: airline IATA 2-letter codes (e.g., "UA", "DL") and/or alliance strings
+	// ("STAR_ALLIANCE", "ONEWORLD", "SKYTEAM").
+	//
+	// NOTE: This is an inclusive filter. Exclusion semantics are not supported here; use group filters
+	// for post-fetch filtering.
+	Carriers []string `json:"carriers" form:"carriers"`
 }
 
 // DirectFlightSearch handles direct flight searches (bypasses queue for immediate results)
@@ -3057,6 +3067,9 @@ func DirectFlightSearch(pgDB db.PostgresDB, neo4jDB db.Neo4jDatabase) gin.Handle
 		}
 
 		baseOptions.Carriers = googleCarrierFilterFromGroups(includeGroups, excludeGroups)
+		if len(searchRequest.Carriers) > 0 {
+			baseOptions.Carriers = append([]string{}, searchRequest.Carriers...)
+		}
 
 		maybeGetPriceGraph := func(routeOrigin, routeDestination string) map[string]interface{} {
 			if !searchRequest.IncludePriceGraph {

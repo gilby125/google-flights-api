@@ -130,8 +130,9 @@ type BulkSearchPayload struct {
 	Class             string // Changed to string for JSON unmarshal
 	Stops             string // Changed to string for JSON unmarshal
 	Currency          string
-	BulkSearchID      int `json:"bulk_search_id,omitempty"`
-	JobID             int `json:"job_id,omitempty"`
+	Carriers          []string `json:"carriers,omitempty"`
+	BulkSearchID      int      `json:"bulk_search_id,omitempty"`
+	JobID             int      `json:"job_id,omitempty"`
 }
 
 // PriceGraphSweepPayload defines the data needed to execute a price graph sweep
