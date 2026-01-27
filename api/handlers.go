@@ -2780,6 +2780,14 @@ type DirectSearchRequest struct {
 	// DebugBatches enables per-batch diagnostics in multi-route searches.
 	// Intended for troubleshooting missing origin→destination pairs.
 	DebugBatches bool `json:"debug_batches" form:"debug_batches"`
+
+	// Airline group filtering (best-effort).
+	// - If IncludeAirlineGroups is non-empty, offers must match at least one included group.
+	// - If ExcludeAirlineGroups is non-empty, offers matching any excluded group are removed.
+	//
+	// Group tokens are like: GROUP:LOW_COST, GROUP:STAR_ALLIANCE, GROUP:ONEWORLD, GROUP:SKYTEAM.
+	IncludeAirlineGroups []string `json:"include_airline_groups" form:"include_airline_groups"`
+	ExcludeAirlineGroups []string `json:"exclude_airline_groups" form:"exclude_airline_groups"`
 }
 
 // DirectFlightSearch handles direct flight searches (bypasses queue for immediate results)
@@ -2997,6 +3005,79 @@ func DirectFlightSearch(pgDB db.PostgresDB, neo4jDB db.Neo4jDatabase) gin.Handle
 			return response
 		}
 
+		normalizeGroupTokens := func(tokens []string) map[string]struct{} {
+			out := make(map[string]struct{}, len(tokens))
+			for _, raw := range tokens {
+				token := strings.ToUpper(strings.TrimSpace(raw))
+				if token == "" {
+					continue
+				}
+				if !macros.IsAirlineGroupToken(token) {
+					continue
+				}
+				out[token] = struct{}{}
+			}
+			return out
+		}
+
+		includeGroups := normalizeGroupTokens(searchRequest.IncludeAirlineGroups)
+		excludeGroups := normalizeGroupTokens(searchRequest.ExcludeAirlineGroups)
+
+		offerAirlineCodes := func(offer flights.FullOffer) []string {
+			out := make([]string, 0, len(offer.Flight)+len(offer.ReturnFlight))
+			for _, flight := range offer.Flight {
+				code := macros.ExtractAirlineCodeFromFlightNumber(flight.FlightNumber)
+				if code != "" {
+					out = append(out, code)
+				}
+			}
+			for _, flight := range offer.ReturnFlight {
+				code := macros.ExtractAirlineCodeFromFlightNumber(flight.FlightNumber)
+				if code != "" {
+					out = append(out, code)
+				}
+			}
+			return out
+		}
+
+		shouldIncludeOffer := func(offer flights.FullOffer) bool {
+			if len(includeGroups) == 0 && len(excludeGroups) == 0 {
+				return true
+			}
+
+			codes := offerAirlineCodes(offer)
+			groups := macros.AirlineGroupsForCodes(codes)
+
+			for _, g := range groups {
+				if _, ok := excludeGroups[g]; ok {
+					return false
+				}
+			}
+
+			if len(includeGroups) == 0 {
+				return true
+			}
+			for _, g := range groups {
+				if _, ok := includeGroups[g]; ok {
+					return true
+				}
+			}
+			return false
+		}
+
+		filterOffers := func(offers []flights.FullOffer) (kept []flights.FullOffer, filteredOut int) {
+			if len(includeGroups) == 0 && len(excludeGroups) == 0 {
+				return offers, 0
+			}
+			out := make([]flights.FullOffer, 0, len(offers))
+			for _, offer := range offers {
+				if shouldIncludeOffer(offer) {
+					out = append(out, offer)
+				}
+			}
+			return out, len(offers) - len(out)
+		}
+
 		originTokens, destinationTokens, err := ParseRouteInputs(searchRequest.Origin, searchRequest.Destination)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -3060,6 +3141,12 @@ func DirectFlightSearch(pgDB db.PostgresDB, neo4jDB db.Neo4jDatabase) gin.Handle
 						"legroom":           flight.Legroom,
 					}
 					segments = append(segments, segment)
+					if airlineCode != "" {
+						airlineCodes = append(airlineCodes, airlineCode)
+					}
+				}
+				for _, flight := range offer.ReturnFlight {
+					airlineCode := macros.ExtractAirlineCodeFromFlightNumber(flight.FlightNumber)
 					if airlineCode != "" {
 						airlineCodes = append(airlineCodes, airlineCode)
 					}
@@ -3131,10 +3218,18 @@ func DirectFlightSearch(pgDB db.PostgresDB, neo4jDB db.Neo4jDatabase) gin.Handle
 
 			persistOffers(searchRequest.Origin, searchRequest.Destination, offers, priceRange)
 
-			responseOffers, _, _, _ := convertOffers(searchRequest.Origin, searchRequest.Destination, offers)
+			filteredOffers, filteredOut := filterOffers(offers)
+			responseOffers, _, _, _ := convertOffers(searchRequest.Origin, searchRequest.Destination, filteredOffers)
 			response := map[string]interface{}{
 				"offers":        responseOffers,
 				"search_params": searchRequest,
+			}
+			if filteredOut > 0 {
+				response["filter"] = map[string]interface{}{
+					"include_airline_groups": searchRequest.IncludeAirlineGroups,
+					"exclude_airline_groups": searchRequest.ExcludeAirlineGroups,
+					"filtered_out":           filteredOut,
+				}
 			}
 
 			if priceRange != nil {
@@ -3190,8 +3285,17 @@ func DirectFlightSearch(pgDB db.PostgresDB, neo4jDB db.Neo4jDatabase) gin.Handle
 
 					persistOffers(origin, destination, offers, priceRange)
 
-					routeOffers, routeCheapestPrice, routeCheapestOffer, routeCheapestSet := convertOffers(origin, destination, offers)
+					filteredOffers, filteredOut := filterOffers(offers)
+					routeOffers, routeCheapestPrice, routeCheapestOffer, routeCheapestSet := convertOffers(origin, destination, filteredOffers)
 					route["offers"] = routeOffers
+					if filteredOut > 0 {
+						route["filter"] = map[string]interface{}{
+							"filtered_out": filteredOut,
+						}
+						if len(routeOffers) == 0 {
+							route["warning"] = "All offers were filtered out by airline group filters."
+						}
+					}
 
 					routeParams := searchRequest
 					routeParams.Origin = origin
@@ -3235,6 +3339,12 @@ func DirectFlightSearch(pgDB db.PostgresDB, neo4jDB db.Neo4jDatabase) gin.Handle
 					"requested_route_count": totalRoutes,
 					"returned_route_count":  len(routes),
 				},
+			}
+			if len(searchRequest.IncludeAirlineGroups) > 0 || len(searchRequest.ExcludeAirlineGroups) > 0 {
+				response["filter"] = map[string]interface{}{
+					"include_airline_groups": searchRequest.IncludeAirlineGroups,
+					"exclude_airline_groups": searchRequest.ExcludeAirlineGroups,
+				}
 			}
 			if len(warnings) > 0 {
 				response["warnings"] = warnings
@@ -3490,11 +3600,20 @@ func DirectFlightSearch(pgDB db.PostgresDB, neo4jDB db.Neo4jDatabase) gin.Handle
 
 			persistOffers(rk.origin, rk.destination, fullOffers, nil)
 
-			routeOffers, routeCheapestPrice, routeCheapestOffer, routeCheapestSet := convertOffers(rk.origin, rk.destination, fullOffers)
+			filteredOffers, filteredOut := filterOffers(fullOffers)
+			routeOffers, routeCheapestPrice, routeCheapestOffer, routeCheapestSet := convertOffers(rk.origin, rk.destination, filteredOffers)
 			route := map[string]interface{}{
 				"origin":      rk.origin,
 				"destination": rk.destination,
 				"offers":      routeOffers,
+			}
+			if filteredOut > 0 {
+				route["filter"] = map[string]interface{}{
+					"filtered_out": filteredOut,
+				}
+				if len(routeOffers) == 0 {
+					route["warning"] = "All offers were filtered out by airline group filters."
+				}
 			}
 
 			routeParams := searchRequest
@@ -3571,6 +3690,12 @@ func DirectFlightSearch(pgDB db.PostgresDB, neo4jDB db.Neo4jDatabase) gin.Handle
 				"requested_route_count": totalRoutes,
 				"returned_route_count":  len(routes),
 			},
+		}
+		if len(searchRequest.IncludeAirlineGroups) > 0 || len(searchRequest.ExcludeAirlineGroups) > 0 {
+			response["filter"] = map[string]interface{}{
+				"include_airline_groups": searchRequest.IncludeAirlineGroups,
+				"exclude_airline_groups": searchRequest.ExcludeAirlineGroups,
+			}
 		}
 		if searchRequest.DebugBatches {
 			response["batch_debug"] = debugEntries

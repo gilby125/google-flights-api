@@ -57,6 +57,10 @@ const inputs = {
   priceGraphWindowDays: document.getElementById("priceGraphWindowDays"),
   priceGraphTripLengthDays: document.getElementById("priceGraphTripLengthDays"),
   debugBatches: document.getElementById("debugBatches"),
+  excludeLowCost: document.getElementById("excludeLowCost"),
+  includeStar: document.getElementById("includeStar"),
+  includeOneworld: document.getElementById("includeOneworld"),
+  includeSkyTeam: document.getElementById("includeSkyTeam"),
   recurringName: document.getElementById("recurringName"),
   recurringInterval: document.getElementById("recurringInterval"),
   recurringTime: document.getElementById("recurringTime"),
@@ -937,6 +941,22 @@ async function handleSearch(event) {
       searchData.debug_batches = true;
     }
 
+    const excludeGroups = [];
+    if (inputs.excludeLowCost?.checked) {
+      excludeGroups.push("GROUP:LOW_COST");
+    }
+    if (excludeGroups.length) {
+      searchData.exclude_airline_groups = excludeGroups;
+    }
+
+    const includeGroups = [];
+    if (inputs.includeStar?.checked) includeGroups.push("GROUP:STAR_ALLIANCE");
+    if (inputs.includeOneworld?.checked) includeGroups.push("GROUP:ONEWORLD");
+    if (inputs.includeSkyTeam?.checked) includeGroups.push("GROUP:SKYTEAM");
+    if (includeGroups.length) {
+      searchData.include_airline_groups = includeGroups;
+    }
+
     if (tripType === "round_trip" && returnDate) {
       searchData.return_date = returnDate;
     }
@@ -1088,6 +1108,12 @@ async function startBulkSearchFallback(parsedRoutes, baseSearchData, reasonMessa
     stops: baseSearchData?.stops || "any",
     currency: String(baseSearchData?.currency || "USD").toUpperCase(),
   };
+  if (Array.isArray(baseSearchData?.include_airline_groups)) {
+    payload.include_airline_groups = baseSearchData.include_airline_groups;
+  }
+  if (Array.isArray(baseSearchData?.exclude_airline_groups)) {
+    payload.exclude_airline_groups = baseSearchData.exclude_airline_groups;
+  }
 
   if (tripType === "round_trip") {
     const depDate = new Date(`${dep}T00:00:00Z`);
@@ -1824,6 +1850,15 @@ async function ensureRouteLoaded(routeIndex) {
       infants_seat: base.infants_seat,
       currency: base.currency,
     };
+    if (Array.isArray(base.include_airline_groups)) {
+      payload.include_airline_groups = base.include_airline_groups;
+    }
+    if (Array.isArray(base.exclude_airline_groups)) {
+      payload.exclude_airline_groups = base.exclude_airline_groups;
+    }
+    if (base.debug_batches) {
+      payload.debug_batches = true;
+    }
 
     if (base.include_price_graph) {
       payload.include_price_graph = true;
@@ -1942,6 +1977,15 @@ async function ensureRouteGraphsLoaded(routeIndex) {
         currency: (base.currency || "USD").toUpperCase(),
         include_price_graph: true,
       };
+      if (Array.isArray(base.include_airline_groups)) {
+        payload.include_airline_groups = base.include_airline_groups;
+      }
+      if (Array.isArray(base.exclude_airline_groups)) {
+        payload.exclude_airline_groups = base.exclude_airline_groups;
+      }
+      if (base.debug_batches) {
+        payload.debug_batches = true;
+      }
 
       if (base.price_graph_window_days) {
         payload.price_graph_window_days = base.price_graph_window_days;
