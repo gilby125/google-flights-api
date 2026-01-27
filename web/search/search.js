@@ -4,7 +4,8 @@
 const API_BASE = "/api";
 const ENDPOINTS = {
   SEARCH: `${API_BASE}/search`,
-  PRICE_HISTORY: `${API_BASE}/price-history`,
+  PRICE_HISTORY_LEGACY: `${API_BASE}/price-history`,
+  PRICE_HISTORY_V1: "/api/v1/price-history",
   AIRPORTS: `${API_BASE}/airports`,
   ADMIN_BULK_JOBS: "/api/v1/admin/bulk-jobs",
 };
@@ -837,14 +838,22 @@ async function handleSearch(event) {
 // Load price history for a route
 async function loadPriceHistory(origin, destination) {
   try {
-    const response = await fetch(
-      `${ENDPOINTS.PRICE_HISTORY}?origin=${origin}&destination=${destination}`,
+    const originEncoded = encodeURIComponent(origin);
+    const destinationEncoded = encodeURIComponent(destination);
+
+    let response = await fetch(
+      `${ENDPOINTS.PRICE_HISTORY_V1}/${originEncoded}/${destinationEncoded}`,
     );
+
+    if (!response.ok) {
+      response = await fetch(
+        `${ENDPOINTS.PRICE_HISTORY_LEGACY}?origin=${originEncoded}&destination=${destinationEncoded}`,
+      );
+    }
+
     if (!response.ok) throw new Error("Failed to load price history");
 
     const priceHistory = await response.json();
-
-    // Display price graph
     displayPriceGraph(priceHistory);
   } catch (error) {
     console.error("Error loading price history:", error);
@@ -866,11 +875,41 @@ function displayPriceGraph(priceHistory) {
     return;
   }
 
-  elements.priceGraphCard.style.display = "block";
+  const toYyyyMmDd = (value) => {
+    if (!value) return "";
+    const raw = String(value).trim();
+    if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+    const parsed = new Date(raw);
+    if (Number.isNaN(parsed.getTime())) return "";
+    const year = parsed.getUTCFullYear();
+    const month = String(parsed.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(parsed.getUTCDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
 
-  // Prepare data for chart
-  const dates = history.map((item) => item.date);
-  const prices = history.map((item) => item.price);
+  // Normalize to one point per day (min price) so the chart isn't noisy/duplicated.
+  const minByDate = new Map();
+  for (const item of history) {
+    const date = toYyyyMmDd(item?.date);
+    if (!date) continue;
+    const price = Number(item?.price);
+    if (!Number.isFinite(price) || price <= 0) continue;
+
+    const current = minByDate.get(date);
+    if (current == null || price < current) {
+      minByDate.set(date, price);
+    }
+  }
+
+  const dates = Array.from(minByDate.keys()).sort();
+  const prices = dates.map((date) => minByDate.get(date));
+
+  if (dates.length === 0) {
+    elements.priceGraphCard.style.display = "none";
+    return;
+  }
+
+  elements.priceGraphCard.style.display = "block";
 
   // Destroy existing chart if it exists
   if (priceChart) {
