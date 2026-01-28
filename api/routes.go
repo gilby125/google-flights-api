@@ -2,6 +2,9 @@ package api
 
 import (
 	"net/http"
+	"path"
+	"path/filepath"
+	"strings"
 
 	"github.com/gilby125/google-flights-api/config"
 	"github.com/gilby125/google-flights-api/db"
@@ -218,25 +221,28 @@ func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Ne
 		c.File("./web/bulk-search/index.html")
 	})
 
-	// Admin UI: avoid stale cached JS/HTML during rapid iteration.
-	router.GET("/admin", func(c *gin.Context) {
+	// Serve static files for the web UI
+	// NOTE: Use a custom handler for admin assets so we can set Cache-Control headers,
+	// and avoid Gin route conflicts between exact and wildcard static routes.
+	router.GET("/admin/*filepath", func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
-		c.Header("Content-Type", "text/html")
-		c.File("./web/admin/index.html")
-	})
-	router.GET("/admin/", func(c *gin.Context) {
-		c.Header("Cache-Control", "no-store")
-		c.Header("Content-Type", "text/html")
-		c.File("./web/admin/index.html")
-	})
-	router.GET("/admin/admin.js", func(c *gin.Context) {
-		c.Header("Cache-Control", "no-store")
-		c.Header("Content-Type", "application/javascript")
-		c.File("./web/admin/admin.js")
+
+		p := c.Param("filepath")
+		if p == "" || p == "/" {
+			c.File("./web/admin/index.html")
+			return
+		}
+
+		rel := strings.TrimPrefix(p, "/")
+		rel = path.Clean(rel)
+		if rel == "." || strings.HasPrefix(rel, "..") {
+			c.AbortWithStatus(http.StatusNotFound)
+			return
+		}
+
+		c.File(filepath.Join("./web/admin", rel))
 	})
 
-	// Serve static files for the web UI
-	router.Static("/admin", "./web/admin")
 	router.Static("/search", "./web/search")
 	router.Static("/bulk-search", "./web/bulk-search")
 	router.GET("/search.js", func(c *gin.Context) {
