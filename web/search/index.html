@@ -602,6 +602,25 @@
               <div id="asyncBulkStatusCounts" class="text-muted small"></div>
             </div>
             <div id="asyncBulkStatusMeta" class="text-muted small mt-1"></div>
+            <div id="asyncBulkActions" class="mt-2 d-none">
+              <div class="d-flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  class="btn btn-outline-secondary btn-sm"
+                  id="asyncBulkCheckWorkersBtn"
+                >
+                  Check workers
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-outline-secondary btn-sm"
+                  id="asyncBulkCheckQueueBtn"
+                >
+                  Check queue
+                </button>
+              </div>
+              <div id="asyncBulkDiag" class="text-muted small mt-2"></div>
+            </div>
             <div class="progress mt-2" style="height: 0.75rem">
               <div
                 id="asyncBulkProgressBar"
@@ -627,6 +646,6 @@
       src="https://cdn.jsdelivr.net/npm/apexcharts@3.49.1"
       crossorigin="anonymous"
     ></script>
-    <script src="/search.js?v=20260127-16"></script>
+    <script src="/search.js?v=20260127-17"></script>
   </body>
 </html>

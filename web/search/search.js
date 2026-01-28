@@ -8,6 +8,8 @@ const ENDPOINTS = {
   BULK_SEARCH_V1: "/api/v1/bulk-search",
   AIRPORTS: `${API_BASE}/airports`,
   ADMIN_BULK_JOBS: "/api/v1/admin/bulk-jobs",
+  ADMIN_WORKERS: "/api/v1/admin/workers",
+  ADMIN_QUEUE: "/api/v1/admin/queue",
 };
 
 const AIRPORT_CACHE_KEY = "flight-search-airports-cache";
@@ -33,6 +35,10 @@ const elements = {
   asyncBulkStatusText: document.getElementById("asyncBulkStatusText"),
   asyncBulkStatusCounts: document.getElementById("asyncBulkStatusCounts"),
   asyncBulkStatusMeta: document.getElementById("asyncBulkStatusMeta"),
+  asyncBulkActions: document.getElementById("asyncBulkActions"),
+  asyncBulkCheckWorkersBtn: document.getElementById("asyncBulkCheckWorkersBtn"),
+  asyncBulkCheckQueueBtn: document.getElementById("asyncBulkCheckQueueBtn"),
+  asyncBulkDiag: document.getElementById("asyncBulkDiag"),
   asyncBulkProgressBar: document.getElementById("asyncBulkProgressBar"),
   recurringBtn: document.getElementById("recurringBtn"),
   recurringOptions: document.getElementById("recurringOptions"),
@@ -92,6 +98,74 @@ let advancedOptionsVisible =
   !!elements.advancedOptions &&
   getComputedStyle(elements.advancedOptions).display !== "none";
 let activeBulkSearch = null;
+
+if (elements.asyncBulkCheckWorkersBtn) {
+  elements.asyncBulkCheckWorkersBtn.addEventListener("click", () => runBulkDiagnostics());
+}
+if (elements.asyncBulkCheckQueueBtn) {
+  elements.asyncBulkCheckQueueBtn.addEventListener("click", () => runBulkDiagnostics());
+}
+
+function formatSecondsShort(seconds) {
+  const s = Math.max(0, Math.round(Number(seconds) || 0));
+  const mins = Math.floor(s / 60);
+  const secs = s % 60;
+  return mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+}
+
+function parseDateMs(value) {
+  const ms = Date.parse(String(value || ""));
+  return Number.isFinite(ms) ? ms : null;
+}
+
+async function fetchJsonOrError(url) {
+  const res = await fetch(url);
+  let body = null;
+  try {
+    body = await res.json();
+  } catch {}
+  if (!res.ok) {
+    const message =
+      body?.error ||
+      body?.message ||
+      `Request failed (${res.status})`;
+    throw new Error(message);
+  }
+  return body;
+}
+
+async function runBulkDiagnostics() {
+  if (!elements.asyncBulkDiag || !elements.asyncBulkActions) return;
+  elements.asyncBulkActions.classList.remove("d-none");
+  elements.asyncBulkDiag.textContent = "Loading diagnostics…";
+
+  try {
+    const [workers, queueStats] = await Promise.all([
+      fetchJsonOrError(ENDPOINTS.ADMIN_WORKERS),
+      fetchJsonOrError(ENDPOINTS.ADMIN_QUEUE),
+    ]);
+
+    const workerList = Array.isArray(workers) ? workers : [];
+    let running = 0;
+    let idle = 0;
+    for (const w of workerList) {
+      const status = String(w?.status || "").toLowerCase();
+      if (status === "running") running++;
+      else idle++;
+    }
+
+    const bulkQueue = queueStats?.bulk_search || null;
+    const pending = Number(bulkQueue?.pending) || 0;
+    const processing = Number(bulkQueue?.processing) || 0;
+    const failed = Number(bulkQueue?.failed) || 0;
+
+    elements.asyncBulkDiag.textContent =
+      `Workers: ${workerList.length} (running ${running}, idle ${idle}) • ` +
+      `bulk_search queue: pending ${pending}, processing ${processing}, failed ${failed}`;
+  } catch (err) {
+    elements.asyncBulkDiag.textContent = `Diagnostics unavailable: ${err.message}`;
+  }
+}
 
 function parseCarrierTokens(input) {
   const raw = String(input || "")
@@ -1005,6 +1079,8 @@ async function handleSearch(event) {
   }
   if (elements.resultsCard) elements.resultsCard.style.display = "none";
   if (elements.asyncBulkStatus) elements.asyncBulkStatus.classList.add("d-none");
+  if (elements.asyncBulkActions) elements.asyncBulkActions.classList.add("d-none");
+  if (elements.asyncBulkDiag) elements.asyncBulkDiag.textContent = "";
 
   try {
     const originInput = inputs.origin;
@@ -1203,6 +1279,7 @@ function updateAsyncBulkStatus(status) {
   const completed = Number(status?.completed) || 0;
   const state = String(status?.status || "").trim() || "queued";
   const pct = total > 0 ? Math.min(100, Math.round((completed / total) * 100)) : 0;
+  const updatedAtMs = parseDateMs(status?.updated_at);
 
   const nowMs = Date.now();
   if (activeBulkSearch) {
@@ -1251,9 +1328,11 @@ function updateAsyncBulkStatus(status) {
     let meta = "";
     if (activeBulkSearch?.startedAt) {
       const elapsedSec = Math.max(0, Math.round((nowMs - activeBulkSearch.startedAt) / 1000));
-      const mins = Math.floor(elapsedSec / 60);
-      const secs = elapsedSec % 60;
-      meta = `Elapsed: ${mins > 0 ? `${mins}m ` : ""}${secs}s`;
+      meta = `State: ${state} • Elapsed: ${formatSecondsShort(elapsedSec)}`;
+
+      if (updatedAtMs) {
+        meta += ` • Server updated: ${formatSecondsShort((nowMs - updatedAtMs) / 1000)} ago`;
+      }
 
       if (activeBulkSearch?.lastProgressAt) {
         const sinceSec = Math.max(0, Math.round((nowMs - activeBulkSearch.lastProgressAt) / 1000));
@@ -1267,6 +1346,7 @@ function updateAsyncBulkStatus(status) {
           sinceSec >= 90
         ) {
           meta += " • Still waiting on first route…";
+          if (elements.asyncBulkActions) elements.asyncBulkActions.classList.remove("d-none");
         }
         if (
           state !== "completed" &&
@@ -1275,6 +1355,11 @@ function updateAsyncBulkStatus(status) {
           sinceSec >= 180
         ) {
           meta += " • No updates for a while; workers may be stalled.";
+          if (elements.asyncBulkActions) elements.asyncBulkActions.classList.remove("d-none");
+          if (activeBulkSearch && !activeBulkSearch.diagnosticsRan) {
+            activeBulkSearch.diagnosticsRan = true;
+            runBulkDiagnostics();
+          }
         }
       }
 
@@ -1378,6 +1463,7 @@ async function startBulkSearchFallback(parsedRoutes, baseSearchData, reasonMessa
     startedAt: Date.now(),
     lastProgressAt: Date.now(),
     lastCompleted: 0,
+    diagnosticsRan: false,
   };
 
   await pollBulkSearchOnce();
