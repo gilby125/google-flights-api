@@ -4323,25 +4323,14 @@ func updateContinuousSweepDBFlags(ctx context.Context, pgDB db.PostgresDB, isRun
 		return nil, fmt.Errorf("postgres is not configured")
 	}
 
+	if err := pgDB.SetContinuousSweepControlFlags(ctx, isRunning, isPaused); err != nil {
+		return nil, err
+	}
+
 	progress, err := pgDB.GetContinuousSweepProgress(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if progress == nil {
-		progress = &db.ContinuousSweepProgress{ID: 1}
-	}
-
-	if isRunning != nil {
-		progress.IsRunning = *isRunning
-	}
-	if isPaused != nil {
-		progress.IsPaused = *isPaused
-	}
-
-	if err := pgDB.SaveContinuousSweepProgress(ctx, *progress); err != nil {
-		return nil, err
-	}
-
 	return progress, nil
 }
 

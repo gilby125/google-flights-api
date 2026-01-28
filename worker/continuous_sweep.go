@@ -172,6 +172,16 @@ func (r *ContinuousSweepRunner) Start() error {
 	r.isPaused = false
 	r.mu.Unlock()
 
+	// Persist control flags immediately so other processes/UI can see the sweep is running and so
+	// the runner doesn't stop itself on the first DB sync.
+	if r.postgresDB != nil {
+		running := true
+		paused := false
+		ctrlCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = r.postgresDB.SetContinuousSweepControlFlags(ctrlCtx, &running, &paused)
+		cancel()
+	}
+
 	// Try to restore progress from DB (use the long-lived context)
 	if err := r.restoreProgress(r.ctx); err != nil {
 		log.Printf("Could not restore sweep progress: %v (starting fresh)", err)
@@ -222,43 +232,75 @@ func (r *ContinuousSweepRunner) syncControlFromDB(ctx context.Context) (stop boo
 // Stop gracefully stops the continuous sweep
 func (r *ContinuousSweepRunner) Stop() {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	wasRunning := r.isRunning
 
-	if !r.isRunning {
+	// Cancel context and close stop channel
+	cancelFn := r.cancelCtx
+	stopCh := r.stopCh
+	r.stopCh = nil // Prevent double-close
+
+	r.isRunning = false
+	r.isPaused = false
+	r.mu.Unlock()
+
+	if !wasRunning {
 		return
 	}
 
-	// Cancel context and close stop channel
-	if r.cancelCtx != nil {
-		r.cancelCtx()
+	if cancelFn != nil {
+		cancelFn()
 	}
-	if r.stopCh != nil {
-		close(r.stopCh)
-		r.stopCh = nil // Prevent double-close
+	if stopCh != nil {
+		close(stopCh)
 	}
-	r.isRunning = false
-	r.isPaused = false
+
+	if r.postgresDB != nil {
+		running := false
+		paused := false
+		ctrlCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = r.postgresDB.SetContinuousSweepControlFlags(ctrlCtx, &running, &paused)
+		cancel()
+	}
 }
 
 // Pause pauses the sweep (can be resumed)
 func (r *ContinuousSweepRunner) Pause() {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.isRunning && !r.isPaused {
+	running := r.isRunning
+	paused := r.isPaused
+	if running && !paused {
 		r.isPaused = true
+	}
+	r.mu.Unlock()
+
+	if running && !paused && r.postgresDB != nil {
+		nextPaused := true
+		ctrlCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = r.postgresDB.SetContinuousSweepControlFlags(ctrlCtx, nil, &nextPaused)
+		cancel()
 	}
 }
 
 // Resume resumes a paused sweep
 func (r *ContinuousSweepRunner) Resume() {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.isRunning && r.isPaused {
+	running := r.isRunning
+	paused := r.isPaused
+	resumeCh := r.resumeCh
+	if running && paused {
 		r.isPaused = false
 		select {
-		case r.resumeCh <- struct{}{}:
+		case resumeCh <- struct{}{}:
 		default:
 		}
+	}
+	r.mu.Unlock()
+
+	if running && paused && r.postgresDB != nil {
+		nextPaused := false
+		ctrlCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = r.postgresDB.SetContinuousSweepControlFlags(ctrlCtx, nil, &nextPaused)
+		cancel()
 	}
 }
 
@@ -600,6 +642,12 @@ func (r *ContinuousSweepRunner) processRoute(ctx context.Context, route db.Route
 	endDate := startDate.AddDate(0, 0, config.DepartureWindowDays)
 
 	for _, tripLength := range tripLengths {
+		// Enforce STOP quickly and prevent enqueuing new jobs after the sweep is stopped in DB.
+		if r.syncControlFromDB(ctx) {
+			r.Stop()
+			return nil
+		}
+
 		if r.queue == nil {
 			return fmt.Errorf("queue is not configured")
 		}

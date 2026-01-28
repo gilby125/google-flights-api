@@ -393,6 +393,11 @@ func (m *MockPostgresDB) SaveContinuousSweepProgress(ctx context.Context, progre
 	return args.Error(0)
 }
 
+func (m *MockPostgresDB) SetContinuousSweepControlFlags(ctx context.Context, isRunning, isPaused *bool) error {
+	args := m.Called(ctx, isRunning, isPaused)
+	return args.Error(0)
+}
+
 func (m *MockPostgresDB) GetContinuousSweepProgress(ctx context.Context) (*db.ContinuousSweepProgress, error) {
 	args := m.Called(ctx)
 	var progress *db.ContinuousSweepProgress

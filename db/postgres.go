@@ -66,6 +66,7 @@ type PostgresDB interface {
 
 	// Continuous sweep progress methods
 	SaveContinuousSweepProgress(ctx context.Context, progress ContinuousSweepProgress) error
+	SetContinuousSweepControlFlags(ctx context.Context, isRunning, isPaused *bool) error
 	GetContinuousSweepProgress(ctx context.Context) (*ContinuousSweepProgress, error)
 	InsertContinuousSweepStats(ctx context.Context, stats ContinuousSweepStats) error
 	ListContinuousSweepStats(ctx context.Context, limit int) ([]ContinuousSweepStats, error)
@@ -1095,8 +1096,10 @@ func (p *PostgresDBImpl) SaveContinuousSweepProgress(ctx context.Context, progre
 			pacing_mode = $11,
 			target_duration_hours = $12,
 			min_delay_ms = $13,
-			is_running = $14,
-			is_paused = $15,
+			-- Control flags are managed via SetContinuousSweepControlFlags and must not be overwritten
+			-- by periodic progress saves (otherwise STOP/PAUSE can be clobbered by a running worker).
+			is_running = continuous_sweep_progress.is_running,
+			is_paused = continuous_sweep_progress.is_paused,
 			international_only = $16`,
 		progress.SweepNumber,
 		progress.RouteIndex,
@@ -1117,6 +1120,31 @@ func (p *PostgresDBImpl) SaveContinuousSweepProgress(ctx context.Context, progre
 	)
 	if err != nil {
 		return fmt.Errorf("failed to save continuous sweep progress: %w", err)
+	}
+	return nil
+}
+
+func (p *PostgresDBImpl) SetContinuousSweepControlFlags(ctx context.Context, isRunning, isPaused *bool) error {
+	var running sql.NullBool
+	var paused sql.NullBool
+	if isRunning != nil {
+		running = sql.NullBool{Bool: *isRunning, Valid: true}
+	}
+	if isPaused != nil {
+		paused = sql.NullBool{Bool: *isPaused, Valid: true}
+	}
+
+	_, err := p.db.ExecContext(ctx,
+		`UPDATE continuous_sweep_progress
+		 SET is_running = COALESCE($1, is_running),
+		     is_paused = COALESCE($2, is_paused),
+		     last_updated = NOW()
+		 WHERE id = 1`,
+		running,
+		paused,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to set continuous sweep control flags: %w", err)
 	}
 	return nil
 }
