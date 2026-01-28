@@ -109,7 +109,8 @@ jobs:
         unzip -o protoc.zip -d "${HOME}/.local"
         rm protoc.zip
         echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
-        go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.31.0
+        go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.6
+        echo "$(go env GOPATH)/bin" >> "${GITHUB_PATH}"
 
     - name: Generate proto
       run: go generate ./...
