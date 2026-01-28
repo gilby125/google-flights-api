@@ -32,11 +32,14 @@ const elements = {
   asyncBulkStatus: document.getElementById("asyncBulkStatus"),
   asyncBulkStatusText: document.getElementById("asyncBulkStatusText"),
   asyncBulkStatusCounts: document.getElementById("asyncBulkStatusCounts"),
+  asyncBulkStatusMeta: document.getElementById("asyncBulkStatusMeta"),
   asyncBulkProgressBar: document.getElementById("asyncBulkProgressBar"),
   recurringBtn: document.getElementById("recurringBtn"),
   recurringOptions: document.getElementById("recurringOptions"),
   createRecurringBtn: document.getElementById("createRecurringBtn"),
   recurringStatus: document.getElementById("recurringStatus"),
+  loadingIndicatorText: document.getElementById("loadingIndicatorText"),
+  loadingIndicatorMeta: document.getElementById("loadingIndicatorMeta"),
 };
 
 const inputs = {
@@ -1201,25 +1204,104 @@ function updateAsyncBulkStatus(status) {
   const state = String(status?.status || "").trim() || "queued";
   const pct = total > 0 ? Math.min(100, Math.round((completed / total) * 100)) : 0;
 
+  const nowMs = Date.now();
+  if (activeBulkSearch) {
+    if (!activeBulkSearch.startedAt) activeBulkSearch.startedAt = nowMs;
+    if (!activeBulkSearch.lastProgressAt) activeBulkSearch.lastProgressAt = nowMs;
+    if (typeof activeBulkSearch.lastCompleted !== "number") activeBulkSearch.lastCompleted = 0;
+    if (completed > activeBulkSearch.lastCompleted) {
+      activeBulkSearch.lastCompleted = completed;
+      activeBulkSearch.lastProgressAt = nowMs;
+    }
+  }
+
   elements.asyncBulkStatus.classList.remove("d-none");
-  elements.asyncBulkStatusText.textContent =
+  const baseText =
     state === "completed" || state === "completed_with_errors"
       ? "Bulk search completed."
       : state === "failed"
         ? "Bulk search failed."
-        : "Bulk search running in background…";
+        : completed === 0
+          ? "Bulk search running… waiting for first results (first route can take a bit)."
+          : "Bulk search running in background…";
+  elements.asyncBulkStatusText.textContent = baseText;
   elements.asyncBulkStatusCounts.textContent =
     total > 0 ? `${completed}/${total} routes processed` : "";
 
   elements.asyncBulkProgressBar.style.width = `${pct}%`;
   elements.asyncBulkProgressBar.setAttribute("aria-valuenow", String(pct));
-  elements.asyncBulkProgressBar.textContent = pct > 0 ? `${pct}%` : "";
+  elements.asyncBulkProgressBar.textContent = `${pct}%`;
 
   elements.asyncBulkProgressBar.classList.toggle(
     "bg-success",
     state === "completed" || state === "completed_with_errors",
   );
   elements.asyncBulkProgressBar.classList.toggle("bg-danger", state === "failed");
+
+  elements.asyncBulkProgressBar.classList.toggle(
+    "progress-bar-striped",
+    state !== "completed" && state !== "completed_with_errors" && state !== "failed",
+  );
+  elements.asyncBulkProgressBar.classList.toggle(
+    "progress-bar-animated",
+    state !== "completed" && state !== "completed_with_errors" && state !== "failed",
+  );
+
+  if (elements.asyncBulkStatusMeta) {
+    let meta = "";
+    if (activeBulkSearch?.startedAt) {
+      const elapsedSec = Math.max(0, Math.round((nowMs - activeBulkSearch.startedAt) / 1000));
+      const mins = Math.floor(elapsedSec / 60);
+      const secs = elapsedSec % 60;
+      meta = `Elapsed: ${mins > 0 ? `${mins}m ` : ""}${secs}s`;
+
+      if (activeBulkSearch?.lastProgressAt) {
+        const sinceSec = Math.max(0, Math.round((nowMs - activeBulkSearch.lastProgressAt) / 1000));
+        meta += ` • Last update: ${sinceSec}s ago`;
+
+        if (
+          state !== "completed" &&
+          state !== "completed_with_errors" &&
+          state !== "failed" &&
+          completed === 0 &&
+          sinceSec >= 90
+        ) {
+          meta += " • Still waiting on first route…";
+        }
+        if (
+          state !== "completed" &&
+          state !== "completed_with_errors" &&
+          state !== "failed" &&
+          sinceSec >= 180
+        ) {
+          meta += " • No updates for a while; workers may be stalled.";
+        }
+      }
+
+      if (completed > 0 && total > 0) {
+        const elapsedHours = (nowMs - activeBulkSearch.startedAt) / (1000 * 60 * 60);
+        const rate = elapsedHours > 0 ? completed / elapsedHours : 0;
+        if (rate > 0) {
+          const remaining = Math.max(0, total - completed);
+          const etaHours = remaining / rate;
+          const etaMin = Math.max(0, Math.round(etaHours * 60));
+          if (etaMin > 0) meta += ` • ETA: ~${etaMin}m`;
+        }
+      }
+    }
+    elements.asyncBulkStatusMeta.textContent = meta;
+  }
+
+  // Also mirror progress near the search button so users see it without scrolling.
+  if (elements.loadingIndicatorText && elements.loadingIndicatorMeta) {
+    if (state === "completed" || state === "completed_with_errors" || state === "failed") {
+      elements.loadingIndicatorMeta.textContent = "";
+      elements.loadingIndicatorText.textContent = "Searching fares…";
+    } else if (total > 0) {
+      elements.loadingIndicatorText.textContent = "Bulk search running…";
+      elements.loadingIndicatorMeta.textContent = `${completed}/${total}`;
+    }
+  }
 }
 
 async function startBulkSearchFallback(parsedRoutes, baseSearchData, reasonMessage) {
@@ -1293,6 +1375,9 @@ async function startBulkSearchFallback(parsedRoutes, baseSearchData, reasonMessa
     baseSearchData,
     lastResultsKey: "",
     timer: null,
+    startedAt: Date.now(),
+    lastProgressAt: Date.now(),
+    lastCompleted: 0,
   };
 
   await pollBulkSearchOnce();
