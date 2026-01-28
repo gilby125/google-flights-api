@@ -225,10 +225,17 @@ func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Ne
 
 	// Explore page (map/globe)
 	router.GET("/explore", func(c *gin.Context) {
+		// Normalize to trailing slash so relative assets resolve predictably under `/explore/`.
+		c.Redirect(http.StatusFound, "/explore/")
+	})
+	router.GET("/explore/", func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
 		c.Header("Content-Type", "text/html")
 		c.File("./web/explore/index.html")
 	})
+	// Fallback: some clients/proxies will resolve `explore.js` as `/explore.js` (root).
+	// Keep this for robustness even though the page is served at `/explore/`.
+	router.StaticFile("/explore.js", "./web/explore/explore.js")
 
 	// Serve static files for the web UI
 	// NOTE: Use a custom handler for admin assets so we can set Cache-Control headers,
