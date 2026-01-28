@@ -110,6 +110,7 @@ func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Ne
 	{
 		// Airport routes
 		v1.GET("/airports", GetAirports(postgresDB))
+		v1.GET("/airports/top", GetTopAirports())
 
 		// Airline routes
 		v1.GET("/airlines", GetAirlines(postgresDB))
@@ -140,6 +141,7 @@ func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Ne
 			graph.GET("/path", GetCheapestPath(neo4jDB))
 			graph.GET("/connections", GetConnections(neo4jDB))
 			graph.GET("/route-stats", GetRouteStats(neo4jDB))
+			graph.GET("/explore", GetExplore(neo4jDB))
 		}
 
 		// Admin routes (with optional authentication)
@@ -221,6 +223,13 @@ func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Ne
 		c.File("./web/bulk-search/index.html")
 	})
 
+	// Explore page (map/globe)
+	router.GET("/explore", func(c *gin.Context) {
+		c.Header("Cache-Control", "no-store")
+		c.Header("Content-Type", "text/html")
+		c.File("./web/explore/index.html")
+	})
+
 	// Serve static files for the web UI
 	// NOTE: Use a custom handler for admin assets so we can set Cache-Control headers,
 	// and avoid Gin route conflicts between exact and wildcard static routes.
@@ -245,6 +254,7 @@ func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Ne
 
 	router.Static("/search", "./web/search")
 	router.Static("/bulk-search", "./web/bulk-search")
+	router.Static("/explore", "./web/explore")
 	router.GET("/search.js", func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
 		c.Header("Content-Type", "application/javascript")

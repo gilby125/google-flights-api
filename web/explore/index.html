@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Explore Routes</title>
+
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://unpkg.com/maplibre-gl@4.1.2/dist/maplibre-gl.css" rel="stylesheet">
+
+  <style>
+    :root {
+      --bg: #0b1220;
+      --panel: rgba(16, 24, 40, 0.88);
+      --panelBorder: rgba(255, 255, 255, 0.08);
+      --muted: rgba(255, 255, 255, 0.7);
+      --text: rgba(255, 255, 255, 0.92);
+      --accent: #7c3aed;
+    }
+
+    html, body { height: 100%; }
+    body { background: radial-gradient(1200px 900px at 30% 20%, #15213a 0%, var(--bg) 55%, #070a12 100%); color: var(--text); }
+
+    .app {
+      height: 100%;
+      display: grid;
+      grid-template-columns: 380px 1fr;
+      gap: 14px;
+      padding: 14px;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--panelBorder);
+      border-radius: 14px;
+      backdrop-filter: blur(14px);
+      box-shadow: 0 10px 30px rgba(0,0,0,0.28);
+    }
+
+    .panel-header {
+      padding: 14px 14px 0 14px;
+    }
+
+    .panel-body {
+      padding: 14px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .brand h1 {
+      font-size: 18px;
+      margin: 0;
+      letter-spacing: 0.2px;
+    }
+
+    .subtle {
+      color: var(--muted);
+      font-size: 13px;
+      margin-top: 6px;
+      line-height: 1.35;
+    }
+
+    .mapWrap {
+      position: relative;
+      overflow: hidden;
+      min-height: 420px;
+    }
+
+    #globeContainer, #mapContainer {
+      position: absolute;
+      inset: 0;
+    }
+
+    #mapContainer { display: none; }
+
+    .pill {
+      border: 1px solid var(--panelBorder);
+      background: rgba(255,255,255,0.04);
+      color: var(--text);
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: 12px;
+      line-height: 1;
+    }
+
+    .btn-accent {
+      background: linear-gradient(135deg, #7c3aed 0%, #2563eb 100%);
+      border: 0;
+      color: #fff;
+      font-weight: 600;
+      border-radius: 12px;
+      padding: 10px 12px;
+    }
+    .btn-accent:hover { filter: brightness(1.05); }
+
+    .form-control, .form-select {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.10);
+      color: var(--text);
+      border-radius: 12px;
+    }
+    .form-control::placeholder { color: rgba(255,255,255,0.55); }
+    .form-control:focus, .form-select:focus {
+      box-shadow: 0 0 0 0.25rem rgba(124, 58, 237, 0.25);
+      border-color: rgba(124, 58, 237, 0.55);
+    }
+    .form-label { color: rgba(255,255,255,0.85); font-size: 12px; margin-bottom: 6px; }
+
+    .stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .statCard {
+      border-radius: 12px;
+      padding: 10px 12px;
+      border: 1px solid var(--panelBorder);
+      background: rgba(255,255,255,0.04);
+    }
+    .statCard .k { font-size: 11px; color: rgba(255,255,255,0.65); }
+    .statCard .v { font-size: 18px; font-weight: 700; margin-top: 2px; }
+
+    .toastWrap {
+      position: fixed;
+      right: 14px;
+      bottom: 14px;
+      max-width: 520px;
+      z-index: 10000;
+    }
+
+    .miniHelp {
+      font-size: 12px;
+      color: rgba(255,255,255,0.72);
+      line-height: 1.4;
+    }
+
+    .routeDetails code { color: #d1d5db; }
+
+    @media (max-width: 980px) {
+      .app { grid-template-columns: 1fr; }
+      .mapWrap { min-height: 520px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="panel">
+      <div class="panel-header">
+        <div class="brand">
+          <div>
+            <h1>Explore Routes</h1>
+            <div class="subtle">Google Flights–style “Explore” backed by your Neo4j route graph.</div>
+          </div>
+          <span id="modePill" class="pill">Globe</span>
+        </div>
+      </div>
+
+      <div class="panel-body">
+        <div class="row g-3">
+          <div class="col-12">
+            <label class="form-label" for="origin">Origin</label>
+            <input id="origin" class="form-control" placeholder="ORD" list="topAirports" autocomplete="off" />
+            <datalist id="topAirports"></datalist>
+          </div>
+
+          <div class="col-6">
+            <label class="form-label" for="maxHops">Max hops</label>
+            <select id="maxHops" class="form-select">
+              <option value="1">1 (direct)</option>
+              <option value="2">2</option>
+              <option value="3">3</option>
+            </select>
+          </div>
+
+          <div class="col-6">
+            <label class="form-label" for="limit">Limit</label>
+            <select id="limit" class="form-select">
+              <option value="200">200</option>
+              <option value="500" selected>500</option>
+              <option value="1000">1000</option>
+              <option value="2000">2000</option>
+            </select>
+          </div>
+
+          <div class="col-12">
+            <label class="form-label" for="maxPrice">Max price</label>
+            <input id="maxPrice" type="range" class="form-range" min="50" max="3000" step="25" value="800" />
+            <div class="d-flex justify-content-between miniHelp">
+              <span>$<span id="maxPriceLabel">800</span></span>
+              <span id="resultLabel">—</span>
+            </div>
+          </div>
+
+          <div class="col-6">
+            <label class="form-label" for="dateFrom">Date from (optional)</label>
+            <input id="dateFrom" type="date" class="form-control" />
+          </div>
+          <div class="col-6">
+            <label class="form-label" for="dateTo">Date to (optional)</label>
+            <input id="dateTo" type="date" class="form-control" />
+          </div>
+
+          <div class="col-12">
+            <label class="form-label" for="airlines">Airlines (optional, comma-separated)</label>
+            <input id="airlines" class="form-control" placeholder="AA, DL, UA" />
+          </div>
+
+          <div class="col-12 d-grid gap-2">
+            <button id="exploreBtn" class="btn btn-accent">Explore</button>
+            <button id="toggleModeBtn" class="btn btn-outline-light" style="border-radius: 12px;">Toggle Map / Globe</button>
+          </div>
+
+          <div class="col-12">
+            <div class="stats">
+              <div class="statCard">
+                <div class="k">Destinations</div>
+                <div id="destCount" class="v">—</div>
+              </div>
+              <div class="statCard">
+                <div class="k">Cheapest shown</div>
+                <div id="cheapestShown" class="v">—</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="col-12">
+            <div class="statCard routeDetails">
+              <div class="k">Route details</div>
+              <div id="routeDetails" class="miniHelp" style="margin-top: 6px;">
+                Click a destination to load route stats.
+              </div>
+            </div>
+          </div>
+
+          <div class="col-12">
+            <div class="miniHelp">
+              Tip: if you see destinations stuck at (0,0), run Neo4j seeding so airports have coordinates (<code>SEED_NEO4J=true</code> once), and avoid overwriting coords with zeros.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel mapWrap">
+      <div id="globeContainer"></div>
+      <div id="mapContainer"></div>
+    </div>
+  </div>
+
+  <div class="toastWrap" id="toastWrap"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://unpkg.com/maplibre-gl@4.1.2/dist/maplibre-gl.js"></script>
+  <script src="https://unpkg.com/globe.gl@2.34.0/dist/globe.gl.min.js"></script>
+  <script src="./explore.js"></script>
+</body>
+</html>
+

@@ -7,6 +7,7 @@ This document formalizes the public contract for the Google Flights API service 
 
 ## Airports
 - `GET /api/v1/airports`: Returns an array of airports with IATA code, city, country, latitude, and longitude. Supports pagination via `page` and `page_size` query parameters (integers; defaults: 1 and 50). Use optional `search` (substring match on name/city) for filtering.
+- `GET /api/v1/airports/top`: Returns a curated list of common airport codes (for UI pickers and demos).
 
 ## Airlines
 - `GET /api/v1/airlines`: Returns airline metadata; structure mirrors the airports endpoint. Same pagination and `search` query semantics apply.
@@ -22,6 +23,12 @@ This document formalizes the public contract for the Google Flights API service 
 
 ## Price History
 - `GET /api/v1/price-history/:origin/:destination`: Returns stored price points (date, price, airline) for the route. The response is not time-bounded by default.
+
+## Route Graph (Neo4j)
+- `GET /api/v1/graph/path`: Returns up to 10 cheapest multi-hop paths between `origin` and `dest` under `maxPrice`, bounded by `maxHops` (see handler comments for defaults/limits).
+- `GET /api/v1/graph/connections`: Returns reachable destinations from `origin` under `maxPrice`, bounded by `maxHops` (see handler comments for defaults/limits).
+- `GET /api/v1/graph/route-stats`: Returns aggregated min/max/avg stats for `origin` → `dest` using stored price points.
+- `GET /api/v1/graph/explore`: Returns route edges with coordinates for map/globe UIs. Query params: `origin` (required), plus optional `maxHops`, `maxPrice`, `dateFrom`, `dateTo`, `airlines`, `limit`.
 
 ## Admin & Operations
 - `GET /api/v1/admin/jobs`: Lists scheduled jobs with cron expressions and next run times. Filtering options: `type`, `status`.

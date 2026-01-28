@@ -207,7 +207,12 @@ func (n *Neo4jDB) CreateAirport(code, name, city, country string, latitude, long
 		_, err := tx.Run(
 			"MERGE (a:Airport {code: $code}) "+
 				"ON CREATE SET a.name = $name, a.city = $city, a.country = $country, a.latitude = $latitude, a.longitude = $longitude "+
-				"ON MATCH SET a.name = $name, a.city = $city, a.country = $country, a.latitude = $latitude, a.longitude = $longitude",
+				"ON MATCH SET "+
+				"a.name = CASE WHEN $name <> '' THEN $name ELSE a.name END, "+
+				"a.city = CASE WHEN $city <> '' THEN $city ELSE a.city END, "+
+				"a.country = CASE WHEN $country <> '' THEN $country ELSE a.country END, "+
+				"a.latitude = CASE WHEN $latitude = 0 AND $longitude = 0 THEN a.latitude ELSE $latitude END, "+
+				"a.longitude = CASE WHEN $latitude = 0 AND $longitude = 0 THEN a.longitude ELSE $longitude END",
 			map[string]interface{}{
 				"code":      code,
 				"name":      name,
