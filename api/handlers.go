@@ -4340,16 +4340,40 @@ func getContinuousSweepStatus(workerManager *worker.Manager, pgDB db.PostgresDB)
 		out := gin.H{}
 		if pgDB != nil {
 			dbProgress, err := pgDB.GetContinuousSweepProgress(c.Request.Context())
-			if err == nil && dbProgress != nil {
+			if err != nil {
+				out["db_error"] = err.Error()
+			} else if dbProgress != nil {
 				out["db"] = dbProgress
 			}
 		}
+
+		out["server_time"] = time.Now().Format(time.RFC3339)
 
 		if workerManager == nil {
 			out["initialized"] = false
 			out["message"] = "Worker manager not available"
 			c.JSON(http.StatusOK, out)
 			return
+		}
+
+		// Include queue stats so the UI can show whether work is still in-flight/backlogged even if the runner
+		// isn't initialized in this process.
+		if q := workerManager.GetQueue(); q != nil {
+			queues := gin.H{}
+			for _, name := range []string{"continuous_price_graph"} {
+				stats, err := q.GetQueueStats(c.Request.Context(), name)
+				if err != nil {
+					queues[name] = gin.H{"error": err.Error()}
+					continue
+				}
+				queues[name] = gin.H{
+					"pending":    stats["pending"],
+					"processing": stats["processing"],
+					"completed":  stats["completed"],
+					"failed":     stats["failed"],
+				}
+			}
+			out["queues"] = queues
 		}
 
 		runner := workerManager.GetSweepRunner()
@@ -4413,7 +4437,16 @@ func stopContinuousSweep(workerManager *worker.Manager, pgDB db.PostgresDB) gin.
 	return func(c *gin.Context) {
 		running := false
 		paused := false
-		_, _ = updateContinuousSweepDBFlags(c.Request.Context(), pgDB, &running, &paused)
+		if _, err := updateContinuousSweepDBFlags(c.Request.Context(), pgDB, &running, &paused); err != nil {
+			// Best-effort stop local runner, but return an error because the STOP did not persist.
+			if workerManager != nil {
+				if runner := workerManager.GetSweepRunner(); runner != nil {
+					runner.Stop()
+				}
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to persist STOP to DB: " + err.Error()})
+			return
+		}
 
 		if workerManager != nil {
 			if runner := workerManager.GetSweepRunner(); runner != nil {
@@ -4440,7 +4473,15 @@ func stopContinuousSweep(workerManager *worker.Manager, pgDB db.PostgresDB) gin.
 func pauseContinuousSweep(workerManager *worker.Manager, pgDB db.PostgresDB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		paused := true
-		_, _ = updateContinuousSweepDBFlags(c.Request.Context(), pgDB, nil, &paused)
+		if _, err := updateContinuousSweepDBFlags(c.Request.Context(), pgDB, nil, &paused); err != nil {
+			if workerManager != nil {
+				if runner := workerManager.GetSweepRunner(); runner != nil {
+					runner.Pause()
+				}
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to persist PAUSE to DB: " + err.Error()})
+			return
+		}
 
 		if workerManager != nil {
 			if runner := workerManager.GetSweepRunner(); runner != nil {
@@ -4467,7 +4508,15 @@ func pauseContinuousSweep(workerManager *worker.Manager, pgDB db.PostgresDB) gin
 func resumeContinuousSweep(workerManager *worker.Manager, pgDB db.PostgresDB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		paused := false
-		_, _ = updateContinuousSweepDBFlags(c.Request.Context(), pgDB, nil, &paused)
+		if _, err := updateContinuousSweepDBFlags(c.Request.Context(), pgDB, nil, &paused); err != nil {
+			if workerManager != nil {
+				if runner := workerManager.GetSweepRunner(); runner != nil {
+					runner.Resume()
+				}
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to persist RESUME to DB: " + err.Error()})
+			return
+		}
 
 		if workerManager != nil {
 			if runner := workerManager.GetSweepRunner(); runner != nil {

@@ -1810,6 +1810,7 @@ function initContinuousSweepControls() {
   const pauseBtn = document.getElementById("sweepPauseBtn");
   const resumeBtn = document.getElementById("sweepResumeBtn");
   const stopBtn = document.getElementById("sweepStopBtn");
+  const stopDrainBtn = document.getElementById("sweepStopDrainBtn");
   const skipBtn = document.getElementById("sweepSkipBtn");
   const restartBtn = document.getElementById("sweepRestartBtn");
   const refreshStatusBtn = document.getElementById("refreshSweepStatusBtn");
@@ -1821,6 +1822,8 @@ function initContinuousSweepControls() {
   if (pauseBtn) pauseBtn.addEventListener("click", pauseContinuousSweep);
   if (resumeBtn) resumeBtn.addEventListener("click", resumeContinuousSweep);
   if (stopBtn) stopBtn.addEventListener("click", stopContinuousSweep);
+  if (stopDrainBtn)
+    stopDrainBtn.addEventListener("click", stopAndDrainContinuousPriceGraphQueue);
   if (skipBtn) skipBtn.addEventListener("click", skipCurrentRoute);
   if (restartBtn) restartBtn.addEventListener("click", restartCurrentSweep);
   if (refreshStatusBtn)
@@ -1853,7 +1856,7 @@ async function loadContinuousSweepStatus() {
 
     const body = await response.json();
     // Always render DB control state if present (even when the runner isn't initialized in this process).
-    updateSweepDbControlUI(body?.db ?? null);
+    updateSweepDbControlUI(body?.db ?? null, null, body?.queues ?? null, body?.db_error ?? null);
 
     if (!body || body.initialized === false) {
       showSweepNotReady();
@@ -1861,14 +1864,14 @@ async function loadContinuousSweepStatus() {
     }
 
     const status = body.status ?? body;
-    updateSweepStatusUI(status, body?.db ?? null);
+    updateSweepStatusUI(status, body?.db ?? null, body?.queues ?? null, body?.db_error ?? null);
   } catch (error) {
     console.error("Error loading sweep status:", error);
   }
 }
 
 // Update sweep status UI
-function updateSweepStatusUI(status, dbProgress) {
+function updateSweepStatusUI(status, dbProgress, queues, dbError) {
   const notReady = document.getElementById("sweepStatusNotReady");
   const content = document.getElementById("sweepStatusContent");
 
@@ -1877,7 +1880,7 @@ function updateSweepStatusUI(status, dbProgress) {
     return;
   }
 
-  updateSweepDbControlUI(dbProgress, status);
+  updateSweepDbControlUI(dbProgress, status, queues, dbError);
 
   // Show status content
   if (notReady) notReady.style.display = "none";
@@ -1989,7 +1992,7 @@ function updateSweepStatusUI(status, dbProgress) {
   syncSweepConfigFormFromStatus(status);
 }
 
-function updateSweepDbControlUI(dbProgress, runnerStatus) {
+function updateSweepDbControlUI(dbProgress, runnerStatus, queues, dbError) {
   const controlText =
     document.getElementById("sweepDbControlText") ||
     document.getElementById("sweepDbControlTextNotReady");
@@ -1999,30 +2002,40 @@ function updateSweepDbControlUI(dbProgress, runnerStatus) {
   const notReadyContainer = document.getElementById("sweepDbStatusNotReady");
   const mismatchWarning = document.getElementById("sweepDbMismatchWarning");
   const staleWarning = document.getElementById("sweepDbStaleWarning");
+  const stopDrainBtn = document.getElementById("sweepStopDrainBtn");
+  const queueEl = document.getElementById("sweepQueueContinuousPriceGraph");
 
   if (!dbProgress) {
     if (notReadyContainer) notReadyContainer.style.display = "none";
-    if (controlText) controlText.textContent = "-";
+    if (controlText) controlText.textContent = dbError ? `DB error: ${dbError}` : "-";
     if (lastUpdatedEl) lastUpdatedEl.textContent = "-";
     if (mismatchWarning) mismatchWarning.style.display = "none";
     if (staleWarning) staleWarning.style.display = "none";
+    if (queueEl) queueEl.textContent = "-";
+    if (stopDrainBtn) stopDrainBtn.disabled = true;
     return;
   }
 
   if (notReadyContainer) notReadyContainer.style.display = "block";
 
-  const running = !!dbProgress.is_running;
-  const paused = !!dbProgress.is_paused;
+  const running =
+    dbProgress.is_running != null ? !!dbProgress.is_running : !!dbProgress.IsRunning;
+  const paused =
+    dbProgress.is_paused != null ? !!dbProgress.is_paused : !!dbProgress.IsPaused;
   const stateLabel = !running ? "Stopped" : paused ? "Paused" : "Running";
 
   if (controlText) {
-    controlText.textContent = `${stateLabel} (DB)`;
+    controlText.textContent = dbError
+      ? `${stateLabel} (DB) • DB error: ${dbError}`
+      : `${stateLabel} (DB)`;
   }
 
   let ageSec = null;
   if (lastUpdatedEl) {
-    if (dbProgress.last_updated) {
-      const last = new Date(dbProgress.last_updated);
+    const lastUpdated =
+      dbProgress.last_updated != null ? dbProgress.last_updated : dbProgress.LastUpdated;
+    if (lastUpdated) {
+      const last = new Date(lastUpdated);
       ageSec = Math.max(0, Math.round((Date.now() - last.getTime()) / 1000));
       lastUpdatedEl.textContent = `${last.toLocaleString()} • ${ageSec}s ago`;
     } else {
@@ -2049,6 +2062,23 @@ function updateSweepDbControlUI(dbProgress, runnerStatus) {
       staleWarning.style.display = "none";
     }
   }
+
+  const q = queues?.continuous_price_graph ?? null;
+  const qPending = typeof q?.pending === "number" ? q.pending : 0;
+  const qProcessing = typeof q?.processing === "number" ? q.processing : 0;
+  if (queueEl) {
+    if (q?.error) {
+      queueEl.textContent = `error: ${q.error}`;
+    } else if (q) {
+      queueEl.textContent = `pending ${qPending} • processing ${qProcessing}`;
+    } else {
+      queueEl.textContent = "-";
+    }
+  }
+
+  if (stopDrainBtn) {
+    stopDrainBtn.disabled = !(running || qPending > 0 || qProcessing > 0);
+  }
 }
 
 // Show sweep not ready state
@@ -2064,6 +2094,7 @@ function showSweepNotReady() {
   const pauseBtn = document.getElementById("sweepPauseBtn");
   const resumeBtn = document.getElementById("sweepResumeBtn");
   const stopBtn = document.getElementById("sweepStopBtn");
+  const stopDrainBtn = document.getElementById("sweepStopDrainBtn");
   const skipBtn = document.getElementById("sweepSkipBtn");
   const restartBtn = document.getElementById("sweepRestartBtn");
 
@@ -2071,6 +2102,7 @@ function showSweepNotReady() {
   if (pauseBtn) pauseBtn.disabled = true;
   if (resumeBtn) resumeBtn.disabled = true;
   if (stopBtn) stopBtn.disabled = true;
+  if (stopDrainBtn) stopDrainBtn.disabled = true;
   if (skipBtn) skipBtn.disabled = true;
   if (restartBtn) restartBtn.disabled = true;
 }
@@ -2093,6 +2125,55 @@ function updateSweepButtonStates(status) {
   if (stopBtn) stopBtn.disabled = !isRunning;
   if (skipBtn) skipBtn.disabled = !isRunning || isPaused;
   if (restartBtn) restartBtn.disabled = !isRunning;
+}
+
+async function stopAndDrainContinuousPriceGraphQueue() {
+  if (
+    !confirm(
+      'Stop the continuous sweep and drain "continuous_price_graph"? This cancels in-flight jobs (best-effort) and clears pending.',
+    )
+  ) {
+    return;
+  }
+
+  try {
+    setButtonLoading(document.getElementById("sweepStopDrainBtn"), true);
+
+    const stopResp = await fetch(`${ENDPOINTS.CONTINUOUS_SWEEP}/stop`, {
+      method: "POST",
+    });
+    const stopText = await stopResp.text();
+    const stopBody = safeParseJSON(stopText, {});
+    if (!stopResp.ok) {
+      const errorMessage =
+        stopBody && stopBody.error ? stopBody.error : `HTTP ${stopResp.status}`;
+      throw new Error(errorMessage);
+    }
+
+    const drainResp = await fetch(
+      `${ENDPOINTS.QUEUE}/${encodeURIComponent("continuous_price_graph")}/drain`,
+      { method: "POST" },
+    );
+    const drainText = await drainResp.text();
+    const drainBody = safeParseJSON(drainText, {});
+    if (!drainResp.ok) {
+      const errorMessage =
+        drainBody && drainBody.error
+          ? drainBody.error
+          : `HTTP ${drainResp.status}`;
+      throw new Error(errorMessage);
+    }
+
+    showAlert("Stopped sweep and drained continuous_price_graph.", "success");
+    await loadQueueStatus();
+    await loadWorkers();
+    await loadContinuousSweepStatus();
+  } catch (error) {
+    console.error("Error stopping+draining sweep:", error);
+    showAlert(`Error stopping+draining sweep: ${error.message}`, "danger");
+  } finally {
+    setButtonLoading(document.getElementById("sweepStopDrainBtn"), false);
+  }
 }
 
 // Start continuous sweep
