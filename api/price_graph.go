@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/gilby125/google-flights-api/flights"
@@ -15,6 +16,72 @@ type PriceGraphBuildParams struct {
 	DepartureDateFrom string
 	DepartureDateTo   string
 	TripLengthDays    int
+}
+
+func TopPriceGraphPoints(points []map[string]interface{}, n int) []map[string]interface{} {
+	if n <= 0 || len(points) == 0 {
+		return nil
+	}
+
+	type scored struct {
+		point map[string]interface{}
+		price float64
+		ok    bool
+	}
+
+	scoredPoints := make([]scored, 0, len(points))
+	for _, p := range points {
+		if p == nil {
+			continue
+		}
+		priceRaw, ok := p["price"]
+		if !ok {
+			continue
+		}
+		var price float64
+		switch v := priceRaw.(type) {
+		case float64:
+			price = v
+		case float32:
+			price = float64(v)
+		case int:
+			price = float64(v)
+		case int64:
+			price = float64(v)
+		case int32:
+			price = float64(v)
+		case uint:
+			price = float64(v)
+		case uint64:
+			price = float64(v)
+		case uint32:
+			price = float64(v)
+		default:
+			continue
+		}
+		if price <= 0 {
+			continue
+		}
+		scoredPoints = append(scoredPoints, scored{point: p, price: price, ok: true})
+	}
+
+	if len(scoredPoints) == 0 {
+		return nil
+	}
+
+	sort.SliceStable(scoredPoints, func(i, j int) bool {
+		return scoredPoints[i].price < scoredPoints[j].price
+	})
+
+	if n > len(scoredPoints) {
+		n = len(scoredPoints)
+	}
+
+	out := make([]map[string]interface{}, 0, n)
+	for i := 0; i < n; i++ {
+		out = append(out, scoredPoints[i].point)
+	}
+	return out
 }
 
 func BuildPriceGraphArgs(now time.Time, origin, destination string, departureDate, returnDate time.Time, opts flights.Options, params PriceGraphBuildParams) (flights.PriceGraphArgs, error) {

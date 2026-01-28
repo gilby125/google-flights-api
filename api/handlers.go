@@ -2949,6 +2949,7 @@ type DirectSearchRequest struct {
 	PriceGraphDepartureDateFrom string `json:"price_graph_departure_date_from" form:"price_graph_departure_date_from"`
 	PriceGraphDepartureDateTo   string `json:"price_graph_departure_date_to" form:"price_graph_departure_date_to"`
 	PriceGraphTripLengthDays    int    `json:"price_graph_trip_length_days" form:"price_graph_trip_length_days"`
+	PriceGraphTopN              int    `json:"price_graph_top_n" form:"price_graph_top_n"`
 
 	// DebugBatches enables per-batch diagnostics in multi-route searches.
 	// Intended for troubleshooting missing origin→destination pairs.
@@ -3002,31 +3003,38 @@ func DirectFlightSearch(pgDB db.PostgresDB, neo4jDB db.Neo4jDatabase) gin.Handle
 		if searchRequest.TripType == "" {
 			searchRequest.TripType = "one_way"
 		}
-
-		// Validate required fields
-		if searchRequest.Origin == "" || searchRequest.DepartureDate == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Origin and departure date are required"})
-			return
+		if searchRequest.IncludePriceGraph && searchRequest.PriceGraphTopN <= 0 {
+			searchRequest.PriceGraphTopN = 10
+		}
+		if searchRequest.PriceGraphTopN > 50 {
+			searchRequest.PriceGraphTopN = 50
 		}
 
-		// Parse dates
-		departureDate, err := time.Parse("2006-01-02", searchRequest.DepartureDate)
+		originTokens, destinationTokens, err := ParseRouteInputs(searchRequest.Origin, searchRequest.Destination)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid departure date format. Use YYYY-MM-DD"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
 
-		var returnDate time.Time
-		if searchRequest.ReturnDate != "" {
-			returnDate, err = time.Parse("2006-01-02", searchRequest.ReturnDate)
-			if err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid return date format. Use YYYY-MM-DD"})
-				return
+		plan, err := PlanDirectSearchDates(time.Now().UTC(), searchRequest)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		departureDate := plan.DepartureDate
+		returnDate := plan.ReturnDate
+		priceGraphOnly := plan.PriceGraphOnly
+		if priceGraphOnly {
+			if strings.TrimSpace(searchRequest.PriceGraphDepartureDateFrom) == "" {
+				searchRequest.PriceGraphDepartureDateFrom = plan.PriceGraph.DepartureDateFrom
 			}
-		} else if searchRequest.TripType == "round_trip" {
-			returnDate = departureDate.AddDate(0, 0, 7)
-		} else {
-			returnDate = departureDate.AddDate(0, 0, 1)
+			if strings.TrimSpace(searchRequest.PriceGraphDepartureDateTo) == "" {
+				searchRequest.PriceGraphDepartureDateTo = plan.PriceGraph.DepartureDateTo
+			}
+			if searchRequest.PriceGraphTripLengthDays <= 0 {
+				searchRequest.PriceGraphTripLengthDays = plan.PriceGraph.TripLengthDays
+			}
 		}
 
 		// Create flight session
@@ -3134,13 +3142,7 @@ func DirectFlightSearch(pgDB db.PostgresDB, neo4jDB db.Neo4jDatabase) gin.Handle
 			Lang:     language.English,
 		}
 
-		priceGraphParams := PriceGraphBuildParams{
-			Include:           searchRequest.IncludePriceGraph,
-			WindowDays:        searchRequest.PriceGraphWindowDays,
-			DepartureDateFrom: searchRequest.PriceGraphDepartureDateFrom,
-			DepartureDateTo:   searchRequest.PriceGraphDepartureDateTo,
-			TripLengthDays:    searchRequest.PriceGraphTripLengthDays,
-		}
+		priceGraphParams := plan.PriceGraph
 
 		normalizeGroupTokens := func(tokens []string) map[string]struct{} {
 			out := make(map[string]struct{}, len(tokens))
@@ -3284,6 +3286,11 @@ func DirectFlightSearch(pgDB db.PostgresDB, neo4jDB db.Neo4jDatabase) gin.Handle
 				}
 			}
 			response["points"] = points
+			if searchRequest.PriceGraphTopN > 0 {
+				if top := TopPriceGraphPoints(points, searchRequest.PriceGraphTopN); len(top) > 0 {
+					response["top_points"] = top
+				}
+			}
 			return response
 		}
 
@@ -3340,12 +3347,6 @@ func DirectFlightSearch(pgDB db.PostgresDB, neo4jDB db.Neo4jDatabase) gin.Handle
 				}
 			}
 			return out, len(offers) - len(out)
-		}
-
-		originTokens, destinationTokens, err := ParseRouteInputs(searchRequest.Origin, searchRequest.Destination)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
 		}
 
 		expandedOrigins, originWarnings, err := macros.ExpandAirportTokens(originTokens)
@@ -3463,6 +3464,21 @@ func DirectFlightSearch(pgDB db.PostgresDB, neo4jDB db.Neo4jDatabase) gin.Handle
 			searchRequest.Origin = expandedOrigins[0]
 			searchRequest.Destination = expandedDestinations[0]
 
+			if priceGraphOnly {
+				response := map[string]interface{}{
+					"offers":           []map[string]interface{}{},
+					"search_params":    searchRequest,
+					"price_graph_only": true,
+				}
+
+				if priceGraph := maybeGetPriceGraph(searchRequest.Origin, searchRequest.Destination); priceGraph != nil {
+					response["price_graph"] = priceGraph
+				}
+
+				c.JSON(http.StatusOK, response)
+				return
+			}
+
 			offers, priceRange, err := session.GetOffers(
 				c.Request.Context(),
 				flights.Args{
@@ -3505,6 +3521,87 @@ func DirectFlightSearch(pgDB db.PostgresDB, neo4jDB db.Neo4jDatabase) gin.Handle
 
 			if priceGraph := maybeGetPriceGraph(searchRequest.Origin, searchRequest.Destination); priceGraph != nil {
 				response["price_graph"] = priceGraph
+			}
+
+			c.JSON(http.StatusOK, response)
+			return
+		}
+
+		if priceGraphOnly {
+			const maxDirectRouteFallback = 16
+			if totalRoutes > maxDirectRouteFallback {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error": fmt.Sprintf(
+						"price-graph-only mode supports up to %d routes per request (requested %d). Narrow your route grid or use the admin price-graph sweep pipeline.",
+						maxDirectRouteFallback,
+						totalRoutes,
+					),
+					"warnings": warnings,
+				})
+				return
+			}
+
+			routes := make([]map[string]interface{}, 0, totalRoutes)
+			for _, origin := range expandedOrigins {
+				for _, destination := range expandedDestinations {
+					route := map[string]interface{}{
+						"origin":      origin,
+						"destination": destination,
+					}
+
+					routeParams := searchRequest
+					routeParams.Origin = origin
+					routeParams.Destination = destination
+					route["search_params"] = routeParams
+
+					if priceGraph := maybeGetPriceGraph(origin, destination); priceGraph != nil {
+						route["google_price_graph"] = priceGraph
+
+						if top, ok := priceGraph["top_points"].([]map[string]interface{}); ok && len(top) > 0 {
+							first := top[0]
+							summary := map[string]interface{}{
+								"currency":       priceGraph["currency"],
+								"price":          first["price"],
+								"departure_date": first["departure_date"],
+								"return_date":    first["return_date"],
+							}
+							route["summary"] = summary
+						}
+					}
+
+					routes = append(routes, route)
+				}
+			}
+
+			response := map[string]interface{}{
+				"routes": routes,
+				"search_params": map[string]interface{}{
+					"origins":               expandedOrigins,
+					"destinations":          expandedDestinations,
+					"departure_date":        searchRequest.DepartureDate,
+					"return_date":           searchRequest.ReturnDate,
+					"trip_type":             searchRequest.TripType,
+					"class":                 searchRequest.Class,
+					"stops":                 searchRequest.Stops,
+					"adults":                searchRequest.Adults,
+					"children":              searchRequest.Children,
+					"infants_lap":           searchRequest.InfantsLap,
+					"infants_seat":          searchRequest.InfantsSeat,
+					"currency":              searchRequest.Currency,
+					"requested_route_count": totalRoutes,
+					"returned_route_count":  len(routes),
+					"price_graph_only":      true,
+				},
+				"price_graph_only": true,
+			}
+			if len(searchRequest.IncludeAirlineGroups) > 0 || len(searchRequest.ExcludeAirlineGroups) > 0 {
+				response["filter"] = map[string]interface{}{
+					"include_airline_groups": searchRequest.IncludeAirlineGroups,
+					"exclude_airline_groups": searchRequest.ExcludeAirlineGroups,
+				}
+			}
+			if len(warnings) > 0 {
+				response["warnings"] = warnings
 			}
 
 			c.JSON(http.StatusOK, response)

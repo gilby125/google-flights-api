@@ -108,8 +108,11 @@
                   id="departure_date"
                   class="form-control"
                   placeholder="Select date"
-                  required
                 />
+                <div class="text-muted small mt-1">
+                  Optional when “Show Google price graph” is enabled (we’ll
+                  fetch the next ~6 months of prices).
+                </div>
               </div>
               <div class="col-md-4">
                 <label for="return_date" class="form-label">Return Date</label>
@@ -570,6 +573,7 @@
           <div class="text-muted small mt-2">
             Tip: click a point to open it in Google Flights.
           </div>
+          <div id="googlePriceGraphTopPoints" class="mt-3"></div>
         </div>
       </div>
 

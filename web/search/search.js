@@ -31,6 +31,7 @@ const elements = {
   googlePriceGraphCard: document.getElementById("googlePriceGraphCard"),
   googlePriceGraph: document.getElementById("googlePriceGraph"),
   googlePriceGraphError: document.getElementById("googlePriceGraphError"),
+  googlePriceGraphTopPoints: document.getElementById("googlePriceGraphTopPoints"),
   resultsCard: document.getElementById("resultsCard"),
   flightResults: document.getElementById("flightResults"),
   sortResults: document.getElementById("sortResults"),
@@ -679,6 +680,9 @@ function initSearchPage() {
       setPriceGraphFieldVisibility,
     );
   }
+  if (inputs.departureDate) {
+    inputs.departureDate.addEventListener("change", setPriceGraphFieldVisibility);
+  }
   setPriceGraphFieldVisibility();
 
   if (elements.createRecurringBtn) {
@@ -741,7 +745,8 @@ function setPriceGraphFieldVisibility() {
   });
 
   const mode = String(inputs.priceGraphMode?.value || "around_date");
-  const showOpen = enabled && mode === "open_dates";
+  const departureBlank = !String(inputs.departureDate?.value || "").trim();
+  const showOpen = enabled && (mode === "open_dates" || departureBlank);
   document.querySelectorAll(".priceGraphOptionOpen").forEach((el) => {
     el.style.display = showOpen ? "block" : "none";
   });
@@ -981,6 +986,13 @@ function renderGooglePriceGraphChart(canvas, priceGraph, errorEl) {
 
   const chartTitle = `${priceGraph?.origin || ""} → ${priceGraph?.destination || ""}`.trim();
 
+  const openUrlForIndex = (index) => {
+    if (typeof index !== "number" || index < 0) return;
+    const url = urls?.[index];
+    if (!url) return;
+    window.open(url, "_blank", "noopener");
+  };
+
   const options = {
     chart: {
       type: "area",
@@ -996,12 +1008,10 @@ function renderGooglePriceGraphChart(canvas, priceGraph, errorEl) {
           canvas.style.cursor = "default";
         },
         dataPointSelection: (_event, _chartContext, config) => {
-          const index = config?.dataPointIndex;
-          if (typeof index !== "number" || index < 0) return;
-          const url = urls?.[index];
-          if (url) {
-            window.open(url, "_blank", "noopener");
-          }
+          openUrlForIndex(config?.dataPointIndex);
+        },
+        markerClick: (_event, _chartContext, config) => {
+          openUrlForIndex(config?.dataPointIndex);
         },
       },
     },
@@ -1401,7 +1411,7 @@ async function handleSearch(event) {
 
     if (!originInput || !destinationInput || !departureInput) {
       throw new Error(
-        "Please fill in origin, destination, and departure date.",
+        "Please fill in origin and destination.",
       );
     }
 
@@ -1411,7 +1421,7 @@ async function handleSearch(event) {
     );
     const origin = parsedRoutes.origins.join(",");
     const destination = parsedRoutes.destinations.join(",");
-    const departureDate = departureInput.value;
+    const departureDate = String(departureInput.value || "").trim();
     const returnDate = returnInput ? returnInput.value : "";
     const tripType = tripTypeInput ? tripTypeInput.value : "round_trip";
     const travelClass = classInput ? classInput.value : "economy";
@@ -1433,10 +1443,15 @@ async function handleSearch(event) {
       adults = parseInt(adultsInput.value || "1", 10);
     }
 
+    const includePriceGraph = !!inputs.includePriceGraph?.checked;
+
+    if (!departureDate && !includePriceGraph) {
+      throw new Error("Please fill in a departure date (or enable “Show Google price graph” to search flexible dates).");
+    }
+
     const searchData = {
       origin,
       destination,
-      departure_date: departureDate,
       trip_type: tripType,
       class: travelClass,
       stops,
@@ -1446,6 +1461,10 @@ async function handleSearch(event) {
       infants_seat: infantsSeat,
       currency,
     };
+
+    if (departureDate) {
+      searchData.departure_date = departureDate;
+    }
 
     const carrierTokens = parseCarrierTokens(inputs.googleCarriers?.value);
     if (carrierTokens.length > 0) {
@@ -1472,11 +1491,10 @@ async function handleSearch(event) {
       searchData.include_airline_groups = includeGroups;
     }
 
-    if (tripType === "round_trip" && returnDate) {
+    if (departureDate && tripType === "round_trip" && returnDate) {
       searchData.return_date = returnDate;
     }
 
-    const includePriceGraph = !!inputs.includePriceGraph?.checked;
     if (includePriceGraph) {
       searchData.include_price_graph = true;
 
@@ -1488,34 +1506,51 @@ async function handleSearch(event) {
         searchData.price_graph_window_days = windowDays;
       }
 
-      const mode = String(inputs.priceGraphMode?.value || "around_date");
-      if (mode === "open_dates") {
-        const rangeStart = departureDate;
-        const rangeEnd = addDaysToDateString(
-          departureDate,
-          windowDays || 30,
-        );
-        if (rangeStart && rangeEnd) {
-          searchData.price_graph_departure_date_from = rangeStart;
-          searchData.price_graph_departure_date_to = rangeEnd;
-        }
+      if (!departureDate) {
+        const today = toYyyyMmDd(new Date());
+        const maxDays = 161;
+        const rangeEnd = addDaysToDateString(today, maxDays);
+        searchData.price_graph_departure_date_from = today;
+        searchData.price_graph_departure_date_to = rangeEnd;
 
-        let tripLengthDays = 0;
-        if (tripType === "round_trip" && returnDate) {
-          const dep = new Date(`${departureDate}T00:00:00Z`);
-          const ret = new Date(`${returnDate}T00:00:00Z`);
-          tripLengthDays = Math.round(
-            (ret - dep) / (24 * 60 * 60 * 1000),
-          );
-        }
-        if (!tripLengthDays) {
-          tripLengthDays = parseInt(
-            inputs.priceGraphTripLengthDays?.value || "7",
-            10,
-          );
-        }
+        const tripLengthDays = parseInt(
+          inputs.priceGraphTripLengthDays?.value || "7",
+          10,
+        );
         if (Number.isFinite(tripLengthDays) && tripLengthDays >= 0) {
           searchData.price_graph_trip_length_days = tripLengthDays;
+        }
+        searchData.price_graph_top_n = 10;
+      } else {
+        const mode = String(inputs.priceGraphMode?.value || "around_date");
+        if (mode === "open_dates") {
+          const rangeStart = departureDate;
+          const rangeEnd = addDaysToDateString(
+            departureDate,
+            windowDays || 30,
+          );
+          if (rangeStart && rangeEnd) {
+            searchData.price_graph_departure_date_from = rangeStart;
+            searchData.price_graph_departure_date_to = rangeEnd;
+          }
+
+          let tripLengthDays = 0;
+          if (tripType === "round_trip" && returnDate) {
+            const dep = new Date(`${departureDate}T00:00:00Z`);
+            const ret = new Date(`${returnDate}T00:00:00Z`);
+            tripLengthDays = Math.round(
+              (ret - dep) / (24 * 60 * 60 * 1000),
+            );
+          }
+          if (!tripLengthDays) {
+            tripLengthDays = parseInt(
+              inputs.priceGraphTripLengthDays?.value || "7",
+              10,
+            );
+          }
+          if (Number.isFinite(tripLengthDays) && tripLengthDays >= 0) {
+            searchData.price_graph_trip_length_days = tripLengthDays;
+          }
         }
       }
     }
@@ -1983,6 +2018,9 @@ function displayGooglePriceGraph(priceGraph) {
   const points = Array.isArray(priceGraph?.points) ? priceGraph.points : null;
   if (!points || points.length === 0 || priceGraph?.error) {
     elements.googlePriceGraphCard.style.display = "none";
+    if (elements.googlePriceGraphTopPoints) {
+      elements.googlePriceGraphTopPoints.innerHTML = "";
+    }
     return;
   }
 
@@ -2002,6 +2040,99 @@ function displayGooglePriceGraph(priceGraph) {
     priceGraph,
     elements.googlePriceGraphError,
   );
+
+  if (elements.googlePriceGraphTopPoints) {
+    renderGooglePriceGraphTopPoints(elements.googlePriceGraphTopPoints, priceGraph);
+  }
+}
+
+function getTopPointsForGraph(priceGraph, limit = 10) {
+  const top = Array.isArray(priceGraph?.top_points) ? priceGraph.top_points : null;
+  if (top && top.length) return top.slice(0, limit);
+
+  const points = Array.isArray(priceGraph?.points) ? priceGraph.points : null;
+  if (!points || !points.length) return [];
+
+  const scored = points
+    .map((p) => {
+      const price = Number(p?.price);
+      return Number.isFinite(price) && price > 0 ? { p, price } : null;
+    })
+    .filter(Boolean);
+
+  scored.sort((a, b) => a.price - b.price);
+  return scored.slice(0, limit).map((row) => row.p);
+}
+
+function formatCurrencyShort(currency, amount) {
+  const code = String(currency || "")
+    .trim()
+    .toUpperCase();
+  const value = typeof amount === "number" ? amount : Number(amount);
+  if (!code || !Number.isFinite(value) || value <= 0) return "";
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency: code,
+      maximumFractionDigits: 0,
+    }).format(value);
+  } catch {
+    return `${code} ${Math.round(value)}`;
+  }
+}
+
+function renderGooglePriceGraphTopPoints(container, priceGraph) {
+  if (!container) return;
+  const currency = priceGraph?.currency || currentSearchParams?.currency || "USD";
+  const points = getTopPointsForGraph(priceGraph, 10);
+  if (!points.length) {
+    container.innerHTML = "";
+    return;
+  }
+
+  const origin = String(priceGraph?.origin || currentSearchParams?.origin || "").trim();
+  const destination = String(
+    priceGraph?.destination || currentSearchParams?.destination || "",
+  ).trim();
+
+  const header = document.createElement("div");
+  header.className = "text-muted small mb-2";
+  header.textContent = "Cheapest dates (click to load offers):";
+
+  const list = document.createElement("div");
+  list.className = "d-flex flex-column gap-2";
+
+  for (const point of points) {
+    const dep = String(point?.departure_date || "").trim();
+    const ret = String(point?.return_date || "").trim();
+    const price = Number(point?.price);
+    if (!dep || !ret || !Number.isFinite(price) || price <= 0) continue;
+
+    const row = document.createElement("div");
+    row.className = "d-flex flex-wrap align-items-center justify-content-between gap-2";
+    row.innerHTML = `
+      <div class="small">
+        <strong>${escapeHtml(formatCurrencyShort(currency, price))}</strong>
+        <span class="text-muted ms-2">${escapeHtml(dep)} → ${escapeHtml(ret)}</span>
+      </div>
+    `;
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn btn-outline-primary btn-sm";
+    btn.textContent = "Load offers";
+    btn.addEventListener("click", () => {
+      if (!origin || !destination) return;
+      loadOffersForPoint(origin, destination, dep, ret);
+    });
+
+    row.appendChild(btn);
+    list.appendChild(row);
+  }
+
+  container.innerHTML = "";
+  container.appendChild(header);
+  container.appendChild(list);
 }
 
 // Display search results
@@ -2025,6 +2156,9 @@ function displaySearchResults(searchResult) {
     elements.flightResults.innerHTML = "";
   }
 
+  currentOffers = [];
+  currentSearchParams = searchResult?.search_params || null;
+
   // Check if we have results
   if (
     !elements.flightResults ||
@@ -2032,14 +2166,18 @@ function displaySearchResults(searchResult) {
     searchResult.offers.length === 0
   ) {
     if (elements.flightResults) {
-      elements.flightResults.innerHTML =
-        '<div class="alert alert-info">No flights found matching your criteria.</div>';
+      if (searchResult?.price_graph_only) {
+        elements.flightResults.innerHTML =
+          '<div class="alert alert-info mb-0">Price graph loaded (no fixed dates selected). Pick a date from the graph above to load offers.</div>';
+      } else {
+        elements.flightResults.innerHTML =
+          '<div class="alert alert-info">No flights found matching your criteria.</div>';
+      }
     }
     return;
   }
 
   currentOffers = searchResult.offers.slice();
-  currentSearchParams = searchResult.search_params || null;
 
   // Sort and display results
   sortFlightResults();
@@ -2076,6 +2214,8 @@ function displayMultiRouteResults(searchResult) {
     elements.resultsCard.style.display = "block";
   }
   if (!elements.flightResults) return;
+
+  currentSearchParams = searchResult?.search_params || null;
 
   // Multi-route: render graphs per-route in the active tab, not the global cards.
   if (elements.priceGraphCard) elements.priceGraphCard.style.display = "none";
@@ -2307,6 +2447,146 @@ function displayMultiRouteResults(searchResult) {
   }
 }
 
+function buildDirectSearchPayloadFromParams(params, overrides = {}) {
+  const base = params && typeof params === "object" ? params : {};
+  const payload = {
+    origin: overrides.origin ?? base.origin ?? "",
+    destination: overrides.destination ?? base.destination ?? "",
+    departure_date: overrides.departure_date ?? base.departure_date ?? "",
+    trip_type: overrides.trip_type ?? base.trip_type ?? "round_trip",
+    class: overrides.class ?? base.class ?? "economy",
+    stops: overrides.stops ?? base.stops ?? "any",
+    adults: overrides.adults ?? base.adults ?? 1,
+    children: overrides.children ?? base.children ?? 0,
+    infants_lap: overrides.infants_lap ?? base.infants_lap ?? 0,
+    infants_seat: overrides.infants_seat ?? base.infants_seat ?? 0,
+    currency: overrides.currency ?? base.currency ?? "USD",
+  };
+
+  if (payload.trip_type === "round_trip") {
+    const ret = overrides.return_date ?? base.return_date ?? "";
+    if (ret) payload.return_date = ret;
+  }
+
+  const includePriceGraph =
+    overrides.include_price_graph ??
+    base.include_price_graph ??
+    !!inputs.includePriceGraph?.checked;
+  if (includePriceGraph) {
+    payload.include_price_graph = true;
+    if (base.price_graph_window_days) payload.price_graph_window_days = base.price_graph_window_days;
+    if (base.price_graph_departure_date_from) payload.price_graph_departure_date_from = base.price_graph_departure_date_from;
+    if (base.price_graph_departure_date_to) payload.price_graph_departure_date_to = base.price_graph_departure_date_to;
+    if (base.price_graph_trip_length_days != null) payload.price_graph_trip_length_days = base.price_graph_trip_length_days;
+  }
+
+  if (Array.isArray(base.include_airline_groups) && base.include_airline_groups.length) {
+    payload.include_airline_groups = base.include_airline_groups;
+  }
+  if (Array.isArray(base.exclude_airline_groups) && base.exclude_airline_groups.length) {
+    payload.exclude_airline_groups = base.exclude_airline_groups;
+  }
+  if (Array.isArray(base.carriers) && base.carriers.length) {
+    payload.carriers = base.carriers;
+  }
+  if (base.debug_batches) payload.debug_batches = true;
+
+  return payload;
+}
+
+async function loadOffersForPoint(origin, destination, departureDate, returnDate, routeIndex = null) {
+  const dep = String(departureDate || "").trim();
+  const ret = String(returnDate || "").trim();
+  const routeOrigin = String(origin || "").trim();
+  const routeDestination = String(destination || "").trim();
+  if (!routeOrigin || !routeDestination || !dep) return;
+
+  const params =
+    routeIndex != null &&
+    Array.isArray(currentRoutes) &&
+    currentRoutes[routeIndex] &&
+    currentRoutes[routeIndex].search_params
+      ? currentRoutes[routeIndex].search_params
+      : currentSearchParams;
+
+  const payload = buildDirectSearchPayloadFromParams(params, {
+    origin: routeOrigin,
+    destination: routeDestination,
+    departure_date: dep,
+    return_date: ret,
+  });
+
+  if (routeIndex != null && Array.isArray(currentRoutes) && currentRoutes[routeIndex]) {
+    currentRoutes[routeIndex].loading = true;
+    renderActiveRoutePane();
+  } else {
+    setLoadingState(true);
+  }
+
+  try {
+    const response = await fetch(ENDPOINTS.SEARCH, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      let errorData = null;
+      try {
+        errorData = await response.json();
+      } catch {}
+      const message = errorData?.error || `Search failed (${response.status})`;
+      throw new Error(message);
+    }
+
+    const searchResult = await response.json();
+
+    if (routeIndex != null && Array.isArray(currentRoutes) && currentRoutes[routeIndex]) {
+      currentRoutes[routeIndex].loading = false;
+      currentRoutes[routeIndex].offers = Array.isArray(searchResult?.offers) ? searchResult.offers : [];
+      currentRoutes[routeIndex].google_price_graph = searchResult?.price_graph || null;
+      currentRoutes[routeIndex].search_params = searchResult?.search_params || currentRoutes[routeIndex].search_params;
+      currentRoutes[routeIndex].summary = {
+        departure_date: dep,
+        return_date: ret,
+        price:
+          Array.isArray(searchResult?.offers) && searchResult.offers.length
+            ? searchResult.offers.reduce((min, offer) => {
+                const price =
+                  typeof offer?.price === "number" &&
+                  Number.isFinite(offer.price) &&
+                  offer.price > 0
+                    ? offer.price
+                    : null;
+                if (price == null) return min;
+                if (min == null) return price;
+                return Math.min(min, price);
+              }, null)
+            : null,
+        currency: payload.currency,
+      };
+      renderActiveRoutePane();
+      return;
+    }
+
+    if (inputs.departureDate) inputs.departureDate.value = dep;
+    if (inputs.returnDate && ret && payload.trip_type === "round_trip") inputs.returnDate.value = ret;
+    setPriceGraphFieldVisibility();
+
+    await applySearchResultToPage(searchResult, routeOrigin, routeDestination);
+  } catch (error) {
+    console.error("Error searching flights:", error);
+    showAlert(`Error searching flights: ${error.message}`, "danger");
+  } finally {
+    if (routeIndex != null && Array.isArray(currentRoutes) && currentRoutes[routeIndex]) {
+      currentRoutes[routeIndex].loading = false;
+      renderActiveRoutePane();
+    } else {
+      setLoadingState(false);
+    }
+  }
+}
+
 function renderActiveRoutePane() {
   if (!currentRoutes || !routePaneByIndex) return;
   const pane = routePaneByIndex.get(currentActiveRouteIndex);
@@ -2359,7 +2639,102 @@ function renderActiveRoutePane() {
     pane.appendChild(container);
     const btn = container.querySelector("#loadOffersBtn");
     if (btn) {
-      btn.addEventListener("click", () => ensureRouteLoaded(currentActiveRouteIndex));
+      btn.addEventListener("click", () => {
+        if (activeBulkSearch) {
+          ensureRouteLoaded(currentActiveRouteIndex);
+          return;
+        }
+        const dep = String(summary.departure_date || "").trim();
+        const ret = String(summary.return_date || "").trim();
+        if (!dep) {
+          showAlert("Pick a date from the price graph first.", "warning");
+          return;
+        }
+        loadOffersForPoint(route.origin, route.destination, dep, ret, currentActiveRouteIndex);
+      });
+    }
+
+    const includeGoogleGraph =
+      !!route?.search_params?.include_price_graph ||
+      !!currentSearchParams?.include_price_graph ||
+      !!inputs.includePriceGraph?.checked;
+
+    if (includeGoogleGraph) {
+      const graph = route.google_price_graph || null;
+      const points = Array.isArray(graph?.points) ? graph.points : null;
+      if (points && points.length && !graph?.error) {
+        const graphCard = document.createElement("div");
+        graphCard.className = "card mt-3";
+        graphCard.innerHTML = `
+          <div class="card-header bg-light">
+            <i class="bi bi-graph-up me-2 text-primary"></i>
+            Google Price Graph
+          </div>
+          <div class="card-body">
+            <div class="routeGooglePriceGraphError alert alert-warning d-none mb-3" role="alert"></div>
+            <div class="chart-container" style="height: 220px;">
+              <div class="routeGooglePriceGraphChart apex-chart" role="img" aria-label="Google price graph"></div>
+            </div>
+            <div class="text-muted small mt-2">
+              Tip: click a point to open it in Google Flights.
+            </div>
+            <div class="routeGooglePriceGraphTopPoints mt-3"></div>
+          </div>
+        `;
+        pane.appendChild(graphCard);
+
+        const googleCanvas = graphCard.querySelector(".routeGooglePriceGraphChart");
+        const googleError = graphCard.querySelector(".routeGooglePriceGraphError");
+        const topPoints = graphCard.querySelector(".routeGooglePriceGraphTopPoints");
+
+        if (activeRouteGoogleChart) {
+          activeRouteGoogleChart.destroy();
+          activeRouteGoogleChart = null;
+        }
+        activeRouteGoogleChart = renderGooglePriceGraphChart(googleCanvas, graph, googleError);
+
+        if (topPoints) {
+          const top = getTopPointsForGraph(graph, 10);
+          if (top.length) {
+            topPoints.innerHTML = "";
+            const header = document.createElement("div");
+            header.className = "text-muted small mb-2";
+            header.textContent = "Cheapest dates (click to load offers):";
+            topPoints.appendChild(header);
+
+            const list = document.createElement("div");
+            list.className = "d-flex flex-column gap-2";
+
+            for (const point of top) {
+              const dep = String(point?.departure_date || "").trim();
+              const ret = String(point?.return_date || "").trim();
+              const price = Number(point?.price);
+              if (!dep || !ret || !Number.isFinite(price) || price <= 0) continue;
+
+              const row = document.createElement("div");
+              row.className =
+                "d-flex flex-wrap align-items-center justify-content-between gap-2";
+              row.innerHTML = `
+                <div class="small">
+                  <strong>${escapeHtml(formatCurrencyShort(graph?.currency || summary.currency, price))}</strong>
+                  <span class="text-muted ms-2">${escapeHtml(dep)} → ${escapeHtml(ret)}</span>
+                </div>
+              `;
+              const btn = document.createElement("button");
+              btn.type = "button";
+              btn.className = "btn btn-outline-primary btn-sm";
+              btn.textContent = "Load offers";
+              btn.addEventListener("click", () => {
+                loadOffersForPoint(route.origin, route.destination, dep, ret, currentActiveRouteIndex);
+              });
+              row.appendChild(btn);
+              list.appendChild(row);
+            }
+
+            topPoints.appendChild(list);
+          }
+        }
+      }
     }
     return;
   }
