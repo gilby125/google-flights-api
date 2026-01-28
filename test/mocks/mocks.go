@@ -336,6 +336,16 @@ func (m *Queue) GetQueueStats(ctx context.Context, queueName string) (map[string
 	return stats, args.Error(1)
 }
 
+func (m *Queue) CancelJob(ctx context.Context, queueName, jobID string) error {
+	args := m.Called(ctx, queueName, jobID)
+	return args.Error(0)
+}
+
+func (m *Queue) IsJobCanceled(ctx context.Context, jobID string) (bool, error) {
+	args := m.Called(ctx, jobID)
+	return args.Bool(0), args.Error(1)
+}
+
 func (m *Queue) ClearQueue(ctx context.Context, queueName string) (int64, error) {
 	args := m.Called(ctx, queueName)
 	var cleared int64

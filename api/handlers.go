@@ -2732,6 +2732,34 @@ func RetryQueueFailed(q queue.Queue) gin.HandlerFunc {
 	}
 }
 
+// CancelQueueJob requests cancellation for a specific queue job (admin/debug endpoint).
+func CancelQueueJob(q queue.Queue) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		queueName := c.Param("name")
+		if !isAllowedQueueName(queueName) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid queue name"})
+			return
+		}
+
+		jobID := c.Param("id")
+		if jobID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Missing job id"})
+			return
+		}
+
+		if err := q.CancelJob(c.Request.Context(), queueName, jobID); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"queue":   queueName,
+			"job_id":  jobID,
+			"message": "Cancel requested",
+		})
+	}
+}
+
 // getJobById returns a handler for getting a job by ID
 func getJobById(pgDB db.PostgresDB) gin.HandlerFunc { // Changed parameter type
 	return func(c *gin.Context) {

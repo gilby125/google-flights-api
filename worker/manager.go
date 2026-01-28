@@ -673,12 +673,49 @@ func (m *Manager) processQueue(workerIndex int, worker *Worker, queueName string
 	jobStartTime := time.Now()
 	log.Printf("Processing %s job %s (started at %v)", queueName, job.ID, jobStartTime.Format("15:04:05"))
 
+	// If this job was canceled before we started, ack it and move on.
+	if canceled, err := m.queue.IsJobCanceled(ctx, job.ID); err == nil && canceled {
+		log.Printf("Skipping canceled job %s (%s)", job.ID, queueName)
+		if ackErr := m.queue.Ack(ctx, queueName, job.ID); ackErr != nil {
+			// Job may have been force-cleared from Redis already; don't stall the worker loop.
+			log.Printf("Best-effort ack for canceled job %s failed: %v", job.ID, ackErr)
+		}
+		m.updateWorkerState(workerIndex, func(state *workerState) {
+			state.Status = "active"
+			state.CurrentJob = ""
+			state.ProcessedJobs++
+			state.LastHeartbeat = time.Now()
+		})
+		return nil
+	}
+
+	// Per-job cancel watcher: if an admin requests cancellation, cancel the job context so HTTP calls can abort.
+	jobCtx, jobCancel := context.WithCancel(ctx)
+	defer jobCancel()
+	stopCancelWatch := m.watchJobCancel(jobCtx, job.ID, jobCancel)
+	defer stopCancelWatch()
+
 	// Process the job
-	err = m.processJob(ctx, worker, queueName, job)
+	err = m.processJob(jobCtx, worker, queueName, job)
 	jobDuration := time.Since(jobStartTime)
 
 	if err != nil {
 		log.Printf("Error processing job %s after %v: %v", job.ID, jobDuration, err)
+
+		// Treat explicitly canceled jobs as successful terminal (do not NACK/retry).
+		if canceled, cancelErr := m.queue.IsJobCanceled(ctx, job.ID); cancelErr == nil && canceled {
+			log.Printf("Job %s canceled (%s) after %v", job.ID, queueName, jobDuration)
+			if ackErr := m.queue.Ack(ctx, queueName, job.ID); ackErr != nil {
+				log.Printf("Best-effort ack for canceled job %s failed: %v", job.ID, ackErr)
+			}
+			m.updateWorkerState(workerIndex, func(state *workerState) {
+				state.Status = "active"
+				state.CurrentJob = ""
+				state.ProcessedJobs++
+				state.LastHeartbeat = time.Now()
+			})
+			return nil
+		}
 
 		// Check if context deadline was exceeded
 		if ctx.Err() == context.DeadlineExceeded {
@@ -717,6 +754,33 @@ func (m *Manager) processQueue(workerIndex int, worker *Worker, queueName string
 
 	log.Printf("Completed %s job %s in %v", queueName, job.ID, jobDuration)
 	return nil
+}
+
+func (m *Manager) watchJobCancel(ctx context.Context, jobID string, cancel context.CancelFunc) func() {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				canceled, err := m.queue.IsJobCanceled(context.Background(), jobID)
+				if err == nil && canceled {
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+
+	return func() {
+		cancel()
+		<-done
+	}
 }
 
 // processJob processes a job based on its type

@@ -92,6 +92,22 @@ async function initAdminPanel() {
       });
     });
   }
+
+  if (elements.workersTable) {
+    elements.workersTable.addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-action]");
+      if (!button) return;
+      const action = button.getAttribute("data-action");
+      if (action !== "cancel-queue-job") return;
+
+      const queueName = button.getAttribute("data-queue");
+      const jobID = button.getAttribute("data-job");
+      cancelQueueJob(queueName, jobID).catch((err) => {
+        console.error("Cancel job error:", err);
+        showAlert(`Cancel job error: ${err.message}`, "danger");
+      });
+    });
+  }
   if (elements.refreshSweepsBtn) {
     elements.refreshSweepsBtn.addEventListener("click", () =>
       loadPriceGraphSweeps(true),
@@ -281,7 +297,8 @@ function updateWorkersUI(workers) {
       ? worker.id
       : escapeHtml(worker.id);
     const workerStatus = escapeHtml(worker.status);
-    const currentJob = escapeHtml(worker.current_job || "None");
+    const currentJobRaw = worker.current_job || "";
+    const currentJob = escapeHtml(currentJobRaw || "None");
     const processedJobs = Number.isInteger(worker.processed_jobs)
       ? worker.processed_jobs
       : 0;
@@ -307,6 +324,26 @@ function updateWorkersUI(workers) {
     if (metaParts.length) {
       idCell += `<br><small class="text-muted">${metaParts.join(" • ")}</small>`;
     }
+
+    let cancelButton = "";
+    if (currentJobRaw && String(worker.status) === "processing") {
+      const parts = String(currentJobRaw).split(":");
+      if (parts.length >= 2) {
+        const queueName = parts[0];
+        const jobID = parts.slice(1).join(":");
+        cancelButton = `
+          <button
+            type="button"
+            class="btn btn-sm btn-outline-danger"
+            data-action="cancel-queue-job"
+            data-queue="${escapeHtml(queueName)}"
+            data-job="${escapeHtml(jobID)}"
+            title="Request cancellation (best-effort)">
+            <i class="bi bi-stop-fill me-1"></i>Cancel
+          </button>
+        `;
+      }
+    }
     row.innerHTML = `
             <td>${idCell}</td>
             <td>
@@ -315,6 +352,7 @@ function updateWorkersUI(workers) {
                 </span>
             </td>
             <td>${currentJob}</td>
+            <td class="text-end">${cancelButton}</td>
             <td>${processedJobs}</td>
             <td>${formatDuration(worker.uptime)}</td>
         `;
@@ -529,6 +567,32 @@ async function clearQueue(queueName, pending) {
     `Cleared ${cleared} pending job(s) from "${queueName}".`,
     "success",
   );
+  await loadQueueStatus();
+}
+
+async function cancelQueueJob(queueName, jobID) {
+  if (!queueName || !jobID) return;
+
+  if (
+    !confirm(
+      `Cancel job ${jobID} in "${queueName}"? This is best-effort: workers will stop when they next observe the cancel flag.`,
+    )
+  ) {
+    return;
+  }
+
+  const url = `${ENDPOINTS.QUEUE}/${encodeURIComponent(queueName)}/jobs/${encodeURIComponent(jobID)}/cancel`;
+  const response = await fetch(url, { method: "POST" });
+  const responseText = await response.text();
+  const body = safeParseJSON(responseText, {});
+  if (!response.ok) {
+    const errorMessage =
+      body && body.error ? body.error : `HTTP ${response.status}`;
+    throw new Error(errorMessage);
+  }
+
+  showAlert(`Cancel requested for ${jobID}.`, "success");
+  await loadWorkers();
   await loadQueueStatus();
 }
 

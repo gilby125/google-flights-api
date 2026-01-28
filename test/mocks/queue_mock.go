@@ -56,6 +56,16 @@ func (m *MockQueue) GetQueueStats(ctx context.Context, queueName string) (map[st
 	return args.Get(0).(map[string]int64), args.Error(1)
 }
 
+func (m *MockQueue) CancelJob(ctx context.Context, queueName, jobID string) error {
+	args := m.Called(ctx, queueName, jobID)
+	return args.Error(0)
+}
+
+func (m *MockQueue) IsJobCanceled(ctx context.Context, jobID string) (bool, error) {
+	args := m.Called(ctx, jobID)
+	return args.Bool(0), args.Error(1)
+}
+
 func (m *MockQueue) ClearQueue(ctx context.Context, queueName string) (int64, error) {
 	args := m.Called(ctx, queueName)
 	var cleared int64

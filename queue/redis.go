@@ -80,6 +80,10 @@ type Queue interface {
 	Nack(ctx context.Context, queueName, jobID string) error
 	GetJobStatus(ctx context.Context, jobID string) (string, error)
 	GetQueueStats(ctx context.Context, queueName string) (map[string]int64, error)
+	// CancelJob requests cancellation for a job. Workers may stop immediately or on their next cancellation check.
+	CancelJob(ctx context.Context, queueName, jobID string) error
+	// IsJobCanceled returns whether a cancellation has been requested for the job.
+	IsJobCanceled(ctx context.Context, jobID string) (bool, error)
 	// GetJob fetches persisted job details by job ID.
 	GetJob(ctx context.Context, jobID string) (*Job, error)
 	// ListJobs lists jobs from the status set (pending/processing/completed/failed).
@@ -382,6 +386,49 @@ func (q *RedisQueue) GetQueueStats(ctx context.Context, queueName string) (map[s
 	stats["failed"] = failedCount
 
 	return stats, nil
+}
+
+func (q *RedisQueue) CancelJob(ctx context.Context, queueName, jobID string) error {
+	if err := q.ensureStream(ctx, queueName); err != nil {
+		return err
+	}
+	if jobID == "" {
+		return fmt.Errorf("missing job id")
+	}
+
+	// Always set the cancel flag (even if the job record was cleared), so workers can observe it.
+	if err := q.client.Set(ctx, q.cancelKey(jobID), "1", jobTTL).Err(); err != nil {
+		return fmt.Errorf("failed to set cancel flag: %w", err)
+	}
+
+	// Best-effort: mark stored job canceled (do not delete; keep for debugging).
+	if job, _, err := q.getStoredJob(ctx, jobID); err == nil && job != nil {
+		job.Status = "canceled"
+		_ = q.persistJob(ctx, job)
+	}
+
+	// Best-effort: remove from pending set so it doesn't start later.
+	_ = q.client.SRem(ctx, q.pendingKey(queueName), jobID).Err()
+
+	// Best-effort: if we still have stream bookkeeping, ack/del it so it won't get re-delivered.
+	stream := q.streamName(queueName)
+	if job, _, err := q.getStoredJob(ctx, jobID); err == nil && job != nil && job.StreamID != "" {
+		_ = q.client.XAck(ctx, stream, q.cfg.QueueGroup, job.StreamID).Err()
+		_ = q.client.XDel(ctx, stream, job.StreamID).Err()
+	}
+
+	return nil
+}
+
+func (q *RedisQueue) IsJobCanceled(ctx context.Context, jobID string) (bool, error) {
+	if jobID == "" {
+		return false, nil
+	}
+	n, err := q.client.Exists(ctx, q.cancelKey(jobID)).Result()
+	if err != nil {
+		return false, fmt.Errorf("failed to check cancel flag: %w", err)
+	}
+	return n > 0, nil
 }
 
 func (q *RedisQueue) GetJob(ctx context.Context, jobID string) (*Job, error) {
@@ -846,6 +893,10 @@ func (q *RedisQueue) streamName(jobType string) string {
 
 func (q *RedisQueue) jobKey(jobID string) string {
 	return fmt.Sprintf("job:%s", jobID)
+}
+
+func (q *RedisQueue) cancelKey(jobID string) string {
+	return fmt.Sprintf("job:%s:cancel", jobID)
 }
 
 func (q *RedisQueue) pendingKey(queueName string) string {
