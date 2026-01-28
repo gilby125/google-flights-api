@@ -561,6 +561,14 @@ func (r *ContinuousSweepRunner) RestartSweep() {
 }
 
 func (r *ContinuousSweepRunner) run(ctx context.Context) {
+	// Capture channels at goroutine start - these won't change during execution.
+	// Stop() will close stopCh to signal us; reading from the struct field directly
+	// is racy because Stop() sets r.stopCh = nil before closing.
+	r.mu.RLock()
+	stopCh := r.stopCh
+	resumeCh := r.resumeCh
+	r.mu.RUnlock()
+
 	defer func() {
 		r.mu.Lock()
 		r.isRunning = false
@@ -600,7 +608,7 @@ func (r *ContinuousSweepRunner) run(ctx context.Context) {
 		case <-ctx.Done():
 			log.Println("Continuous sweep stopped: context cancelled")
 			return
-		case <-r.stopCh:
+		case <-stopCh:
 			log.Println("Continuous sweep stopped: stop requested")
 			return
 		default:
@@ -613,9 +621,9 @@ func (r *ContinuousSweepRunner) run(ctx context.Context) {
 
 		if paused {
 			select {
-			case <-r.resumeCh:
+			case <-resumeCh:
 				log.Println("Continuous sweep resumed")
-			case <-r.stopCh:
+			case <-stopCh:
 				return
 			case <-ctx.Done():
 				return
@@ -672,7 +680,7 @@ func (r *ContinuousSweepRunner) run(ctx context.Context) {
 		delay := time.Duration(r.calculateDelay()) * time.Millisecond
 		select {
 		case <-time.After(delay):
-		case <-r.stopCh:
+		case <-stopCh:
 			return
 		case <-ctx.Done():
 			return
