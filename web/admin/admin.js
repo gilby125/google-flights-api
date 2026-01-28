@@ -271,6 +271,7 @@ function updateWorkersUI(workers) {
     if (workers.status === "running") {
       workers = Array.from({ length: 5 }, (_, i) => ({
         id: i + 1,
+        version: "",
         status: "active",
         current_job: null,
         processed_jobs: 0,
@@ -304,6 +305,7 @@ function updateWorkersUI(workers) {
     const processedJobs = Number.isInteger(worker.processed_jobs)
       ? worker.processed_jobs
       : 0;
+    const version = escapeHtml(worker.version || "");
 
     const source = escapeHtml(worker.source || "");
     const hostname = escapeHtml(worker.hostname || "");
@@ -348,6 +350,7 @@ function updateWorkersUI(workers) {
     }
     row.innerHTML = `
             <td>${idCell}</td>
+            <td><code>${version || "—"}</code></td>
             <td>
                 <span class="badge ${worker.status === "active" || worker.status === "processing" ? "bg-success" : "bg-secondary"}">
                     ${workerStatus}

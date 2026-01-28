@@ -17,6 +17,7 @@ import (
 	"github.com/gilby125/google-flights-api/db"
 	"github.com/gilby125/google-flights-api/flights"
 	"github.com/gilby125/google-flights-api/iata"
+	"github.com/gilby125/google-flights-api/pkg/buildinfo"
 	"github.com/gilby125/google-flights-api/pkg/deals"
 	"github.com/gilby125/google-flights-api/pkg/geo"
 	"github.com/gilby125/google-flights-api/pkg/worker_registry"
@@ -489,7 +490,7 @@ func (m *Manager) buildRegistryHeartbeat(hostname string, startedAt, now time.Ti
 		Concurrency:   m.config.Concurrency,
 		StartedAt:     startedAt,
 		LastHeartbeat: now,
-		Version:       "1.0.0",
+		Version:       buildinfo.VersionString(),
 	}
 
 	m.statsMutex.RLock()

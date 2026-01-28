@@ -24,6 +24,9 @@ services:
       context: .
       dockerfile: Dockerfile
     environment:
+      # Build/version metadata (shown in Admin → Workers)
+      APP_VERSION: ${IMAGE_TAG:-latest}
+
       # Worker identification (change per server for debugging)
       WORKER_ID: ${WORKER_ID:-worker-1}
 

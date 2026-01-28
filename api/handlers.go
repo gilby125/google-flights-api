@@ -17,6 +17,7 @@ import (
 	"github.com/gilby125/google-flights-api/config"
 	"github.com/gilby125/google-flights-api/db"
 	"github.com/gilby125/google-flights-api/flights"
+	"github.com/gilby125/google-flights-api/pkg/buildinfo"
 	"github.com/gilby125/google-flights-api/pkg/cache"
 	"github.com/gilby125/google-flights-api/pkg/logger"
 	"github.com/gilby125/google-flights-api/pkg/macros"
@@ -914,6 +915,7 @@ type workerStatusResponse struct {
 	Hostname            string `json:"hostname,omitempty"`
 	Concurrency         int    `json:"concurrency,omitempty"`
 	HeartbeatAgeSeconds int64  `json:"heartbeat_age_seconds,omitempty"`
+	Version             string `json:"version,omitempty"`
 }
 
 // GetWorkerStatus returns a handler for getting worker status.
@@ -933,6 +935,7 @@ func GetWorkerStatus(workerManager WorkerStatusProvider, redisClient *redis.Clie
 					ProcessedJobs: s.ProcessedJobs,
 					Uptime:        s.Uptime,
 					Source:        "local",
+					Version:       buildinfo.VersionString(),
 				})
 			}
 		}
@@ -979,6 +982,7 @@ func GetWorkerStatus(workerManager WorkerStatusProvider, redisClient *redis.Clie
 						Hostname:            hb.Hostname,
 						Concurrency:         hb.Concurrency,
 						HeartbeatAgeSeconds: age,
+						Version:             hb.Version,
 					})
 				}
 			}

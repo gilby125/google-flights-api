@@ -255,6 +255,7 @@ func getRemoteWorkers(ctx context.Context, redisClient *redis.Client, namespace 
 			Hostname:            hb.Hostname,
 			Concurrency:         hb.Concurrency,
 			HeartbeatAgeSeconds: age,
+			Version:             hb.Version,
 		})
 	}
 

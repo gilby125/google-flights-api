@@ -4,6 +4,9 @@ services:
     build:
       context: .
     environment:
+      # Build/version metadata (shown in Admin → Workers)
+      APP_VERSION: ${IMAGE_TAG:-latest}
+
       PORT: 8080
       ENVIRONMENT: ${ENVIRONMENT:-production}
       WORKER_ENABLED: ${WORKER_ENABLED:-true}

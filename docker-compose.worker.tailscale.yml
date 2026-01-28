@@ -35,6 +35,9 @@ services:
     depends_on:
       - tailscale
     environment:
+      # Build/version metadata (shown in Admin → Workers)
+      APP_VERSION: ${IMAGE_TAG:-latest}
+
       # Worker identification
       WORKER_ID: ${WORKER_ID:-worker-1}
 

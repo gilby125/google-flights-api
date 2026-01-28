@@ -8,6 +8,9 @@ services:
       dockerfile: Dockerfile
     pull_policy: build
     environment:
+      # Build/version metadata (shown in Admin → Workers)
+      APP_VERSION: ${IMAGE_TAG:-local}
+
       PORT: 8080
       ENVIRONMENT: production
       API_ENABLED: ${API_ENABLED:-true}
