@@ -15,14 +15,9 @@ EnvironmentFile=/etc/google-flights/worker.docker.env
 
 ExecStartPre=/usr/bin/docker pull ${WORKER_IMAGE}
 
-ExecStart=/usr/bin/docker run --rm \
-  --name google-flights-worker-%i \
-  --env-file /etc/google-flights/worker.docker.env \
-  -e WORKER_ID=worker-%i \
-  ${WORKER_IMAGE}
+ExecStart=/bin/sh -c '/usr/bin/docker run --rm --name google-flights-worker-%i --env-file /etc/google-flights/worker.docker.env -e APP_VERSION="${APP_VERSION:-$WORKER_IMAGE}" -e WORKER_ID=worker-%i "$WORKER_IMAGE"'
 
 ExecStop=/usr/bin/docker stop -t 20 google-flights-worker-%i
 
 [Install]
 WantedBy=multi-user.target
-

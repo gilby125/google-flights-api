@@ -40,6 +40,7 @@ If you prefer to avoid copying a Go binary to the worker VM, run the worker as a
 Recommendation:
 - Use the **built image** directly rather than extracting a binary from it.
 - If you want a native binary on the VM, use the non-Docker units in this folder (`google-flights-worker@.service`).
+- The "version" shown in **Admin → Workers** comes from `APP_VERSION` (this unit sets it to `WORKER_IMAGE` automatically).
 
 1) Copy env file template and fill it in:
 ```bash
