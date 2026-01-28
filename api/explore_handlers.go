@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -26,13 +27,14 @@ type ExploreEdge struct {
 }
 
 type ExploreResponse struct {
-	Origin   string  `json:"origin"`
-	MaxHops  int     `json:"maxHops"`
-	MaxPrice float64 `json:"maxPrice"`
-	DateFrom string  `json:"dateFrom,omitempty"`
-	DateTo   string  `json:"dateTo,omitempty"`
-	Limit    int     `json:"limit"`
-	Source   string  `json:"source"`
+	Origin   string   `json:"origin"`
+	Origins  []string `json:"origins,omitempty"`
+	MaxHops  int      `json:"maxHops"`
+	MaxPrice float64  `json:"maxPrice"`
+	DateFrom string   `json:"dateFrom,omitempty"`
+	DateTo   string   `json:"dateTo,omitempty"`
+	Limit    int      `json:"limit"`
+	Source   string   `json:"source"`
 
 	Count int           `json:"count"`
 	Edges []ExploreEdge `json:"edges"`
@@ -56,8 +58,32 @@ func GetExplore(neo4jDB db.Neo4jDatabase) gin.HandlerFunc {
 		}
 
 		origin := strings.ToUpper(strings.TrimSpace(c.Query("origin")))
-		if origin == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "origin query parameter is required"})
+		originsRaw := strings.TrimSpace(c.Query("origins"))
+
+		origins := []string{}
+		seenOrigins := make(map[string]struct{})
+		addOrigin := func(code string) {
+			code = strings.ToUpper(strings.TrimSpace(code))
+			if len(code) != 3 {
+				return
+			}
+			if _, ok := seenOrigins[code]; ok {
+				return
+			}
+			seenOrigins[code] = struct{}{}
+			origins = append(origins, code)
+		}
+
+		if originsRaw != "" {
+			for _, part := range strings.Split(originsRaw, ",") {
+				addOrigin(part)
+			}
+		}
+		if origin != "" {
+			addOrigin(origin)
+		}
+		if len(origins) == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "origin (or origins) query parameter is required"})
 			return
 		}
 
@@ -115,9 +141,10 @@ func GetExplore(neo4jDB db.Neo4jDatabase) gin.HandlerFunc {
 		query := ""
 		switch source {
 		case "route":
-			query = `
-				MATCH path = (a:Airport {code: $origin})-[:ROUTE*1..%d]->(b:Airport)
+			query = fmt.Sprintf(`
+				MATCH path = (a:Airport)-[:ROUTE*1..%d]->(b:Airport)
 				WHERE a <> b
+				  AND a.code IN $origins
 				  AND all(r IN relationships(path)
 					WHERE r.avgPrice IS NOT NULL AND toFloat(r.avgPrice) > 0
 					  AND (size($airlines) = 0 OR r.airline IN $airlines)
@@ -140,11 +167,12 @@ func GetExplore(neo4jDB db.Neo4jDatabase) gin.HandlerFunc {
 					min(hops) AS hops
 				ORDER BY cheapestPrice
 				LIMIT $limit
-			`
+			`, maxHops)
 		default: // price_point
-			query = `
-				MATCH path = (a:Airport {code: $origin})-[:PRICE_POINT*1..%d]->(b:Airport)
+			query = fmt.Sprintf(`
+				MATCH path = (a:Airport)-[:PRICE_POINT*1..%d]->(b:Airport)
 				WHERE a <> b
+				  AND a.code IN $origins
 				  AND all(r IN relationships(path)
 					WHERE r.price IS NOT NULL AND toFloat(r.price) > 0
 					  AND ($dateFrom = '' OR r.date >= date($dateFrom))
@@ -169,12 +197,11 @@ func GetExplore(neo4jDB db.Neo4jDatabase) gin.HandlerFunc {
 					min(hops) AS hops
 				ORDER BY cheapestPrice
 				LIMIT $limit
-			`
+			`, maxHops)
 		}
-		query = sprintfWithMaxHops(query, maxHops)
 
 		result, err := neo4jDB.ExecuteReadQuery(c.Request.Context(), query, map[string]interface{}{
-			"origin":   origin,
+			"origins":  origins,
 			"maxPrice": maxPrice,
 			"dateFrom": dateFrom,
 			"dateTo":   dateTo,
@@ -248,6 +275,7 @@ func GetExplore(neo4jDB db.Neo4jDatabase) gin.HandlerFunc {
 
 		c.JSON(http.StatusOK, ExploreResponse{
 			Origin:   origin,
+			Origins:  origins,
 			MaxHops:  maxHops,
 			MaxPrice: maxPrice,
 			DateFrom: dateFrom,
@@ -258,14 +286,4 @@ func GetExplore(neo4jDB db.Neo4jDatabase) gin.HandlerFunc {
 			Edges:    edges,
 		})
 	}
-}
-
-func sprintfWithMaxHops(query string, maxHops int) string {
-	// Avoid importing fmt in this file unless needed elsewhere.
-	// This is a tiny helper to keep the handler readable.
-	const placeholder = "%d"
-	if !strings.Contains(query, placeholder) {
-		return query
-	}
-	return strings.Replace(query, placeholder, strconv.Itoa(maxHops), 1)
 }

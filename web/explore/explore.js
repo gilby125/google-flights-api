@@ -4,8 +4,9 @@ const state = {
   mode: "globe", // "globe" | "map"
   globe: null,
   map: null,
-  origin: null,
+  origins: [],
   edges: [],
+  edgesAll: [],
 };
 
 function $(id) {
@@ -59,6 +60,21 @@ function normalizeCode(code) {
   return String(code || "").trim().toUpperCase();
 }
 
+function parseOrigins(raw) {
+  const parts = String(raw || "")
+    .split(",")
+    .map((p) => normalizeCode(p))
+    .filter((p) => p.length === 3);
+  const seen = new Set();
+  const out = [];
+  for (const p of parts) {
+    if (seen.has(p)) continue;
+    seen.add(p);
+    out.push(p);
+  }
+  return out;
+}
+
 function priceColor(price, maxPrice) {
   const p = Math.max(0, Math.min(1, price / Math.max(1, maxPrice)));
   // green -> yellow -> red
@@ -93,8 +109,8 @@ function initGlobe() {
     .arcDashAnimateTime(1400)
     .arcAltitude((d) => d.altitude)
     .arcLabel((d) => d.label)
-    .onPointClick((d) => onSelectDestination(d.destCode))
-    .onArcClick((d) => onSelectDestination(d.destCode));
+    .onPointClick((d) => onSelectRoute(d.originCode, d.destCode))
+    .onArcClick((d) => onSelectRoute(d.originCode, d.destCode));
 
   state.globe.controls().autoRotate = true;
   state.globe.controls().autoRotateSpeed = 0.35;
@@ -167,13 +183,13 @@ function initMap() {
     state.map.on("click", "explore-lines", (e) => {
       const f = e.features && e.features[0];
       if (!f || !f.properties || !f.properties.destCode) return;
-      onSelectDestination(f.properties.destCode);
+      onSelectRoute(f.properties.originCode, f.properties.destCode);
     });
 
     state.map.on("click", "explore-points", (e) => {
       const f = e.features && e.features[0];
       if (!f || !f.properties || !f.properties.destCode) return;
-      onSelectDestination(f.properties.destCode);
+      onSelectRoute(f.properties.originCode, f.properties.destCode);
     });
 
     state.map.on("mouseenter", "explore-lines", () => (state.map.getCanvas().style.cursor = "pointer"));
@@ -196,7 +212,7 @@ function setMode(mode) {
 }
 
 function buildExploreUrl() {
-  const origin = normalizeCode($("origin").value);
+  const origins = parseOrigins($("origin").value);
   const maxHops = Number($("maxHops").value || 1);
   const maxPrice = Number($("maxPrice").value || 800);
   const limit = Number($("limit").value || 500);
@@ -206,7 +222,8 @@ function buildExploreUrl() {
   const source = "price_point";
 
   const qs = new URLSearchParams();
-  qs.set("origin", origin);
+  if (origins.length === 1) qs.set("origin", origins[0]);
+  if (origins.length > 1) qs.set("origins", origins.join(","));
   qs.set("maxHops", String(maxHops));
   qs.set("maxPrice", String(maxPrice));
   qs.set("limit", String(limit));
@@ -215,7 +232,7 @@ function buildExploreUrl() {
   if (dateTo) qs.set("dateTo", dateTo);
   if (airlines) qs.set("airlines", airlines);
 
-  return { origin, maxPrice, url: `/api/v1/graph/explore?${qs.toString()}`, qs };
+  return { origins, maxPrice, url: `/api/v1/graph/explore?${qs.toString()}`, qs };
 }
 
 async function loadTopAirports() {
@@ -234,9 +251,9 @@ async function loadTopAirports() {
 }
 
 async function explore() {
-  const { origin, maxPrice, url, qs } = buildExploreUrl();
-  if (!origin || origin.length !== 3) {
-    showToast("Enter a 3-letter IATA origin (e.g. ORD).", "warning");
+  const { origins, maxPrice, url, qs } = buildExploreUrl();
+  if (!origins.length) {
+    showToast("Enter one or more 3-letter IATA origins (e.g. MKE or MKE,JFK).", "warning");
     return;
   }
 
@@ -259,7 +276,8 @@ async function explore() {
       }
     }
     state.origin = origin;
-    state.edges = (data.edges || [])
+    state.origins = origins;
+    state.edgesAll = (data.edges || [])
       .filter((e) => Number.isFinite(e.dest_lat) && Number.isFinite(e.dest_lon))
       .filter((e) => !(e.dest_lat === 0 && e.dest_lon === 0))
       .map((e) => ({
@@ -274,8 +292,9 @@ async function explore() {
         destLon: e.dest_lon,
         cheapestPrice: e.cheapest_price,
         hops: e.hops,
-        color: priceColor(e.cheapest_price, maxPrice),
       }));
+
+    applyMaxPriceFilter();
 
     const cheapest = state.edges.length ? Math.min(...state.edges.map((e) => e.cheapestPrice || Infinity)) : null;
     $("destCount").textContent = state.edges.length.toLocaleString();
@@ -292,40 +311,64 @@ async function explore() {
   }
 }
 
+function applyMaxPriceFilter() {
+  const maxPrice = Number($("maxPrice").value || 800);
+  state.edges = (state.edgesAll || []).filter((e) => Number.isFinite(e.cheapestPrice) && e.cheapestPrice <= maxPrice);
+  $("resultLabel").textContent = state.edges.length ? `${state.edges.length.toLocaleString()} destinations` : "—";
+  $("destCount").textContent = state.edges.length ? state.edges.length.toLocaleString() : "—";
+  const cheapest = state.edges.length ? Math.min(...state.edges.map((e) => e.cheapestPrice || Infinity)) : null;
+  $("cheapestShown").textContent = cheapest == null || !Number.isFinite(cheapest) ? "—" : formatUSD(cheapest);
+}
+
 function render() {
-  if (!state.origin || !state.edges) return;
+  if (!state.origins || !state.edges) return;
 
   const maxPrice = Number($("maxPrice").value || 800);
-  const originEdge = state.edges.find((e) => Number.isFinite(e.originLat) && Number.isFinite(e.originLon));
-  const originLat = originEdge ? originEdge.originLat : 20;
-  const originLon = originEdge ? originEdge.originLon : 0;
+  const originByCode = new Map();
+  for (const e of state.edges) {
+    if (!originByCode.has(e.originCode) && Number.isFinite(e.originLat) && Number.isFinite(e.originLon) && !(e.originLat === 0 && e.originLon === 0)) {
+      originByCode.set(e.originCode, { lat: e.originLat, lon: e.originLon });
+    }
+  }
+  const firstOrigin = state.origins.find((o) => originByCode.has(o));
+  const originLat = firstOrigin ? originByCode.get(firstOrigin).lat : 20;
+  const originLon = firstOrigin ? originByCode.get(firstOrigin).lon : 0;
 
   if (state.mode === "globe" && state.globe) {
-    const arcs = state.edges.map((e) => {
-      const dist = Math.abs(e.destLat - originLat) + Math.abs(e.destLon - originLon);
-      const altitude = Math.min(0.55, Math.max(0.12, dist / 250));
-      return {
-        startLat: originLat,
-        startLng: originLon,
-        endLat: e.destLat,
-        endLng: e.destLon,
-        color: e.color,
-        altitude,
-        destCode: e.destCode,
-        label: `${state.origin} → ${e.destCode} • ${formatUSD(e.cheapestPrice)} • hops ${e.hops}`,
-      };
-    });
+    const arcs = state.edges
+      .map((e) => {
+        const o = originByCode.get(e.originCode) || { lat: originLat, lon: originLon };
+        const dist = Math.abs(e.destLat - o.lat) + Math.abs(e.destLon - o.lon);
+        const altitude = Math.min(0.55, Math.max(0.12, dist / 250));
+        return {
+          startLat: o.lat,
+          startLng: o.lon,
+          endLat: e.destLat,
+          endLng: e.destLon,
+          color: priceColor(e.cheapestPrice, maxPrice),
+          altitude,
+          originCode: e.originCode,
+          destCode: e.destCode,
+          label: `${e.originCode} → ${e.destCode} • ${formatUSD(e.cheapestPrice)} • hops ${e.hops}`,
+        };
+      });
 
-    const points = state.edges.map((e) => ({
+    const bestByDest = new Map();
+    for (const e of state.edges) {
+      const cur = bestByDest.get(e.destCode);
+      if (!cur || e.cheapestPrice < cur.cheapestPrice) bestByDest.set(e.destCode, e);
+    }
+    const points = Array.from(bestByDest.values()).map((e) => ({
       lat: e.destLat,
       lng: e.destLon,
-      color: e.color,
+      color: priceColor(e.cheapestPrice, maxPrice),
+      originCode: e.originCode,
       destCode: e.destCode,
     }));
 
     state.globe.arcsData(arcs);
     state.globe.pointsData(points);
-    state.globe.pointLabel((d) => `${state.origin} → ${d.destCode}`);
+    state.globe.pointLabel((d) => `${d.originCode} → ${d.destCode}`);
     state.globe
       .controls()
       .autoRotate = state.edges.length > 0;
@@ -339,22 +382,32 @@ function render() {
     const pointFeatures = [];
 
     for (const e of state.edges) {
+      const o = originByCode.get(e.originCode) || { lat: originLat, lon: originLon };
       lineFeatures.push({
         type: "Feature",
         geometry: {
           type: "LineString",
           coordinates: [
-            [originLon, originLat],
+            [o.lon, o.lat],
             [e.destLon, e.destLat],
           ],
         },
         properties: {
           color: priceColor(e.cheapestPrice, maxPrice),
+          originCode: e.originCode,
           destCode: e.destCode,
           cheapestPrice: e.cheapestPrice,
           hops: e.hops,
         },
       });
+    }
+
+    const bestByDest = new Map();
+    for (const e of state.edges) {
+      const cur = bestByDest.get(e.destCode);
+      if (!cur || e.cheapestPrice < cur.cheapestPrice) bestByDest.set(e.destCode, e);
+    }
+    for (const e of bestByDest.values()) {
       pointFeatures.push({
         type: "Feature",
         geometry: {
@@ -363,6 +416,7 @@ function render() {
         },
         properties: {
           color: priceColor(e.cheapestPrice, maxPrice),
+          originCode: e.originCode,
           destCode: e.destCode,
         },
       });
@@ -377,8 +431,8 @@ function render() {
   }
 }
 
-async function onSelectDestination(destCode) {
-  const origin = state.origin;
+async function onSelectRoute(origin, destCode) {
+  origin = normalizeCode(origin);
   destCode = normalizeCode(destCode);
   if (!origin || !destCode) return;
 
@@ -405,7 +459,14 @@ function wireUI() {
   label.textContent = maxPrice.value;
   maxPrice.addEventListener("input", () => {
     label.textContent = maxPrice.value;
-    if (state.edges && state.edges.length) render();
+    if (state.edgesAll && state.edgesAll.length) {
+      applyMaxPriceFilter();
+      render();
+    }
+  });
+  maxPrice.addEventListener("change", () => {
+    // Re-query when the user stops dragging so raising the max price can pull in more routes.
+    if (parseOrigins($("origin").value).length) explore();
   });
 
   $("exploreBtn").addEventListener("click", explore);

@@ -28,7 +28,7 @@ This document formalizes the public contract for the Google Flights API service 
 - `GET /api/v1/graph/path`: Returns up to 10 cheapest multi-hop paths between `origin` and `dest` under `maxPrice`, bounded by `maxHops` (see handler comments for defaults/limits).
 - `GET /api/v1/graph/connections`: Returns reachable destinations from `origin` under `maxPrice`, bounded by `maxHops` (see handler comments for defaults/limits).
 - `GET /api/v1/graph/route-stats`: Returns aggregated min/max/avg stats for `origin` → `dest` using stored price points.
-- `GET /api/v1/graph/explore`: Returns route edges with coordinates for map/globe UIs. Query params: `origin` (required), plus optional `maxHops`, `maxPrice`, `dateFrom`, `dateTo`, `airlines`, `limit`.
+- `GET /api/v1/graph/explore`: Returns route edges with coordinates for map/globe UIs. Query params: `origin` (single) or `origins` (comma-separated), plus optional `maxHops`, `maxPrice`, `dateFrom`, `dateTo`, `airlines`, `limit`, `source` (`price_point` or `route`). If `dateFrom/dateTo` are omitted, results use the best observed price across all dates.
 
 ## Admin & Operations
 - `GET /api/v1/admin/jobs`: Lists scheduled jobs with cron expressions and next run times. Filtering options: `type`, `status`.

@@ -98,7 +98,8 @@ func TestGetExplore_Success(t *testing.T) {
 
 	mockNeo4j.
 		On("ExecuteReadQuery", mock.Anything, mock.Anything, mock.MatchedBy(func(params map[string]interface{}) bool {
-			return params["origin"] == "ORD"
+			origins, ok := params["origins"].([]string)
+			return ok && len(origins) == 1 && origins[0] == "ORD"
 		})).
 		Return(result, nil).
 		Once()
@@ -111,6 +112,7 @@ func TestGetExplore_Success(t *testing.T) {
 	var body map[string]interface{}
 	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
 	assert.Equal(t, "ORD", body["origin"])
+	assert.Equal(t, []interface{}{"ORD"}, body["origins"])
 	assert.Equal(t, float64(1), body["maxHops"])
 	assert.Equal(t, float64(1000), body["maxPrice"])
 	assert.Equal(t, float64(1), body["count"])
@@ -124,5 +126,37 @@ func TestGetExplore_Success(t *testing.T) {
 	assert.Equal(t, "LHR", e0["dest_code"])
 	assert.Equal(t, float64(450), e0["cheapest_price"])
 
+	mockNeo4j.AssertExpectations(t)
+}
+
+func TestGetExplore_MultiOrigin(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+
+	mockNeo4j := new(mocks.MockNeo4jDB)
+	router.GET("/api/v1/graph/explore", api.GetExplore(mockNeo4j))
+
+	result := &staticNeo4jResult{records: []*neo4j.Record{}}
+
+	mockNeo4j.
+		On("ExecuteReadQuery", mock.Anything, mock.Anything, mock.MatchedBy(func(params map[string]interface{}) bool {
+			origins, ok := params["origins"].([]string)
+			if !ok {
+				return false
+			}
+			seen := make(map[string]bool)
+			for _, o := range origins {
+				seen[o] = true
+			}
+			return seen["MKE"] && seen["JFK"] && len(origins) == 2
+		})).
+		Return(result, nil).
+		Once()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/graph/explore?origins=mke,jfk&maxHops=1&maxPrice=1000&limit=10", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
 	mockNeo4j.AssertExpectations(t)
 }
