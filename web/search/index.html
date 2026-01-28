@@ -596,16 +596,25 @@
           </div>
         </div>
         <div class="card-body">
-          <div id="asyncBulkStatus" class="mb-3 d-none">
-            <div class="d-flex justify-content-between align-items-baseline">
-              <div id="asyncBulkStatusText" class="text-muted small"></div>
-              <div id="asyncBulkStatusCounts" class="text-muted small"></div>
-            </div>
-            <div id="asyncBulkStatusMeta" class="text-muted small mt-1"></div>
-            <div id="asyncBulkActions" class="mt-2 d-none">
-              <div class="d-flex flex-wrap gap-2">
-                <button
-                  type="button"
+	          <div id="asyncBulkStatus" class="mb-3 d-none">
+	            <div class="d-flex justify-content-between align-items-baseline">
+	              <div id="asyncBulkStatusText" class="text-muted small"></div>
+	              <div id="asyncBulkStatusCounts" class="text-muted small"></div>
+	            </div>
+	            <div class="small mt-1">
+	              <a id="asyncBulkResumeLink" class="link-primary d-none" href="#"
+	                >Resume this bulk search</a
+	              >
+	              <span id="asyncBulkLinksSep" class="text-muted d-none"> • </span>
+	              <a id="asyncBulkOpenResultsLink" class="link-primary d-none" href="#"
+	                >Open results page</a
+	              >
+	            </div>
+	            <div id="asyncBulkStatusMeta" class="text-muted small mt-1"></div>
+	            <div id="asyncBulkActions" class="mt-2 d-none">
+	              <div class="d-flex flex-wrap gap-2">
+	                <button
+	                  type="button"
                   class="btn btn-outline-secondary btn-sm"
                   id="asyncBulkCheckWorkersBtn"
                 >

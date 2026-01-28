@@ -38,6 +38,9 @@ const elements = {
   asyncBulkStatus: document.getElementById("asyncBulkStatus"),
   asyncBulkStatusText: document.getElementById("asyncBulkStatusText"),
   asyncBulkStatusCounts: document.getElementById("asyncBulkStatusCounts"),
+  asyncBulkResumeLink: document.getElementById("asyncBulkResumeLink"),
+  asyncBulkLinksSep: document.getElementById("asyncBulkLinksSep"),
+  asyncBulkOpenResultsLink: document.getElementById("asyncBulkOpenResultsLink"),
   asyncBulkStatusMeta: document.getElementById("asyncBulkStatusMeta"),
   asyncBulkActions: document.getElementById("asyncBulkActions"),
   asyncBulkCheckWorkersBtn: document.getElementById("asyncBulkCheckWorkersBtn"),
@@ -114,6 +117,113 @@ let advancedOptionsVisible =
   !!elements.advancedOptions &&
   getComputedStyle(elements.advancedOptions).display !== "none";
 let activeBulkSearch = null;
+
+const ACTIVE_BULK_SEARCH_STORAGE_KEY = "flight-search-active-bulk-search-v1";
+const ACTIVE_BULK_SEARCH_STORAGE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+function persistActiveBulkSearch() {
+  if (!activeBulkSearch?.bulkSearchId) return;
+  try {
+    const snapshot = {
+      bulkSearchId: String(activeBulkSearch.bulkSearchId),
+      baseSearchData: activeBulkSearch.baseSearchData || null,
+      startedAt: activeBulkSearch.startedAt || null,
+      lastProgressAt: activeBulkSearch.lastProgressAt || null,
+      lastCompleted: typeof activeBulkSearch.lastCompleted === "number" ? activeBulkSearch.lastCompleted : null,
+      savedAt: Date.now(),
+    };
+    window.localStorage.setItem(ACTIVE_BULK_SEARCH_STORAGE_KEY, JSON.stringify(snapshot));
+  } catch {}
+}
+
+function loadPersistedBulkSearch() {
+  try {
+    const raw = window.localStorage.getItem(ACTIVE_BULK_SEARCH_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.bulkSearchId) return null;
+    const savedAt = Number(parsed?.savedAt) || 0;
+    if (savedAt > 0 && Date.now() - savedAt > ACTIVE_BULK_SEARCH_STORAGE_TTL_MS) {
+      window.localStorage.removeItem(ACTIVE_BULK_SEARCH_STORAGE_KEY);
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function setBulkSearchUrlParam(bulkSearchId) {
+  if (!bulkSearchId) return;
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.set("bulk_search_id", String(bulkSearchId));
+    window.history.replaceState(null, "", url.toString());
+  } catch {}
+}
+
+function getBulkSearchIdFromUrl() {
+  try {
+    const url = new URL(window.location.href);
+    const id = url.searchParams.get("bulk_search_id");
+    return id ? String(id).trim() : "";
+  } catch {
+    return "";
+  }
+}
+
+function updateActiveBulkSearchLinks() {
+  const id = activeBulkSearch?.bulkSearchId ? String(activeBulkSearch.bulkSearchId) : "";
+  if (!id) return;
+
+  if (elements.asyncBulkResumeLink) {
+    const url = new URL(window.location.href);
+    url.searchParams.set("bulk_search_id", id);
+    elements.asyncBulkResumeLink.href = url.toString();
+    elements.asyncBulkResumeLink.classList.remove("d-none");
+  }
+  if (elements.asyncBulkOpenResultsLink) {
+    elements.asyncBulkOpenResultsLink.href = `/bulk-search?id=${encodeURIComponent(id)}`;
+    elements.asyncBulkOpenResultsLink.classList.remove("d-none");
+  }
+  if (elements.asyncBulkLinksSep) {
+    elements.asyncBulkLinksSep.classList.remove("d-none");
+  }
+}
+
+async function restoreActiveBulkSearchIfPresent() {
+  const urlId = getBulkSearchIdFromUrl();
+  const stored = loadPersistedBulkSearch();
+  const storedId = stored?.bulkSearchId ? String(stored.bulkSearchId) : "";
+
+  const bulkSearchId = urlId || storedId;
+  if (!bulkSearchId) return;
+
+  activeBulkSearch = {
+    bulkSearchId,
+    baseSearchData: storedId === bulkSearchId ? stored?.baseSearchData || null : null,
+    lastResultsKey: "",
+    timer: null,
+    startedAt: storedId === bulkSearchId ? stored?.startedAt || Date.now() : Date.now(),
+    lastProgressAt: storedId === bulkSearchId ? stored?.lastProgressAt || Date.now() : Date.now(),
+    lastCompleted:
+      storedId === bulkSearchId && typeof stored?.lastCompleted === "number" ? stored.lastCompleted : 0,
+    diagnosticsRan: false,
+  };
+
+  setBulkSearchUrlParam(bulkSearchId);
+  updateActiveBulkSearchLinks();
+
+  // Make sure the status area is visible on refresh/resume even before results arrive.
+  if (elements.resultsCard) elements.resultsCard.style.display = "block";
+  if (elements.asyncBulkStatus) elements.asyncBulkStatus.classList.remove("d-none");
+
+  await pollBulkSearchOnce();
+  if (activeBulkSearch?.timer) clearInterval(activeBulkSearch.timer);
+  activeBulkSearch.timer = setInterval(pollBulkSearchOnce, 2000);
+}
+
+window.addEventListener("beforeunload", persistActiveBulkSearch);
 
 if (elements.asyncBulkCheckWorkersBtn) {
   elements.asyncBulkCheckWorkersBtn.addEventListener("click", () => runBulkDiagnostics());
@@ -575,6 +685,9 @@ function initSearchPage() {
   }
 
   loadAirports();
+  restoreActiveBulkSearchIfPresent().catch((err) => {
+    console.warn("Failed to restore bulk search:", err);
+  });
 }
 
 function setRecurringDynamicFieldVisibility(show) {
@@ -1491,7 +1604,7 @@ function updateAsyncBulkStatus(status) {
     let meta = "";
     if (activeBulkSearch?.startedAt) {
       const elapsedSec = Math.max(0, Math.round((nowMs - activeBulkSearch.startedAt) / 1000));
-      meta = `State: ${state} • Elapsed: ${formatSecondsShort(elapsedSec)}`;
+      meta = `Bulk search: ${String(activeBulkSearch.bulkSearchId)} • State: ${state} • Elapsed: ${formatSecondsShort(elapsedSec)}`;
 
       if (updatedAtMs) {
         meta += ` • Server updated: ${formatSecondsShort((nowMs - updatedAtMs) / 1000)} ago`;
@@ -1618,6 +1731,28 @@ async function startBulkSearchFallback(parsedRoutes, baseSearchData, reasonMessa
     throw new Error("Bulk search did not return a bulk_search_id.");
   }
 
+  const bulkSearchIdStr = String(bulkSearchId);
+  const resumeUrl = (() => {
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set("bulk_search_id", bulkSearchIdStr);
+      return url.toString();
+    } catch {
+      return "";
+    }
+  })();
+  const resultsUrl = `/bulk-search?id=${encodeURIComponent(bulkSearchIdStr)}`;
+  showAlert(
+    `Bulk search started. ID: <strong>${escapeHtml(
+      bulkSearchIdStr,
+    )}</strong> • <a href="${escapeHtml(
+      resumeUrl,
+    )}" class="link-light">Resume link</a> • <a href="${escapeHtml(
+      resultsUrl,
+    )}" class="link-light">Results page</a>`,
+    "primary",
+  );
+
   activeBulkSearch = {
     bulkSearchId,
     baseSearchData,
@@ -1628,6 +1763,10 @@ async function startBulkSearchFallback(parsedRoutes, baseSearchData, reasonMessa
     lastCompleted: 0,
     diagnosticsRan: false,
   };
+
+  setBulkSearchUrlParam(bulkSearchId);
+  persistActiveBulkSearch();
+  updateActiveBulkSearchLinks();
 
   await pollBulkSearchOnce();
   if (activeBulkSearch?.timer) clearInterval(activeBulkSearch.timer);
@@ -1645,6 +1784,8 @@ async function pollBulkSearchOnce() {
 
   const status = await response.json();
   updateAsyncBulkStatus(status);
+  updateActiveBulkSearchLinks();
+  persistActiveBulkSearch();
 
   const results = Array.isArray(status?.results) ? status.results : [];
   const key = JSON.stringify(
@@ -1661,6 +1802,7 @@ async function pollBulkSearchOnce() {
     if (state === "failed") {
       showAlert("Bulk search failed. Try narrowing your inputs.", "danger");
     }
+    persistActiveBulkSearch();
   }
 }
 

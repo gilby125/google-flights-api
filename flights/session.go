@@ -3,6 +3,7 @@ package flights
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -48,6 +49,12 @@ type Session struct {
 
 func customRetryPolicy() func(ctx context.Context, resp *http.Response, err error) (bool, error) {
 	return func(ctx context.Context, resp *http.Response, err error) (bool, error) {
+		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
+				return false, ctx.Err()
+			}
+		}
+
 		if resp == nil {
 			return true, fmt.Errorf("response is nil")
 		}
@@ -76,6 +83,7 @@ func New() (*Session, error) {
 	client.Logger = nil
 	client.CheckRetry = customRetryPolicy()
 	client.RetryWaitMin = time.Second
+	client.HTTPClient.Timeout = 90 * time.Second
 
 	res, err := client.Get("https://www.google.com/")
 	if err != nil {

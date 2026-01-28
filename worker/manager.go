@@ -1769,6 +1769,13 @@ func (m *Manager) processBulkSearchRoute(ctx context.Context, worker *Worker, se
 
 	log.Printf("[BulkSearchRoute] Processing route %s for bulk_search %d", routeKey, payload.BulkSearchID)
 
+	// Keep per-call timeouts reasonably short so a single hung Google request doesn't stall
+	// progress forever (which makes the UI look stuck at 0/N).
+	const (
+		bulkPriceGraphCallTimeout = 90 * time.Second
+		bulkOffersCallTimeout     = 90 * time.Second
+	)
+
 	// Parse flight options
 	var tripType flights.TripType
 	switch payload.TripType {
@@ -1795,6 +1802,119 @@ func (m *Manager) processBulkSearchRoute(ctx context.Context, worker *Worker, se
 		dist = distanceMiles.Float64
 	}
 
+	// Fast-path: when the bulk search is a single departure date, avoid the price-graph
+	// + top-N itinerary fan-out. A single GetOffers call per route is usually faster and
+	// yields the same best-offer semantics for exact-date searches.
+	depFrom := payload.DepartureDateFrom
+	depTo := payload.DepartureDateTo
+	singleDay := !depFrom.IsZero() && !depTo.IsZero() && depFrom.Format("2006-01-02") == depTo.Format("2006-01-02")
+	if singleDay && (tripType != flights.RoundTrip || payload.TripLength > 0) {
+		depDate := depFrom
+		var returnDate time.Time
+		if tripType == flights.RoundTrip && payload.TripLength > 0 {
+			returnDate = depDate.AddDate(0, 0, payload.TripLength)
+		}
+
+		log.Printf("[BulkSearchRoute] Fast-path single-date offers for %s (%s)", routeKey, depDate.Format("2006-01-02"))
+
+		args := flights.Args{
+			Date:        depDate,
+			ReturnDate:  returnDate,
+			SrcAirports: []string{origin},
+			DstAirports: []string{destination},
+			Options: flights.Options{
+				Travelers: flights.Travelers{
+					Adults:       payload.Adults,
+					Children:     payload.Children,
+					InfantOnLap:  payload.InfantsLap,
+					InfantInSeat: payload.InfantsSeat,
+				},
+				Currency: cur,
+				Stops:    flightStops,
+				Class:    flightClass,
+				TripType: tripType,
+				Lang:     language.English,
+				Carriers: payload.Carriers,
+			},
+		}
+
+		callCtx, cancel := context.WithTimeout(ctx, bulkOffersCallTimeout)
+		fullOffers, _, err := session.GetOffers(callCtx, args)
+		cancel()
+		if err != nil {
+			log.Printf("[BulkSearchRoute] Error getting offers for %s on %s: %v", routeKey, depDate.Format("2006-01-02"), err)
+			m.finalizeBulkSearchRouteIfComplete(ctx, payload.BulkSearchID)
+			return nil
+		}
+
+		var bestOffer *flights.FullOffer
+		bestScore := math.MaxFloat64
+		for i := range fullOffers {
+			if !isDBSafePrice(fullOffers[i].Price) {
+				continue
+			}
+			if m.isExcludedAirline(fullOffers[i]) {
+				continue
+			}
+			score := scoreDeal(fullOffers[i], dist)
+			if score < bestScore {
+				bestScore = score
+				bestOffer = &fullOffers[i]
+			}
+		}
+
+		if bestOffer != nil {
+			log.Printf("[BulkSearchRoute] Route %s: best deal $%.2f on %s", routeKey, bestOffer.Price, depDate.Format("2006-01-02"))
+
+			ret := sql.NullTime{}
+			if tripType == flights.RoundTrip && !returnDate.IsZero() {
+				ret = sql.NullTime{Time: returnDate, Valid: true}
+			}
+
+			airlineCode := ""
+			if len(bestOffer.Flight) > 0 {
+				flightNumber := bestOffer.Flight[0].FlightNumber
+				if len(flightNumber) >= 2 {
+					airlineCode = flightNumber[:2]
+				}
+			}
+
+			flightDuration := int(bestOffer.FlightDuration.Minutes())
+			returnFlightDuration := int(bestOffer.ReturnFlightDuration.Minutes())
+			totalDuration := flightDuration + returnFlightDuration
+
+			record := db.BulkSearchResultRecord{
+				BulkSearchID:         payload.BulkSearchID,
+				Origin:               origin,
+				Destination:          destination,
+				DepartureDate:        depDate,
+				ReturnDate:           ret,
+				Price:                bestOffer.Price,
+				Currency:             strings.ToUpper(payload.Currency),
+				AirlineCode:          nullString(airlineCode),
+				Duration:             nullInt32(totalDuration),
+				SrcAirportCode:       nullString(bestOffer.SrcAirportCode),
+				DstAirportCode:       nullString(bestOffer.DstAirportCode),
+				SrcCity:              nullString(bestOffer.SrcCity),
+				DstCity:              nullString(bestOffer.DstCity),
+				FlightDuration:       durationToNullMinutes(bestOffer.FlightDuration),
+				ReturnFlightDuration: durationToNullMinutes(bestOffer.ReturnFlightDuration),
+				OutboundFlightsJSON:  flightsToJSON(bestOffer.Flight),
+				ReturnFlightsJSON:    flightsToJSON(bestOffer.ReturnFlight),
+				OfferJSON:            offerToJSON(*bestOffer),
+			}
+
+			if insertErr := m.postgresDB.InsertBulkSearchResult(ctx, record); insertErr != nil {
+				log.Printf("[BulkSearchRoute] Failed to insert result for %s: %v", routeKey, insertErr)
+			}
+		} else {
+			log.Printf("[BulkSearchRoute] Route %s: no valid offers found on %s", routeKey, depDate.Format("2006-01-02"))
+		}
+
+		m.finalizeBulkSearchRouteIfComplete(ctx, payload.BulkSearchID)
+		return nil
+	}
+
 	// PHASE 1: Get prices for all dates in ONE call
 	priceGraphArgs := flights.PriceGraphArgs{
 		RangeStartDate: payload.DepartureDateFrom,
@@ -1818,7 +1938,9 @@ func (m *Manager) processBulkSearchRoute(ctx context.Context, worker *Worker, se
 		},
 	}
 
-	priceOffers, _, err := session.GetPriceGraph(ctx, priceGraphArgs)
+	callCtx, cancel := context.WithTimeout(ctx, bulkPriceGraphCallTimeout)
+	priceOffers, _, err := session.GetPriceGraph(callCtx, priceGraphArgs)
+	cancel()
 	if err != nil {
 		log.Printf("[BulkSearchRoute] Error getting price graph for %s: %v", routeKey, err)
 		// Increment progress even on error. Returning a non-nil error would NACK and retry the job,
@@ -1888,7 +2010,9 @@ func (m *Manager) processBulkSearchRoute(ctx context.Context, worker *Worker, se
 			},
 		}
 
-		fullOffers, _, err := session.GetOffers(ctx, args)
+		callCtx, cancel := context.WithTimeout(ctx, bulkOffersCallTimeout)
+		fullOffers, _, err := session.GetOffers(callCtx, args)
+		cancel()
 		if err != nil {
 			log.Printf("[BulkSearchRoute] Error getting offers for %s on %s: %v",
 				routeKey, priceOffer.StartDate.Format("2006-01-02"), err)

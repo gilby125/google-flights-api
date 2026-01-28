@@ -293,8 +293,8 @@
 
     <div class="search-form">
         <div class="form-group">
-            <label for="searchId">Search ID or Job ID:</label>
-            <input type="text" id="searchId" placeholder="Enter bulk search ID (e.g., bulk_search-1753392308411341952)" />
+            <label for="searchId">Bulk Search ID:</label>
+            <input type="text" id="searchId" placeholder="Enter bulk search ID (e.g., 123)" />
         </div>
         <button class="search-btn" onclick="loadBulkSearch()">Load Results</button>
     </div>
@@ -324,17 +324,24 @@
     <script>
         // Get search ID from URL parameter if present
         const urlParams = new URLSearchParams(window.location.search);
-        const searchIdFromUrl = urlParams.get('id');
+        const searchIdFromUrl = urlParams.get('id') || urlParams.get('bulk_search_id');
         if (searchIdFromUrl) {
             document.getElementById('searchId').value = searchIdFromUrl;
             loadBulkSearch();
         }
+
+        let refreshTimer = null;
 
         async function loadBulkSearch() {
             const searchId = document.getElementById('searchId').value.trim();
             if (!searchId) {
                 alert('Please enter a search ID');
                 return;
+            }
+
+            if (refreshTimer) {
+                clearInterval(refreshTimer);
+                refreshTimer = null;
             }
 
             // Show loading
@@ -351,6 +358,21 @@
 
                 const data = await response.json();
                 displayBulkResults(data, searchId);
+
+                // Auto-refresh while running
+                const status = (data && (data.status || data.summary?.status || data.search?.status)) || '';
+                if (status && !['completed', 'completed_with_errors', 'failed', 'no_results'].includes(String(status))) {
+                    refreshTimer = setInterval(async () => {
+                        try {
+                            const res = await fetch(`/api/v1/bulk-search/${searchId}`);
+                            if (!res.ok) return;
+                            const updated = await res.json();
+                            displayBulkResults(updated, searchId);
+                        } catch (e) {
+                            // ignore polling failures
+                        }
+                    }, 2500);
+                }
 
             } catch (error) {
                 console.error('Error loading bulk search:', error);
@@ -391,7 +413,8 @@
             document.getElementById('searchTitle').textContent = `Bulk Search: ${searchId}`;
 
             // Display search metadata
-            displaySearchInfo(data.search || {});
+            const search = data.search || data.summary || data || {};
+            displaySearchInfo(search);
 
             // Display summary statistics
             displaySummaryStats(data.results || []);
@@ -410,7 +433,7 @@
                 </div>
                 <div class="search-info-item">
                     <div class="search-info-label">Total Searches</div>
-                    <div class="search-info-value">${search.total_searches || 0}</div>
+                    <div class="search-info-value">${search.total_searches || search.total_routes || 0}</div>
                 </div>
                 <div class="search-info-item">
                     <div class="search-info-label">Completed</div>
