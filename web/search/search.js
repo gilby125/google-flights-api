@@ -13,6 +13,7 @@ const ENDPOINTS = {
   ADMIN_CONTINUOUS_STATUS: "/api/v1/admin/continuous-sweep/status",
   ADMIN_CONTINUOUS_PAUSE: "/api/v1/admin/continuous-sweep/pause",
   ADMIN_CONTINUOUS_STOP: "/api/v1/admin/continuous-sweep/stop",
+  ADMIN_QUEUE_ENQUEUES: "/api/v1/admin/queue",
 };
 
 const AIRPORT_CACHE_KEY = "flight-search-airports-cache";
@@ -254,6 +255,7 @@ async function runBulkDiagnostics() {
   elements.asyncBulkDiag.textContent = "Loading diagnostics…";
 
   try {
+    const contQueueName = "continuous_price_graph";
     const [workers, queueStats, sweepStatus] = await Promise.all([
       fetchJsonOrError(ENDPOINTS.ADMIN_WORKERS),
       fetchJsonOrError(ENDPOINTS.ADMIN_QUEUE),
@@ -278,6 +280,25 @@ async function runBulkDiagnostics() {
     const contPending = Number(contQueue?.pending) || 0;
     const contProcessing = Number(contQueue?.processing) || 0;
     const contFailed = Number(contQueue?.failed) || 0;
+    let contEnqueueHint = "";
+    if (contPending > 0) {
+      try {
+        const sources = await fetchJsonOrError(
+          `${ENDPOINTS.ADMIN_QUEUE_ENQUEUES}/${encodeURIComponent(contQueueName)}/enqueues?minutes=60`,
+        );
+        const byActor = sources?.sources || {};
+        const top = Object.entries(byActor)
+          .sort((a, b) => Number(b[1] || 0) - Number(a[1] || 0))
+          .slice(0, 2);
+        if (top.length) {
+          contEnqueueHint =
+            " • enqueues(60m): " +
+            top.map(([k, v]) => `${k}=${v}`).join(", ");
+        }
+      } catch {
+        // Best-effort only.
+      }
+    }
 
     let sweepLine = "";
     if (sweepStatus && typeof sweepStatus === "object") {
@@ -292,7 +313,7 @@ async function runBulkDiagnostics() {
     elements.asyncBulkDiag.textContent =
       `Workers: ${workerList.length} (running ${running}, idle ${idle}) • ` +
       `bulk_search queue: pending ${pending}, processing ${processing}, failed ${failed} • ` +
-      `continuous_price_graph: pending ${contPending}, processing ${contProcessing}, failed ${contFailed}${sweepLine}`;
+      `continuous_price_graph: pending ${contPending}, processing ${contProcessing}, failed ${contFailed}${sweepLine}${contEnqueueHint}`;
   } catch (err) {
     elements.asyncBulkDiag.textContent = `Diagnostics unavailable: ${err.message}`;
   }
@@ -1454,6 +1475,17 @@ function updateAsyncBulkStatus(status) {
     "progress-bar-animated",
     state !== "completed" && state !== "completed_with_errors" && state !== "failed",
   );
+
+  // Always expose controls while an async bulk search is active so users can pause/stop/clear background work.
+  if (
+    activeBulkSearch &&
+    state !== "completed" &&
+    state !== "completed_with_errors" &&
+    state !== "failed" &&
+    elements.asyncBulkActions
+  ) {
+    elements.asyncBulkActions.classList.remove("d-none");
+  }
 
   if (elements.asyncBulkStatusMeta) {
     let meta = "";
