@@ -125,7 +125,7 @@ func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Ne
 		v1.GET("/search", ListSearches(postgresDB))
 
 		// Bulk search routes
-		v1.POST("/bulk-search", CreateBulkSearch(queue, postgresDB))
+		v1.POST("/bulk-search", CreateBulkSearch(queue, postgresDB, workerManager))
 		v1.GET("/bulk-search/:id", getBulkSearchById(postgresDB))
 
 		// Price history routes

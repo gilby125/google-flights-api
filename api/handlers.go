@@ -2205,12 +2205,24 @@ func createJob(pgDB db.PostgresDB, workerManager *worker.Manager) gin.HandlerFun
 }
 
 // createBulkSearch returns a handler for creating a bulk flight search
-func CreateBulkSearch(q queue.Queue, pgDB db.PostgresDB) gin.HandlerFunc {
+func CreateBulkSearch(q queue.Queue, pgDB db.PostgresDB, workerManager *worker.Manager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req BulkSearchRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
+		}
+
+		// If the continuous sweep is running, pause it while bulk searches are active to avoid
+		// competing for rate-limited Google endpoints. Auto-resume when the bulk queue drains.
+		// (Best-effort; bulk search still runs even if a runner is not configured.)
+		if workerManager != nil {
+			if runner := workerManager.GetSweepRunner(); runner != nil {
+				status := runner.GetStatus()
+				if status.IsRunning && !status.IsPaused {
+					runner.PauseAndAutoResumeAfterQueueDrain("bulk_search")
+				}
+			}
 		}
 
 		ctx := c.Request.Context()

@@ -297,7 +297,7 @@ func TestCreateBulkSearch_Success(t *testing.T) {
 	mockQueue := new(mocks.Queue)
 	mockPostgres := new(mocks.MockPostgresDB)
 	router := setupRouter()
-	router.POST("/bulk-search", api.CreateBulkSearch(mockQueue, mockPostgres))
+	router.POST("/bulk-search", api.CreateBulkSearch(mockQueue, mockPostgres, nil))
 
 	bulkReq := api.BulkSearchRequest{
 		Origins:           []string{"LHR", "LGW"},
@@ -362,7 +362,7 @@ func TestCreateBulkSearch_BindError(t *testing.T) {
 	mockQueue := new(mocks.Queue)
 	mockPostgres := new(mocks.MockPostgresDB)
 	router := setupRouter()
-	router.POST("/bulk-search", api.CreateBulkSearch(mockQueue, mockPostgres))
+	router.POST("/bulk-search", api.CreateBulkSearch(mockQueue, mockPostgres, nil))
 
 	// Act: Send invalid JSON
 	req, _ := http.NewRequest(http.MethodPost, "/bulk-search", bytes.NewBufferString(`{"origins": ["LHR"]`)) // Malformed
@@ -379,7 +379,7 @@ func TestCreateBulkSearch_ValidationError(t *testing.T) {
 	mockQueue := new(mocks.Queue)
 	mockPostgres := new(mocks.MockPostgresDB)
 	router := setupRouter()
-	router.POST("/bulk-search", api.CreateBulkSearch(mockQueue, mockPostgres))
+	router.POST("/bulk-search", api.CreateBulkSearch(mockQueue, mockPostgres, nil))
 
 	bulkReq := api.BulkSearchRequest{
 		// Missing required fields
@@ -401,7 +401,7 @@ func TestCreateBulkSearch_EnqueueError(t *testing.T) {
 	mockQueue := new(mocks.Queue)
 	mockPostgres := new(mocks.MockPostgresDB)
 	router := setupRouter()
-	router.POST("/bulk-search", api.CreateBulkSearch(mockQueue, mockPostgres))
+	router.POST("/bulk-search", api.CreateBulkSearch(mockQueue, mockPostgres, nil))
 
 	bulkReq := api.BulkSearchRequest{
 		Origins:           []string{"LHR"},

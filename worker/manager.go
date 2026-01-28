@@ -211,6 +211,10 @@ type Manager struct {
 	redisClient   *redis.Client
 	sweepRunner   *ContinuousSweepRunner
 	sweepMutex    sync.RWMutex // Protects sweepRunner access
+
+	bulkBusyMu        sync.Mutex
+	bulkBusyCached    bool
+	bulkBusyCheckedAt time.Time
 }
 
 // NewManager creates a new worker manager.
@@ -263,6 +267,36 @@ func NewManager(queue queue.Queue, redisClient *redis.Client, postgresDB db.Post
 	}
 
 	return m
+}
+
+func (m *Manager) bulkSearchBusy() bool {
+	if m == nil || m.queue == nil {
+		return false
+	}
+
+	m.bulkBusyMu.Lock()
+	defer m.bulkBusyMu.Unlock()
+
+	// Cache for a short time to avoid hammering Redis from every worker loop.
+	const cacheTTL = 2 * time.Second
+	if !m.bulkBusyCheckedAt.IsZero() && time.Since(m.bulkBusyCheckedAt) < cacheTTL {
+		return m.bulkBusyCached
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
+	stats, err := m.queue.GetQueueStats(ctx, "bulk_search")
+	cancel()
+	if err != nil {
+		// If stats can't be fetched, fall back to the last known value.
+		m.bulkBusyCheckedAt = time.Now()
+		return m.bulkBusyCached
+	}
+
+	pending := stats["pending"]
+	processing := stats["processing"]
+	m.bulkBusyCached = pending > 0 || processing > 0
+	m.bulkBusyCheckedAt = time.Now()
+	return m.bulkBusyCached
 }
 
 // onBecomeLeader is called when this instance becomes the scheduler leader.
@@ -565,6 +599,14 @@ func (m *Manager) runWorker(id int, worker *Worker) {
 
 			if err := m.processQueue(id, worker, "bulk_search"); err != nil {
 				log.Printf("Worker %d error processing bulk_search queue: %v", displayID, err)
+			}
+
+			// If any bulk search is pending/processing, avoid running background sweeps.
+			// This prevents background jobs from competing for rate-limited Google endpoints,
+			// which can stall user-initiated bulk searches.
+			if m.bulkSearchBusy() {
+				time.Sleep(100 * time.Millisecond)
+				continue
 			}
 
 			if err := m.processQueue(id, worker, "price_graph_sweep"); err != nil {

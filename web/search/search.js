@@ -10,6 +10,9 @@ const ENDPOINTS = {
   ADMIN_BULK_JOBS: "/api/v1/admin/bulk-jobs",
   ADMIN_WORKERS: "/api/v1/admin/workers",
   ADMIN_QUEUE: "/api/v1/admin/queue",
+  ADMIN_CONTINUOUS_STATUS: "/api/v1/admin/continuous-sweep/status",
+  ADMIN_CONTINUOUS_PAUSE: "/api/v1/admin/continuous-sweep/pause",
+  ADMIN_CONTINUOUS_STOP: "/api/v1/admin/continuous-sweep/stop",
 };
 
 const AIRPORT_CACHE_KEY = "flight-search-airports-cache";
@@ -38,6 +41,18 @@ const elements = {
   asyncBulkActions: document.getElementById("asyncBulkActions"),
   asyncBulkCheckWorkersBtn: document.getElementById("asyncBulkCheckWorkersBtn"),
   asyncBulkCheckQueueBtn: document.getElementById("asyncBulkCheckQueueBtn"),
+  asyncBulkPauseContinuousBtn: document.getElementById(
+    "asyncBulkPauseContinuousBtn",
+  ),
+  asyncBulkStopContinuousBtn: document.getElementById(
+    "asyncBulkStopContinuousBtn",
+  ),
+  asyncBulkClearContinuousPendingBtn: document.getElementById(
+    "asyncBulkClearContinuousPendingBtn",
+  ),
+  asyncBulkClearContinuousProcessingBtn: document.getElementById(
+    "asyncBulkClearContinuousProcessingBtn",
+  ),
   asyncBulkDiag: document.getElementById("asyncBulkDiag"),
   asyncBulkProgressBar: document.getElementById("asyncBulkProgressBar"),
   recurringBtn: document.getElementById("recurringBtn"),
@@ -105,6 +120,26 @@ if (elements.asyncBulkCheckWorkersBtn) {
 if (elements.asyncBulkCheckQueueBtn) {
   elements.asyncBulkCheckQueueBtn.addEventListener("click", () => runBulkDiagnostics());
 }
+if (elements.asyncBulkPauseContinuousBtn) {
+  elements.asyncBulkPauseContinuousBtn.addEventListener("click", () =>
+    pauseContinuousSweepFromSearch(),
+  );
+}
+if (elements.asyncBulkStopContinuousBtn) {
+  elements.asyncBulkStopContinuousBtn.addEventListener("click", () =>
+    stopContinuousSweepFromSearch(),
+  );
+}
+if (elements.asyncBulkClearContinuousPendingBtn) {
+  elements.asyncBulkClearContinuousPendingBtn.addEventListener("click", () =>
+    clearContinuousQueueFromSearch("pending"),
+  );
+}
+if (elements.asyncBulkClearContinuousProcessingBtn) {
+  elements.asyncBulkClearContinuousProcessingBtn.addEventListener("click", () =>
+    clearContinuousQueueFromSearch("processing"),
+  );
+}
 
 function formatSecondsShort(seconds) {
   const s = Math.max(0, Math.round(Number(seconds) || 0));
@@ -134,15 +169,95 @@ async function fetchJsonOrError(url) {
   return body;
 }
 
+async function postJsonOrError(url, payload = null) {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: payload ? { "Content-Type": "application/json" } : undefined,
+    body: payload ? JSON.stringify(payload) : undefined,
+  });
+  let body = null;
+  try {
+    body = await res.json();
+  } catch {}
+  if (!res.ok) {
+    const message =
+      body?.error ||
+      body?.message ||
+      `Request failed (${res.status})`;
+    throw new Error(message);
+  }
+  return body;
+}
+
+async function pauseContinuousSweepFromSearch() {
+  if (!elements.asyncBulkDiag || !elements.asyncBulkActions) return;
+  elements.asyncBulkActions.classList.remove("d-none");
+  elements.asyncBulkDiag.textContent = "Pausing continuous sweep…";
+  try {
+    await postJsonOrError(ENDPOINTS.ADMIN_CONTINUOUS_PAUSE);
+    await runBulkDiagnostics();
+  } catch (err) {
+    elements.asyncBulkDiag.textContent = `Pause failed: ${err.message}`;
+  }
+}
+
+async function stopContinuousSweepFromSearch() {
+  if (!elements.asyncBulkDiag || !elements.asyncBulkActions) return;
+  if (
+    !confirm(
+      "Stop continuous sweep? This only stops new enqueues; queued jobs may still run until cleared.",
+    )
+  ) {
+    return;
+  }
+  elements.asyncBulkActions.classList.remove("d-none");
+  elements.asyncBulkDiag.textContent = "Stopping continuous sweep…";
+  try {
+    await postJsonOrError(ENDPOINTS.ADMIN_CONTINUOUS_STOP);
+    await runBulkDiagnostics();
+  } catch (err) {
+    elements.asyncBulkDiag.textContent = `Stop failed: ${err.message}`;
+  }
+}
+
+async function clearContinuousQueueFromSearch(mode) {
+  if (!elements.asyncBulkDiag || !elements.asyncBulkActions) return;
+
+  const queueName = "continuous_price_graph";
+  const endpoint =
+    mode === "processing"
+      ? `${ENDPOINTS.ADMIN_QUEUE}/${encodeURIComponent(queueName)}/clear-processing`
+      : `${ENDPOINTS.ADMIN_QUEUE}/${encodeURIComponent(queueName)}/clear`;
+  const label = mode === "processing" ? "processing" : "pending";
+
+  if (
+    !confirm(
+      `Clear ${label} jobs from ${queueName}? This will drop work and cannot be undone.`,
+    )
+  ) {
+    return;
+  }
+
+  elements.asyncBulkActions.classList.remove("d-none");
+  elements.asyncBulkDiag.textContent = `Clearing ${queueName} (${label})…`;
+  try {
+    await postJsonOrError(endpoint);
+    await runBulkDiagnostics();
+  } catch (err) {
+    elements.asyncBulkDiag.textContent = `Clear failed: ${err.message}`;
+  }
+}
+
 async function runBulkDiagnostics() {
   if (!elements.asyncBulkDiag || !elements.asyncBulkActions) return;
   elements.asyncBulkActions.classList.remove("d-none");
   elements.asyncBulkDiag.textContent = "Loading diagnostics…";
 
   try {
-    const [workers, queueStats] = await Promise.all([
+    const [workers, queueStats, sweepStatus] = await Promise.all([
       fetchJsonOrError(ENDPOINTS.ADMIN_WORKERS),
       fetchJsonOrError(ENDPOINTS.ADMIN_QUEUE),
+      fetchJsonOrError(ENDPOINTS.ADMIN_CONTINUOUS_STATUS).catch(() => null),
     ]);
 
     const workerList = Array.isArray(workers) ? workers : [];
@@ -159,9 +274,22 @@ async function runBulkDiagnostics() {
     const processing = Number(bulkQueue?.processing) || 0;
     const failed = Number(bulkQueue?.failed) || 0;
 
+    const contQueue = queueStats?.continuous_price_graph || null;
+    const contPending = Number(contQueue?.pending) || 0;
+    const contProcessing = Number(contQueue?.processing) || 0;
+    const contFailed = Number(contQueue?.failed) || 0;
+
+    let sweepLine = "";
+    if (sweepStatus && typeof sweepStatus === "object") {
+      const isRunning = !!sweepStatus?.is_running;
+      const isPaused = !!sweepStatus?.is_paused;
+      sweepLine = ` • continuous sweep: ${isRunning ? (isPaused ? "paused" : "running") : "stopped"}`;
+    }
+
     elements.asyncBulkDiag.textContent =
       `Workers: ${workerList.length} (running ${running}, idle ${idle}) • ` +
-      `bulk_search queue: pending ${pending}, processing ${processing}, failed ${failed}`;
+      `bulk_search queue: pending ${pending}, processing ${processing}, failed ${failed} • ` +
+      `continuous_price_graph: pending ${contPending}, processing ${contProcessing}, failed ${contFailed}${sweepLine}`;
   } catch (err) {
     elements.asyncBulkDiag.textContent = `Diagnostics unavailable: ${err.message}`;
   }
