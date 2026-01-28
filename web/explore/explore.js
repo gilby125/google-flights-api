@@ -197,6 +197,7 @@ function initMap() {
 
   const osmStyle = {
     version: 8,
+    glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
     sources: {
       osm: {
         type: "raster",
@@ -262,11 +263,13 @@ function initMap() {
       type: "symbol",
       source: "explore-labels",
       layout: {
+        "text-font": ["Open Sans Regular", "Arial Unicode MS Regular"],
         "text-field": ["get", "destCode"],
-        "text-size": 12,
-        "text-offset": [0, 1.0],
+        "text-size": ["interpolate", ["linear"], ["zoom"], 1, 10, 4, 14],
+        "text-offset": [0, 1.05],
         "text-anchor": "top",
-        "text-allow-overlap": false,
+        "text-allow-overlap": true,
+        "symbol-placement": "point",
       },
       paint: {
         "text-color": "rgba(255,255,255,0.85)",
@@ -301,6 +304,8 @@ function initMap() {
 
     state.map.on("mouseenter", "explore-points", () => (state.map.getCanvas().style.cursor = "pointer"));
     state.map.on("mouseleave", "explore-points", () => (state.map.getCanvas().style.cursor = ""));
+
+    applySettings();
   });
 }
 
