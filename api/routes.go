@@ -223,19 +223,27 @@ func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Ne
 		c.File("./web/bulk-search/index.html")
 	})
 
-	// Explore page (map/globe)
-	router.GET("/explore", func(c *gin.Context) {
-		// Normalize to trailing slash so relative assets resolve predictably under `/explore/`.
-		c.Redirect(http.StatusFound, "/explore/")
-	})
-	router.GET("/explore/", func(c *gin.Context) {
+	// Explore page (map/globe) + assets.
+	// NOTE: Use a custom handler to avoid Gin conflicts between exact and wildcard static routes.
+	router.GET("/explore/*filepath", func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
-		c.Header("Content-Type", "text/html")
-		c.File("./web/explore/index.html")
+
+		p := c.Param("filepath")
+		if p == "" || p == "/" {
+			c.Header("Content-Type", "text/html")
+			c.File("./web/explore/index.html")
+			return
+		}
+
+		rel := strings.TrimPrefix(p, "/")
+		rel = path.Clean(rel)
+		if rel == "." || strings.HasPrefix(rel, "..") {
+			c.AbortWithStatus(http.StatusNotFound)
+			return
+		}
+
+		c.File(filepath.Join("./web/explore", rel))
 	})
-	// Fallback: some clients/proxies will resolve `explore.js` as `/explore.js` (root).
-	// Keep this for robustness even though the page is served at `/explore/`.
-	router.StaticFile("/explore.js", "./web/explore/explore.js")
 
 	// Serve static files for the web UI
 	// NOTE: Use a custom handler for admin assets so we can set Cache-Control headers,
@@ -261,7 +269,6 @@ func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Ne
 
 	router.Static("/search", "./web/search")
 	router.Static("/bulk-search", "./web/bulk-search")
-	router.Static("/explore", "./web/explore")
 	router.GET("/search.js", func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
 		c.Header("Content-Type", "application/javascript")
