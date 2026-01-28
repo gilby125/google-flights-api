@@ -194,17 +194,19 @@ function buildExploreUrl() {
   const dateFrom = $("dateFrom").value || "";
   const dateTo = $("dateTo").value || "";
   const airlines = $("airlines").value.trim();
+  const source = "price_point";
 
   const qs = new URLSearchParams();
   qs.set("origin", origin);
   qs.set("maxHops", String(maxHops));
   qs.set("maxPrice", String(maxPrice));
   qs.set("limit", String(limit));
+  qs.set("source", source);
   if (dateFrom) qs.set("dateFrom", dateFrom);
   if (dateTo) qs.set("dateTo", dateTo);
   if (airlines) qs.set("airlines", airlines);
 
-  return { origin, maxPrice, url: `/api/v1/graph/explore?${qs.toString()}` };
+  return { origin, maxPrice, url: `/api/v1/graph/explore?${qs.toString()}`, qs };
 }
 
 async function loadTopAirports() {
@@ -223,7 +225,7 @@ async function loadTopAirports() {
 }
 
 async function explore() {
-  const { origin, maxPrice, url } = buildExploreUrl();
+  const { origin, maxPrice, url, qs } = buildExploreUrl();
   if (!origin || origin.length !== 3) {
     showToast("Enter a 3-letter IATA origin (e.g. ORD).", "warning");
     return;
@@ -234,7 +236,19 @@ async function explore() {
   $("routeDetails").textContent = "Click a destination to load route stats.";
 
   try {
-    const data = await fetchJSON(url);
+    let data = await fetchJSON(url);
+    if (!Array.isArray(data.edges) || data.edges.length === 0) {
+      // Fallback: some datasets may only have ROUTE edges (avgPrice) but not PRICE_POINT edges yet.
+      // Switch automatically so the UI doesn't look "broken".
+      const fallbackQs = new URLSearchParams(qs);
+      fallbackQs.set("source", "route");
+      fallbackQs.delete("dateFrom");
+      fallbackQs.delete("dateTo");
+      data = await fetchJSON(`/api/v1/graph/explore?${fallbackQs.toString()}`);
+      if (Array.isArray(data.edges) && data.edges.length > 0) {
+        showToast("No PRICE_POINT data found; showing ROUTE data instead.", "warning");
+      }
+    }
     state.origin = origin;
     state.edges = (data.edges || [])
       .filter((e) => Number.isFinite(e.dest_lat) && Number.isFinite(e.dest_lon))
@@ -394,4 +408,3 @@ async function main() {
 }
 
 main().catch((e) => showToast(e.message));
-
