@@ -268,8 +268,6 @@ func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Ne
 		c.File(filepath.Join("./web/admin", rel))
 	})
 
-	router.Static("/search", "./web/search")
-	router.Static("/bulk-search", "./web/bulk-search")
 	router.GET("/search.js", func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
 		c.Header("Content-Type", "application/javascript")

@@ -179,6 +179,7 @@ func GetExplore(neo4jDB db.Neo4jDatabase) gin.HandlerFunc {
 				  AND all(r IN relationships(path)
 					WHERE r.avgPrice IS NOT NULL AND toFloat(r.avgPrice) > 0
 					  AND (size($airlines) = 0 OR r.airline IN $airlines)
+					  AND (size($excludeAirlines) = 0 OR r.airline IS NULL OR NOT r.airline IN $excludeAirlines)
 				  )
 				WITH a, b,
 				     reduce(total = 0.0, r IN relationships(path) | total + toFloat(r.avgPrice)) AS totalPrice,
@@ -209,8 +210,8 @@ func GetExplore(neo4jDB db.Neo4jDatabase) gin.HandlerFunc {
 					  AND ($dateFrom = '' OR r.date >= date($dateFrom))
 					  AND ($dateTo = '' OR r.date <= date($dateTo))
 					  AND (size($airlines) = 0 OR r.airline IN $airlines)
-					  AND (size($excludeAirlines) = 0 OR NOT r.airline IN $excludeAirlines)
-					  AND ($maxAgeDays = 0 OR coalesce(r.last_seen_at, r.first_seen_at, datetime({epochMillis: 0})) >= datetime() - duration({days: $maxAgeDays}))
+					  AND (size($excludeAirlines) = 0 OR r.airline IS NULL OR NOT r.airline IN $excludeAirlines)
+					  AND ($maxAgeDays = 0 OR coalesce(r.last_seen_at, r.first_seen_at) IS NULL OR coalesce(r.last_seen_at, r.first_seen_at) >= datetime() - duration({days: $maxAgeDays}))
 					  AND ($tripType = '' OR coalesce(r.trip_type, 'unknown') = $tripType)
 				  )
 				WITH a, b,

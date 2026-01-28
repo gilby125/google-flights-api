@@ -72,6 +72,14 @@ type RouteStats struct {
 	PricePoints int      `json:"price_points"` // Number of observations
 	Airlines    []string `json:"airlines"`     // Airlines serving the route
 
+	// Source indicates which graph dataset produced these stats.
+	// - price_point: derived from :PRICE_POINT relationships (date-specific, filterable by date/age/trip type)
+	// - route: derived from :ROUTE relationships (avgPrice aggregates, no date-specific samples)
+	Source string `json:"source,omitempty"`
+	Note   string `json:"note,omitempty"`
+
+	RouteEdges int `json:"route_edges,omitempty"` // Populated when Source=route.
+
 	MinPriceDate       string `json:"min_price_date,omitempty"`
 	MinPriceAirline    string `json:"min_price_airline,omitempty"`
 	MinPriceSeenAt     string `json:"min_price_seen_at,omitempty"`

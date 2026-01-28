@@ -7,6 +7,9 @@ const state = {
   origins: [],
   edges: [],
   edgesAll: [],
+  ui: {
+    didWarnRouteFallback: false,
+  },
   settings: {
     showRoutes: true,
     showMarkers: true,
@@ -413,10 +416,13 @@ async function explore() {
       fallbackQs.delete("dateTo");
       data = await fetchJSON(`/api/v1/graph/explore?${fallbackQs.toString()}`);
       if (Array.isArray(data.edges) && data.edges.length > 0) {
-        showToast("No PRICE_POINT data found; showing ROUTE data instead.", "warning");
+        if (!state.ui.didWarnRouteFallback) {
+          state.ui.didWarnRouteFallback = true;
+          showToast("Showing ROUTE averages (no date-specific PRICE_POINT samples matched).", "info");
+        }
       }
     }
-    state.origin = origin;
+    state.origin = origins[0] || "";
     state.origins = origins;
     state.edgesAll = (data.edges || [])
       .filter((e) => Number.isFinite(e.dest_lat) && Number.isFinite(e.dest_lon))
@@ -632,6 +638,9 @@ async function onSelectRoute(origin, destCode) {
     const minDate = String(stats.min_price_date || "").trim();
     const minAirline = String(stats.min_price_airline || "").trim();
     const minSeenAt = String(stats.min_price_seen_at || "").trim();
+    const source = String(stats.source || "").trim();
+    const note = String(stats.note || "").trim();
+    const routeEdges = Number(stats.route_edges || 0);
 
     const openMin = buildSearchUrl(origin, destCode, {
       departureDate: minDate || undefined,
@@ -666,6 +675,27 @@ async function onSelectRoute(origin, destCode) {
       })
       .join("");
 
+    const observedLine =
+      source === "route"
+        ? `<div class="mt-1">Source: <code>route</code>${routeEdges ? ` • edges <code>${escapeHtml(String(routeEdges))}</code>` : ""}</div>`
+        : `<div class="mt-1">Observed: <code>${escapeHtml(String(stats.price_points ?? "—"))}</code> • first <code>${escapeHtml(String(stats.first_seen_at || "—"))}</code> • last <code>${escapeHtml(String(stats.last_seen_at || "—"))}</code></div>`;
+
+    const minDetailsBits = [
+      minDate ? `<code>${escapeHtml(minDate)}</code>` : "",
+      minTripType ? `<code>${escapeHtml(minTripType)}</code>` : "",
+      minReturnDate ? `return <code>${escapeHtml(minReturnDate)}</code>` : "",
+      minAirline ? `airline <code>${escapeHtml(minAirline)}</code>` : "",
+      minSeenAt ? `scraped <code>${escapeHtml(minSeenAt)}</code>` : "",
+    ].filter(Boolean);
+
+    const minDetailsLine = minDetailsBits.length
+      ? `<div class="mt-1">Min details: ${minDetailsBits.join(" • ")}</div>`
+      : source === "route"
+        ? `<div class="mt-1"><span class="miniHelp">No date-specific samples for this route yet.</span></div>`
+        : "";
+
+    const noteLine = note ? `<div class="mt-1"><span class="miniHelp">${escapeHtml(note)}</span></div>` : "";
+
     const html = `
       <div><strong>${escapeHtml(origin)} → ${escapeHtml(destCode)}</strong></div>
       <div class="mt-2 d-flex flex-wrap gap-2">
@@ -673,8 +703,9 @@ async function onSelectRoute(origin, destCode) {
         <a class="btn btn-sm btn-outline-secondary" href="${escapeHtml(googleMin)}" target="_blank" rel="noreferrer">Google Flights</a>
       </div>
       <div class="mt-1">Min: <code>${escapeHtml(formatUSD(stats.min_price))}</code> • Avg: <code>${escapeHtml(formatUSD(stats.avg_price))}</code> • Max: <code>${escapeHtml(formatUSD(stats.max_price))}</code></div>
-      <div class="mt-1">Min details: <code>${escapeHtml(minDate || "—")}</code> • <code>${escapeHtml(minTripType || "—")}</code> ${minReturnDate ? `• return <code>${escapeHtml(minReturnDate)}</code>` : ""} ${minAirline ? `• airline <code>${escapeHtml(minAirline)}</code>` : ""} ${minSeenAt ? `• scraped <code>${escapeHtml(minSeenAt)}</code>` : ""}</div>
-      <div class="mt-1">Observed: <code>${escapeHtml(String(stats.price_points ?? "—"))}</code> • first <code>${escapeHtml(String(stats.first_seen_at || "—"))}</code> • last <code>${escapeHtml(String(stats.last_seen_at || "—"))}</code></div>
+      ${minDetailsLine}
+      ${observedLine}
+      ${noteLine}
       ${airlines ? `<div class="mt-1">Airlines: <code>${escapeHtml(airlines)}</code></div>` : "" }
       ${
         samplesRows
