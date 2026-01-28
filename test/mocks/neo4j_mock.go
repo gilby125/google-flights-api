@@ -25,8 +25,8 @@ func (m *MockNeo4jDatabase) CreateRoute(originCode, destCode, airlineCode, fligh
 }
 
 // AddPricePoint mocks the AddPricePoint method
-func (m *MockNeo4jDatabase) AddPricePoint(originCode, destCode string, date string, price float64, airlineCode string) error {
-	args := m.Called(originCode, destCode, date, price, airlineCode)
+func (m *MockNeo4jDatabase) AddPricePoint(originCode, destCode string, departDate string, returnDate string, price float64, airlineCode string, tripType string) error {
+	args := m.Called(originCode, destCode, departDate, returnDate, price, airlineCode, tripType)
 	return args.Error(0)
 }
 

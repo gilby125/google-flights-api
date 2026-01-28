@@ -63,7 +63,7 @@ func TestWorker_StoreFlightInNeo4j_Success(t *testing.T) {
 	mockNeo4jDb.On("CreateAirport", "JFK", "Kennedy", "New York", "", 0.0, 0.0).Return(nil).Once()
 	mockNeo4jDb.On("CreateAirline", "TA", "TestAir", "").Return(nil).Once()
 	mockNeo4jDb.On("CreateRoute", "LHR", "JFK", "TA", "TA123", 100.50, 480).Return(nil).Once()
-	mockNeo4jDb.On("AddPricePoint", "LHR", "JFK", testTime.Format("2006-01-02"), 100.50, "TA").Return(nil).Once()
+	mockNeo4jDb.On("AddPricePoint", "LHR", "JFK", testTime.Format("2006-01-02"), "", 100.50, "TA", "one_way").Return(nil).Once()
 
 	err := workerInstance.StoreFlightInNeo4j(ctx, offer)
 
@@ -236,7 +236,7 @@ func TestWorker_StoreFlightOffers_Success(t *testing.T) {
 	mockNeo4jDb.On("CreateAirport", "JFK", "Kennedy", "New York", "", 0.0, 0.0).Return(nil).Once()
 	mockNeo4jDb.On("CreateAirline", "TA", "TestAir", "").Return(nil).Once()
 	mockNeo4jDb.On("CreateRoute", "LHR", "JFK", "TA", "TA123", 500.00, 480).Return(nil).Once()
-	mockNeo4jDb.On("AddPricePoint", "LHR", "JFK", offers[0].StartDate.Format("2006-01-02"), 500.00, "TA").Return(nil).Once()
+	mockNeo4jDb.On("AddPricePoint", "LHR", "JFK", offers[0].StartDate.Format("2006-01-02"), "", 500.00, "TA", "one_way").Return(nil).Once()
 
 	// Mock Commit
 	mockTx.On("Commit").Return(nil).Once()

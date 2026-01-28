@@ -255,10 +255,10 @@ func TestManager_JobProcessingFlow(t *testing.T) {
 		mockTx.On("ExecContext", mock.Anything, mock.MatchedBy(func(query string) bool { return strings.Contains(query, "INSERT INTO flight_segments") }), mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(sql.Result(nil), nil).Maybe() // Use Maybe for calls inside loop
 
 		// 7. Mock Neo4j calls (assuming success)
-		mockNeo4jDb.On("CreateAirport", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe() // Use Maybe for calls inside loop
-		mockNeo4jDb.On("CreateAirline", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()                                              // Use Maybe for calls inside loop
-		mockNeo4jDb.On("CreateRoute", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()   // Use Maybe for calls inside loop
-		mockNeo4jDb.On("AddPricePoint", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()                // Use Maybe for calls inside loop
+		mockNeo4jDb.On("CreateAirport", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()                // Use Maybe for calls inside loop
+		mockNeo4jDb.On("CreateAirline", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()                                                             // Use Maybe for calls inside loop
+		mockNeo4jDb.On("CreateRoute", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()                  // Use Maybe for calls inside loop
+		mockNeo4jDb.On("AddPricePoint", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe() // Use Maybe for calls inside loop
 		// --- End Mocks inside the offer loop ---
 
 		// 8. Mock Commit
@@ -474,7 +474,7 @@ func TestManager_JobPrioritization(t *testing.T) {
 	mockNeo4jDb.On("CreateAirport", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 	mockNeo4jDb.On("CreateAirline", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 	mockNeo4jDb.On("CreateRoute", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
-	mockNeo4jDb.On("AddPricePoint", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+	mockNeo4jDb.On("AddPricePoint", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 	mockTxFlight.On("Commit").Return(nil).Once()
 	mockTxFlight.On("Rollback").Return(nil).Maybe()
 
@@ -504,7 +504,7 @@ func TestManager_JobPrioritization(t *testing.T) {
 	mockNeo4jDb.On("CreateAirline", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 	mockNeo4jDb.On("CreateRoute", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 	// FIX: Mock AddPricePoint for bulk search path as well
-	mockNeo4jDb.On("AddPricePoint", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+	mockNeo4jDb.On("AddPricePoint", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 	mockTxBulk.On("Commit").Return(nil).Once()
 	mockTxBulk.On("Rollback").Return(nil).Maybe()
 	// --- End Corrected Mocks ---

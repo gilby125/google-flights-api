@@ -210,6 +210,32 @@
             <input id="airlines" class="form-control" placeholder="AA, DL, UA" />
           </div>
 
+          <div class="col-12">
+            <label class="form-label" for="excludeAirlines">Exclude airlines (optional)</label>
+            <input id="excludeAirlines" class="form-control" placeholder="NK, F9, G4" />
+          </div>
+
+          <div class="col-6">
+            <label class="form-label" for="tripType">Trip type</label>
+            <select id="tripType" class="form-select">
+              <option value="" selected>Any</option>
+              <option value="one_way">One way</option>
+              <option value="round_trip">Round trip</option>
+            </select>
+          </div>
+
+          <div class="col-6">
+            <label class="form-label" for="maxAgeDays">Max age (days)</label>
+            <select id="maxAgeDays" class="form-select">
+              <option value="0">Any</option>
+              <option value="1">1</option>
+              <option value="3">3</option>
+              <option value="7" selected>7</option>
+              <option value="14">14</option>
+              <option value="30">30</option>
+            </select>
+          </div>
+
           <div class="col-12 d-grid gap-2">
             <button id="exploreBtn" class="btn btn-accent">Explore</button>
             <button id="toggleModeBtn" class="btn btn-outline-light" style="border-radius: 12px;">Toggle Map / Globe</button>

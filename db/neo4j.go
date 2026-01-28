@@ -13,7 +13,7 @@ import (
 type Neo4jDatabase interface {
 	CreateAirport(code, name, city, country string, latitude, longitude float64) error
 	CreateRoute(originCode, destCode, airlineCode, flightNumber string, avgPrice float64, avgDuration int) error
-	AddPricePoint(originCode, destCode string, date string, price float64, airlineCode string) error
+	AddPricePoint(originCode, destCode string, departDate string, returnDate string, price float64, airlineCode string, tripType string) error
 	CreateAirline(code, name, country string) error
 	Close() error
 	ExecuteReadQuery(ctx context.Context, query string, params map[string]interface{}) (Neo4jResult, error)
@@ -71,6 +71,32 @@ type RouteStats struct {
 	AvgPrice    float64  `json:"avg_price"`
 	PricePoints int      `json:"price_points"` // Number of observations
 	Airlines    []string `json:"airlines"`     // Airlines serving the route
+
+	MinPriceDate       string `json:"min_price_date,omitempty"`
+	MinPriceAirline    string `json:"min_price_airline,omitempty"`
+	MinPriceSeenAt     string `json:"min_price_seen_at,omitempty"`
+	MinPriceTripType   string `json:"min_price_trip_type,omitempty"`
+	MinPriceReturnDate string `json:"min_price_return_date,omitempty"`
+
+	MaxPriceDate       string `json:"max_price_date,omitempty"`
+	MaxPriceAirline    string `json:"max_price_airline,omitempty"`
+	MaxPriceSeenAt     string `json:"max_price_seen_at,omitempty"`
+	MaxPriceTripType   string `json:"max_price_trip_type,omitempty"`
+	MaxPriceReturnDate string `json:"max_price_return_date,omitempty"`
+
+	FirstSeenAt string `json:"first_seen_at,omitempty"`
+	LastSeenAt  string `json:"last_seen_at,omitempty"`
+
+	Samples []RoutePricePoint `json:"samples,omitempty"`
+}
+
+type RoutePricePoint struct {
+	Date       string  `json:"date,omitempty"`
+	Price      float64 `json:"price"`
+	Airline    string  `json:"airline,omitempty"`
+	SeenAt     string  `json:"seen_at,omitempty"`
+	TripType   string  `json:"trip_type,omitempty"`
+	ReturnDate string  `json:"return_date,omitempty"`
 }
 
 // Ensure neo4j.Session implements Neo4jSession (adjust if methods differ slightly)
@@ -296,7 +322,7 @@ func (n *Neo4jDB) CreateRoute(originCode, destCode, airlineCode, flightNumber st
 }
 
 // AddPricePoint adds or updates a price point for a route on a specific date
-func (n *Neo4jDB) AddPricePoint(originCode, destCode string, date string, price float64, airlineCode string) error {
+func (n *Neo4jDB) AddPricePoint(originCode, destCode string, departDate string, returnDate string, price float64, airlineCode string, tripType string) error {
 	// ctx := context.Background() // Removed unused ctx
 	// NewSession takes only SessionConfig
 	session := n.driver.NewSession(neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
@@ -307,21 +333,38 @@ func (n *Neo4jDB) AddPricePoint(originCode, destCode string, date string, price 
 		// tx.Run takes query, params (NO ctx)
 		_, err := tx.Run(
 			"MATCH (origin:Airport {code: $originCode}), (dest:Airport {code: $destCode}) "+
-				"MERGE (origin)-[r:PRICE_POINT {date: date($date), airline: $airlineCode}]->(dest) "+ // Use Neo4j date() function
-				"SET r.price = $price",
+				"WITH origin, dest, CASE WHEN $returnDate = '' THEN null ELSE date($returnDate) END AS retDate "+
+				"OPTIONAL MATCH (origin)-[existing:PRICE_POINT {date: date($departDate), airline: $airlineCode}]->(dest) "+
+				"WHERE existing.trip_type IS NULL AND existing.return_date IS NULL "+
+				"WITH origin, dest, retDate, existing "+
+				"FOREACH (_ IN CASE WHEN existing IS NULL THEN [] ELSE [1] END | "+
+				"  SET existing.price = $price, "+
+				"      existing.trip_type = $tripType, "+
+				"      existing.return_date = retDate, "+
+				"      existing.last_seen_at = datetime(), "+
+				"      existing.first_seen_at = coalesce(existing.first_seen_at, datetime())"+
+				") "+
+				"FOREACH (_ IN CASE WHEN existing IS NULL THEN [1] ELSE [] END | "+
+				"  MERGE (origin)-[r:PRICE_POINT {date: date($departDate), airline: $airlineCode, trip_type: $tripType, return_date: retDate}]->(dest) "+
+				"  SET r.price = $price, "+
+				"      r.last_seen_at = datetime(), "+
+				"      r.first_seen_at = coalesce(r.first_seen_at, datetime())"+
+				")",
 			map[string]interface{}{
 				"originCode":  originCode,
 				"destCode":    destCode,
-				"date":        date,
+				"departDate":  departDate,
+				"returnDate":  returnDate,
 				"price":       price,
 				"airlineCode": airlineCode,
+				"tripType":    tripType,
 			},
 		)
 		return nil, err
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to add price point for %s->%s on %s (%s): %w", originCode, destCode, date, airlineCode, err)
+		return fmt.Errorf("failed to add price point for %s->%s on %s (%s): %w", originCode, destCode, departDate, airlineCode, err)
 	}
 	return nil
 }

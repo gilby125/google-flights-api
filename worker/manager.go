@@ -1029,12 +1029,20 @@ func (m *Manager) processContinuousPriceGraph(ctx context.Context, worker *Worke
 	// Sync price point to Neo4j for graph analytics (idempotent via MERGE)
 	if m.neo4jDB != nil {
 		dateStr := cheapest.StartDate.Format("2006-01-02")
+		returnDateStr := ""
+		tripType := "one_way"
+		if !cheapest.ReturnDate.IsZero() {
+			tripType = "round_trip"
+			returnDateStr = cheapest.ReturnDate.Format("2006-01-02")
+		}
 		if syncErr := m.neo4jDB.AddPricePoint(
 			payload.Origin,
 			payload.Destination,
 			dateStr,
+			returnDateStr,
 			cheapest.Price,
 			"", // No specific airline for price graph results
+			tripType,
 		); syncErr != nil {
 			// Log but don't fail - Postgres is the source of truth
 			log.Printf("Warning: failed to sync price point to Neo4j for %s->%s: %v", payload.Origin, payload.Destination, syncErr)
@@ -2348,7 +2356,19 @@ func (m *Manager) processPriceGraphSweep(ctx context.Context, worker *Worker, se
 						// Sync price point to Neo4j for graph analytics (idempotent via MERGE)
 						if m.neo4jDB != nil {
 							dateStr := offer.StartDate.Format("2006-01-02")
-							if syncErr := m.neo4jDB.AddPricePoint(origin, destination, dateStr, offer.Price, ""); syncErr != nil {
+							returnDateStr := ""
+							if !offer.ReturnDate.IsZero() {
+								returnDateStr = offer.ReturnDate.Format("2006-01-02")
+							}
+							tripType := strings.TrimSpace(strings.ToLower(payload.TripType))
+							if tripType == "" {
+								if returnDateStr == "" {
+									tripType = "one_way"
+								} else {
+									tripType = "round_trip"
+								}
+							}
+							if syncErr := m.neo4jDB.AddPricePoint(origin, destination, dateStr, returnDateStr, offer.Price, "", tripType); syncErr != nil {
 								log.Printf("Warning: failed to sync price point to Neo4j for %s->%s: %v", origin, destination, syncErr)
 							}
 						}

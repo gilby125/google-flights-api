@@ -141,6 +141,7 @@ func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Ne
 			graph.GET("/path", GetCheapestPath(neo4jDB))
 			graph.GET("/connections", GetConnections(neo4jDB))
 			graph.GET("/route-stats", GetRouteStats(neo4jDB))
+			graph.GET("/route-details", GetRouteDetails(neo4jDB, cfg.FlightConfig.ExcludedAirlines))
 			graph.GET("/explore", GetExplore(neo4jDB))
 		}
 

@@ -380,6 +380,12 @@ func (w *Worker) StoreFlightInNeo4j(ctx context.Context, offer flights.FullOffer
 	if len(offer.Flight) > 0 && len(offer.Flight[0].FlightNumber) >= 2 {
 		overallAirlineCode = offer.Flight[0].FlightNumber[:2]
 	}
+	tripType := "one_way"
+	returnDateStr := ""
+	if !offer.ReturnDate.IsZero() {
+		tripType = "round_trip"
+		returnDateStr = offer.ReturnDate.Format("2006-01-02")
+	}
 
 	// Create airports in Neo4j
 	for _, flight := range offer.Flight {
@@ -433,8 +439,10 @@ func (w *Worker) StoreFlightInNeo4j(ctx context.Context, offer flights.FullOffer
 			flight.DepAirportCode,
 			flight.ArrAirportCode,
 			offer.StartDate.Format("2006-01-02"),
+			returnDateStr,
 			offer.Price,
 			flight.FlightNumber[:2], // Airline code
+			tripType,
 		); err != nil {
 			return fmt.Errorf("failed to add price point in Neo4j: %w", err)
 		}
@@ -454,8 +462,10 @@ func (w *Worker) StoreFlightInNeo4j(ctx context.Context, offer flights.FullOffer
 			offer.SrcAirportCode,
 			offer.DstAirportCode,
 			offer.StartDate.Format("2006-01-02"),
+			returnDateStr,
 			offer.Price,
 			overallAirlineCode,
+			tripType,
 		); err != nil {
 			return fmt.Errorf("failed to add route-level price point in Neo4j: %w", err)
 		}

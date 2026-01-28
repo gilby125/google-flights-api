@@ -133,22 +133,31 @@ function getSuggestedDepartureDate() {
   return formatDateYYYYMMDD(d);
 }
 
-function buildSearchUrl(origin, dest) {
-  const departure = getSuggestedDepartureDate();
+function buildSearchUrl(origin, dest, opts = {}) {
+  const departure = opts.departureDate || getSuggestedDepartureDate();
+  const tripType = opts.tripType || "one_way";
   const url = new URL("/search", window.location.origin);
   url.searchParams.set("origin", origin);
   url.searchParams.set("destination", dest);
   url.searchParams.set("departure_date", departure);
-  url.searchParams.set("trip_type", "one_way");
+  url.searchParams.set("trip_type", tripType);
+  if (tripType === "round_trip" && opts.returnDate) {
+    url.searchParams.set("return_date", opts.returnDate);
+  }
   return url.pathname + url.search;
 }
 
-function buildGoogleFlightsUrl(origin, dest) {
-  const departure = getSuggestedDepartureDate();
+function buildGoogleFlightsUrl(origin, dest, opts = {}) {
+  const departure = opts.departureDate || getSuggestedDepartureDate();
+  const tripType = opts.tripType || "one_way";
+  const returnDate = opts.returnDate || "";
   const encodedOrigin = encodeURIComponent(origin);
   const encodedDest = encodeURIComponent(dest);
   const encodedDate = encodeURIComponent(departure);
-  // Match the search page's convention.
+  const encodedReturn = encodeURIComponent(returnDate);
+  if (tripType === "round_trip" && returnDate) {
+    return `https://www.google.com/travel/flights?q=Flights%20from%20${encodedOrigin}%20to%20${encodedDest}%20on%20${encodedDate}%20returning%20${encodedReturn}`;
+  }
   return `https://www.google.com/travel/flights?q=Flights%20from%20${encodedOrigin}%20to%20${encodedDest}%20on%20${encodedDate}&tfs=oneway`;
 }
 
@@ -345,6 +354,9 @@ function buildExploreUrl() {
   const dateFrom = $("dateFrom").value || "";
   const dateTo = $("dateTo").value || "";
   const airlines = $("airlines").value.trim();
+  const excludeAirlines = ($("excludeAirlines")?.value || "").trim();
+  const tripType = ($("tripType")?.value || "").trim();
+  const maxAgeDays = Number($("maxAgeDays")?.value || 0);
   const source = "price_point";
 
   const qs = new URLSearchParams();
@@ -357,6 +369,9 @@ function buildExploreUrl() {
   if (dateFrom) qs.set("dateFrom", dateFrom);
   if (dateTo) qs.set("dateTo", dateTo);
   if (airlines) qs.set("airlines", airlines);
+  if (excludeAirlines) qs.set("excludeAirlines", excludeAirlines);
+  if (tripType) qs.set("tripType", tripType);
+  if (Number.isFinite(maxAgeDays) && maxAgeDays > 0) qs.set("maxAgeDays", String(maxAgeDays));
 
   return { origins, maxPrice, url: `/api/v1/graph/explore?${qs.toString()}`, qs };
 }
@@ -591,29 +606,108 @@ async function onSelectRoute(origin, destCode) {
 
   $("routeDetails").textContent = `Loading stats for ${origin} → ${destCode}…`;
 
-  const searchUrl = buildSearchUrl(origin, destCode);
-  const googleUrl = buildGoogleFlightsUrl(origin, destCode);
+  const includeAirlines = ($("airlines")?.value || "").trim();
+  const excludeAirlines = ($("excludeAirlines")?.value || "").trim();
+  const dateFrom = $("dateFrom")?.value || "";
+  const dateTo = $("dateTo")?.value || "";
+  const tripType = ($("tripType")?.value || "").trim();
+  const maxAgeDays = Number($("maxAgeDays")?.value || 0);
+
+  const detailsQs = new URLSearchParams();
+  detailsQs.set("origin", origin);
+  detailsQs.set("dest", destCode);
+  if (includeAirlines) detailsQs.set("airlines", includeAirlines);
+  if (excludeAirlines || excludeAirlines === "") detailsQs.set("excludeAirlines", excludeAirlines);
+  if (dateFrom) detailsQs.set("dateFrom", dateFrom);
+  if (dateTo) detailsQs.set("dateTo", dateTo);
+  if (tripType) detailsQs.set("tripType", tripType);
+  if (Number.isFinite(maxAgeDays) && maxAgeDays > 0) detailsQs.set("maxAgeDays", String(maxAgeDays));
+  detailsQs.set("limitSamples", "25");
 
   try {
-    const stats = await fetchJSON(`/api/v1/graph/route-stats?origin=${encodeURIComponent(origin)}&dest=${encodeURIComponent(destCode)}`);
-    const airlines = Array.isArray(stats.airlines) ? stats.airlines.filter(Boolean).slice(0, 10).join(", ") : "";
+    const stats = await fetchJSON(`/api/v1/graph/route-details?${detailsQs.toString()}`);
+
+    const minTripType = String(stats.min_price_trip_type || "").trim();
+    const minReturnDate = String(stats.min_price_return_date || "").trim();
+    const minDate = String(stats.min_price_date || "").trim();
+    const minAirline = String(stats.min_price_airline || "").trim();
+    const minSeenAt = String(stats.min_price_seen_at || "").trim();
+
+    const openMin = buildSearchUrl(origin, destCode, {
+      departureDate: minDate || undefined,
+      returnDate: minReturnDate || undefined,
+      tripType: minTripType === "round_trip" ? "round_trip" : "one_way",
+    });
+    const googleMin = buildGoogleFlightsUrl(origin, destCode, {
+      departureDate: minDate || undefined,
+      returnDate: minReturnDate || undefined,
+      tripType: minTripType === "round_trip" ? "round_trip" : "one_way",
+    });
+
+    const airlines = Array.isArray(stats.airlines) ? stats.airlines.filter(Boolean).slice(0, 12).join(", ") : "";
+    const samples = Array.isArray(stats.samples) ? stats.samples : [];
+    const samplesRows = samples
+      .slice(0, 25)
+      .map((s) => {
+        const sDate = escapeHtml(String(s.date || ""));
+        const sRet = escapeHtml(String(s.return_date || ""));
+        const sType = escapeHtml(String(s.trip_type || ""));
+        const sAir = escapeHtml(String(s.airline || ""));
+        const sSeen = escapeHtml(String(s.seen_at || ""));
+        const sPrice = escapeHtml(formatUSD(Number(s.price)));
+        return `<tr>
+          <td><code>${sDate}</code></td>
+          <td><code>${sRet || "—"}</code></td>
+          <td><code>${sType || "—"}</code></td>
+          <td><code>${sAir || "—"}</code></td>
+          <td><code>${sPrice}</code></td>
+          <td><code>${sSeen || "—"}</code></td>
+        </tr>`;
+      })
+      .join("");
+
     const html = `
       <div><strong>${escapeHtml(origin)} → ${escapeHtml(destCode)}</strong></div>
       <div class="mt-2 d-flex flex-wrap gap-2">
-        <a class="btn btn-sm btn-outline-light" href="${escapeHtml(searchUrl)}">Open in Search</a>
-        <a class="btn btn-sm btn-outline-secondary" href="${escapeHtml(googleUrl)}" target="_blank" rel="noreferrer">Google Flights</a>
+        <a class="btn btn-sm btn-outline-light" href="${escapeHtml(openMin)}">Open min fare</a>
+        <a class="btn btn-sm btn-outline-secondary" href="${escapeHtml(googleMin)}" target="_blank" rel="noreferrer">Google Flights</a>
       </div>
       <div class="mt-1">Min: <code>${escapeHtml(formatUSD(stats.min_price))}</code> • Avg: <code>${escapeHtml(formatUSD(stats.avg_price))}</code> • Max: <code>${escapeHtml(formatUSD(stats.max_price))}</code></div>
-      <div class="mt-1">Price points: <code>${escapeHtml(String(stats.price_points ?? "—"))}</code></div>
+      <div class="mt-1">Min details: <code>${escapeHtml(minDate || "—")}</code> • <code>${escapeHtml(minTripType || "—")}</code> ${minReturnDate ? `• return <code>${escapeHtml(minReturnDate)}</code>` : ""} ${minAirline ? `• airline <code>${escapeHtml(minAirline)}</code>` : ""} ${minSeenAt ? `• scraped <code>${escapeHtml(minSeenAt)}</code>` : ""}</div>
+      <div class="mt-1">Observed: <code>${escapeHtml(String(stats.price_points ?? "—"))}</code> • first <code>${escapeHtml(String(stats.first_seen_at || "—"))}</code> • last <code>${escapeHtml(String(stats.last_seen_at || "—"))}</code></div>
       ${airlines ? `<div class="mt-1">Airlines: <code>${escapeHtml(airlines)}</code></div>` : "" }
+      ${
+        samplesRows
+          ? `<div class="mt-2">
+               <div class="k">Recent samples</div>
+               <div class="table-responsive mt-1">
+                 <table class="table table-sm table-dark table-striped align-middle" style="margin-bottom: 0;">
+                   <thead>
+                     <tr>
+                       <th scope="col">Depart</th>
+                       <th scope="col">Return</th>
+                       <th scope="col">Trip</th>
+                       <th scope="col">Airline</th>
+                       <th scope="col">Price</th>
+                       <th scope="col">Scraped</th>
+                     </tr>
+                   </thead>
+                   <tbody>${samplesRows}</tbody>
+                 </table>
+               </div>
+             </div>`
+          : ""
+      }
     `;
     $("routeDetails").innerHTML = html;
   } catch (e) {
+    const openMin = buildSearchUrl(origin, destCode);
+    const googleMin = buildGoogleFlightsUrl(origin, destCode);
     const html = `
       <div><strong>${escapeHtml(origin)} → ${escapeHtml(destCode)}</strong></div>
       <div class="mt-2 d-flex flex-wrap gap-2">
-        <a class="btn btn-sm btn-outline-light" href="${escapeHtml(searchUrl)}">Open in Search</a>
-        <a class="btn btn-sm btn-outline-secondary" href="${escapeHtml(googleUrl)}" target="_blank" rel="noreferrer">Google Flights</a>
+        <a class="btn btn-sm btn-outline-light" href="${escapeHtml(openMin)}">Open in Search</a>
+        <a class="btn btn-sm btn-outline-secondary" href="${escapeHtml(googleMin)}" target="_blank" rel="noreferrer">Google Flights</a>
       </div>
       <div class="mt-2">No stats available: <code>${escapeHtml(e.message)}</code></div>
     `;
@@ -662,6 +756,8 @@ function wireUI() {
 async function main() {
   loadSettings();
   wireUI();
+  const excludeEl = $("excludeAirlines");
+  if (excludeEl && !excludeEl.value) excludeEl.value = "NK,G4,F9,SY,XP,MX";
   await loadTopAirports();
   initGlobe();
   setMode("globe");

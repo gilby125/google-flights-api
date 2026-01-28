@@ -27,14 +27,18 @@ type ExploreEdge struct {
 }
 
 type ExploreResponse struct {
-	Origin   string   `json:"origin"`
-	Origins  []string `json:"origins,omitempty"`
-	MaxHops  int      `json:"maxHops"`
-	MaxPrice float64  `json:"maxPrice"`
-	DateFrom string   `json:"dateFrom,omitempty"`
-	DateTo   string   `json:"dateTo,omitempty"`
-	Limit    int      `json:"limit"`
-	Source   string   `json:"source"`
+	Origin          string   `json:"origin"`
+	Origins         []string `json:"origins,omitempty"`
+	MaxHops         int      `json:"maxHops"`
+	MaxPrice        float64  `json:"maxPrice"`
+	DateFrom        string   `json:"dateFrom,omitempty"`
+	DateTo          string   `json:"dateTo,omitempty"`
+	Limit           int      `json:"limit"`
+	Source          string   `json:"source"`
+	MaxAgeDays      int      `json:"maxAgeDays,omitempty"`
+	TripType        string   `json:"tripType,omitempty"`
+	Airlines        []string `json:"airlines,omitempty"`
+	ExcludeAirlines []string `json:"excludeAirlines,omitempty"`
 
 	Count int           `json:"count"`
 	Edges []ExploreEdge `json:"edges"`
@@ -117,6 +121,19 @@ func GetExplore(neo4jDB db.Neo4jDatabase) gin.HandlerFunc {
 			return
 		}
 
+		maxAgeDays := 0
+		if v := strings.TrimSpace(c.Query("maxAgeDays")); v != "" {
+			if parsed, err := strconv.Atoi(v); err == nil && parsed >= 0 && parsed <= 3650 {
+				maxAgeDays = parsed
+			}
+		}
+
+		tripType := strings.ToLower(strings.TrimSpace(c.Query("tripType")))
+		if tripType != "" && tripType != "one_way" && tripType != "round_trip" && tripType != "unknown" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "tripType must be one of: one_way, round_trip, unknown"})
+			return
+		}
+
 		limit := 500
 		if l := strings.TrimSpace(c.Query("limit")); l != "" {
 			if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 && parsed <= 5000 {
@@ -135,6 +152,20 @@ func GetExplore(neo4jDB db.Neo4jDatabase) gin.HandlerFunc {
 					continue
 				}
 				airlines = append(airlines, code)
+			}
+		}
+
+		var excludeAirlines []string
+		if raw := strings.TrimSpace(c.Query("excludeAirlines")); raw != "" {
+			for _, part := range strings.Split(raw, ",") {
+				code := strings.ToUpper(strings.TrimSpace(part))
+				if code == "" {
+					continue
+				}
+				if len(code) > 8 {
+					continue
+				}
+				excludeAirlines = append(excludeAirlines, code)
 			}
 		}
 
@@ -178,6 +209,9 @@ func GetExplore(neo4jDB db.Neo4jDatabase) gin.HandlerFunc {
 					  AND ($dateFrom = '' OR r.date >= date($dateFrom))
 					  AND ($dateTo = '' OR r.date <= date($dateTo))
 					  AND (size($airlines) = 0 OR r.airline IN $airlines)
+					  AND (size($excludeAirlines) = 0 OR NOT r.airline IN $excludeAirlines)
+					  AND ($maxAgeDays = 0 OR coalesce(r.last_seen_at, r.first_seen_at, datetime({epochMillis: 0})) >= datetime() - duration({days: $maxAgeDays}))
+					  AND ($tripType = '' OR coalesce(r.trip_type, 'unknown') = $tripType)
 				  )
 				WITH a, b,
 				     reduce(total = 0.0, r IN relationships(path) | total + toFloat(r.price)) AS totalPrice,
@@ -201,12 +235,15 @@ func GetExplore(neo4jDB db.Neo4jDatabase) gin.HandlerFunc {
 		}
 
 		result, err := neo4jDB.ExecuteReadQuery(c.Request.Context(), query, map[string]interface{}{
-			"origins":  origins,
-			"maxPrice": maxPrice,
-			"dateFrom": dateFrom,
-			"dateTo":   dateTo,
-			"airlines": airlines,
-			"limit":    limit,
+			"origins":         origins,
+			"maxPrice":        maxPrice,
+			"dateFrom":        dateFrom,
+			"dateTo":          dateTo,
+			"airlines":        airlines,
+			"limit":           limit,
+			"maxAgeDays":      maxAgeDays,
+			"tripType":        tripType,
+			"excludeAirlines": excludeAirlines,
 		})
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -274,16 +311,20 @@ func GetExplore(neo4jDB db.Neo4jDatabase) gin.HandlerFunc {
 		}
 
 		c.JSON(http.StatusOK, ExploreResponse{
-			Origin:   origin,
-			Origins:  origins,
-			MaxHops:  maxHops,
-			MaxPrice: maxPrice,
-			DateFrom: dateFrom,
-			DateTo:   dateTo,
-			Limit:    limit,
-			Source:   source,
-			Count:    len(edges),
-			Edges:    edges,
+			Origin:          origin,
+			Origins:         origins,
+			MaxHops:         maxHops,
+			MaxPrice:        maxPrice,
+			DateFrom:        dateFrom,
+			DateTo:          dateTo,
+			Limit:           limit,
+			Source:          source,
+			MaxAgeDays:      maxAgeDays,
+			TripType:        tripType,
+			Airlines:        airlines,
+			ExcludeAirlines: excludeAirlines,
+			Count:           len(edges),
+			Edges:           edges,
 		})
 	}
 }
