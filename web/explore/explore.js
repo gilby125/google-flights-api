@@ -642,15 +642,20 @@ async function onSelectRoute(origin, destCode) {
     const note = String(stats.note || "").trim();
     const routeEdges = Number(stats.route_edges || 0);
 
-    const openMin = buildSearchUrl(origin, destCode, {
+    const openOneWay = buildSearchUrl(origin, destCode, {
+      departureDate: minDate || undefined,
+      tripType: "one_way",
+    });
+    const openRoundTrip = buildSearchUrl(origin, destCode, {
       departureDate: minDate || undefined,
       returnDate: minReturnDate || undefined,
-      tripType: minTripType === "round_trip" ? "round_trip" : "one_way",
+      tripType: "round_trip",
     });
+
     const googleMin = buildGoogleFlightsUrl(origin, destCode, {
       departureDate: minDate || undefined,
       returnDate: minReturnDate || undefined,
-      tripType: minTripType === "round_trip" ? "round_trip" : "one_way",
+      tripType: minTripType === "round_trip" && minReturnDate ? "round_trip" : "one_way",
     });
 
     const airlines = Array.isArray(stats.airlines) ? stats.airlines.filter(Boolean).slice(0, 12).join(", ") : "";
@@ -694,17 +699,23 @@ async function onSelectRoute(origin, destCode) {
         ? `<div class="mt-1"><span class="miniHelp">No date-specific samples for this route yet.</span></div>`
         : "";
 
+    const unknownTripNote =
+      source === "price_point" && (!minTripType || minTripType === "unknown")
+        ? `<div class="mt-1"><span class="miniHelp">Trip type is <code>unknown</code> because these Neo4j PRICE_POINT rows don’t have <code>trip_type</code>/<code>return_date</code> populated yet.</span></div>`
+        : "";
     const noteLine = note ? `<div class="mt-1"><span class="miniHelp">${escapeHtml(note)}</span></div>` : "";
 
     const html = `
       <div><strong>${escapeHtml(origin)} → ${escapeHtml(destCode)}</strong></div>
       <div class="mt-2 d-flex flex-wrap gap-2">
-        <a class="btn btn-sm btn-outline-light" href="${escapeHtml(openMin)}">Open min fare</a>
+        <a class="btn btn-sm btn-outline-light" href="${escapeHtml(openOneWay)}">Open one-way</a>
+        <a class="btn btn-sm btn-outline-light" href="${escapeHtml(openRoundTrip)}">Open round-trip</a>
         <a class="btn btn-sm btn-outline-secondary" href="${escapeHtml(googleMin)}" target="_blank" rel="noreferrer">Google Flights</a>
       </div>
       <div class="mt-1">Min: <code>${escapeHtml(formatUSD(stats.min_price))}</code> • Avg: <code>${escapeHtml(formatUSD(stats.avg_price))}</code> • Max: <code>${escapeHtml(formatUSD(stats.max_price))}</code></div>
       ${minDetailsLine}
       ${observedLine}
+      ${unknownTripNote}
       ${noteLine}
       ${airlines ? `<div class="mt-1">Airlines: <code>${escapeHtml(airlines)}</code></div>` : "" }
       ${
