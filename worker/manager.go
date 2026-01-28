@@ -835,6 +835,18 @@ func (m *Manager) processJob(ctx context.Context, worker *Worker, queueName stri
 
 		return m.processPriceGraphSweep(ctx, worker, session, payload)
 	case "continuous_price_graph":
+		// If the sweep is stopped in DB, do not keep running continuous_price_graph jobs in the background.
+		// ACKing is intentional: these jobs only exist to serve the continuous sweep.
+		if m.postgresDB != nil {
+			checkCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			progress, err := m.postgresDB.GetContinuousSweepProgress(checkCtx)
+			cancel()
+			if err == nil && progress != nil && !progress.IsRunning {
+				log.Printf("Skipping continuous_price_graph job %s: sweep is stopped in DB", job.ID)
+				return nil
+			}
+		}
+
 		session, err := m.getFlightSession("price_graph")
 		if err != nil {
 			return fmt.Errorf("failed to get flight session: %w", err)

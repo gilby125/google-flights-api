@@ -17,6 +17,8 @@ func TestStopContinuousSweep_UsesControlFlagsUpdate(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	mockDB := new(mocks.MockPostgresDB)
+	mockQueue := new(mocks.MockQueue)
+	workerManager := newWorkerManagerForTests(mockQueue, mockDB)
 
 	mockDB.
 		On(
@@ -33,8 +35,11 @@ func TestStopContinuousSweep_UsesControlFlagsUpdate(t *testing.T) {
 		Return(&db.ContinuousSweepProgress{ID: 1, IsRunning: false, IsPaused: false}, nil).
 		Once()
 
+	mockQueue.On("CancelProcessing", mock.Anything, "continuous_price_graph").Return(int64(2), nil).Once()
+	mockQueue.On("ClearQueue", mock.Anything, "continuous_price_graph").Return(int64(0), nil).Once()
+
 	router := gin.New()
-	router.POST("/admin/continuous-sweep/stop", stopContinuousSweep(nil, mockDB))
+	router.POST("/admin/continuous-sweep/stop", stopContinuousSweep(workerManager, mockDB))
 
 	rec := httptest.NewRecorder()
 	req, _ := http.NewRequest(http.MethodPost, "/admin/continuous-sweep/stop", nil)
@@ -43,5 +48,6 @@ func TestStopContinuousSweep_UsesControlFlagsUpdate(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 
 	mockDB.AssertExpectations(t)
+	mockQueue.AssertExpectations(t)
 	mockDB.AssertNotCalled(t, "SaveContinuousSweepProgress", mock.Anything, mock.Anything)
 }

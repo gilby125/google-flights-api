@@ -4454,8 +4454,29 @@ func stopContinuousSweep(workerManager *worker.Manager, pgDB db.PostgresDB) gin.
 			}
 		}
 
+		drainResult := gin.H{}
+		if workerManager != nil {
+			if q := workerManager.GetQueue(); q != nil {
+				// When the sweep is stopped, we don't want the continuous queue to keep running in the background.
+				// Best-effort: cancel in-flight jobs and clear pending.
+				canceled, cancelErr := q.CancelProcessing(c.Request.Context(), "continuous_price_graph")
+				if cancelErr != nil {
+					drainResult["error"] = cancelErr.Error()
+				} else {
+					drainResult["canceled_processing"] = canceled
+				}
+				cleared, clearErr := q.ClearQueue(c.Request.Context(), "continuous_price_graph")
+				if clearErr != nil {
+					drainResult["error"] = clearErr.Error()
+				} else {
+					drainResult["cleared_pending"] = cleared
+				}
+			}
+		}
+
 		c.JSON(http.StatusOK, gin.H{
 			"message": "Continuous sweep stopped",
+			"drain":   drainResult,
 			"status": func() any {
 				if workerManager == nil {
 					return nil
