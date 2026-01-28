@@ -1220,9 +1220,20 @@ func (m *Manager) processBulkSearch(ctx context.Context, worker *Worker, session
 	flightClass := parseClass(payload.Class)
 	flightStops := parseStops(payload.Stops)
 
-	totalRoutes := len(payload.Origins) * len(payload.Destinations)
+	destSet := make(map[string]struct{}, len(payload.Destinations))
+	for _, d := range payload.Destinations {
+		destSet[d] = struct{}{}
+	}
+	selfRoutes := 0
+	for _, o := range payload.Origins {
+		if _, ok := destSet[o]; ok {
+			selfRoutes++
+		}
+	}
+
+	totalRoutes := len(payload.Origins)*len(payload.Destinations) - selfRoutes
 	if totalRoutes == 0 {
-		return fmt.Errorf("bulk search payload requires at least one origin and destination combination")
+		return fmt.Errorf("bulk search payload requires at least one origin and destination combination (origin != destination)")
 	}
 
 	var bulkSearchID int
@@ -1252,8 +1263,8 @@ func (m *Manager) processBulkSearch(ctx context.Context, worker *Worker, session
 	}()
 
 	// Process all origin/destination combinations to find lowest fares
-	log.Printf("Starting bulk search: %d origins × %d destinations = %d route combinations",
-		len(payload.Origins), len(payload.Destinations), totalRoutes)
+	log.Printf("Starting bulk search: %d origins × %d destinations = %d route combinations (skipped %d self-routes)",
+		len(payload.Origins), len(payload.Destinations), totalRoutes, selfRoutes)
 
 	// Calculate date range for searches
 	dateRange := m.generateDateRange(payload.DepartureDateFrom, payload.DepartureDateTo, payload.TripLength)
@@ -1277,6 +1288,9 @@ func (m *Manager) processBulkSearch(ctx context.Context, worker *Worker, session
 
 	for _, origin := range payload.Origins {
 		for _, destination := range payload.Destinations {
+			if origin == destination {
+				continue
+			}
 			routeKey := fmt.Sprintf("%s-%s", origin, destination)
 			log.Printf("Processing route: %s", routeKey)
 
@@ -1652,9 +1666,20 @@ func (m *Manager) processBulkSearchCheapFirst(ctx context.Context, worker *Worke
 		return fmt.Errorf("bulk search payload requires at least one destination")
 	}
 
-	totalRoutes := len(payload.Origins) * len(payload.Destinations)
-	log.Printf("[BulkSearchCoordinator] Starting fan-out: %d origins × %d destinations = %d routes",
-		len(payload.Origins), len(payload.Destinations), totalRoutes)
+	destSet := make(map[string]struct{}, len(payload.Destinations))
+	for _, d := range payload.Destinations {
+		destSet[d] = struct{}{}
+	}
+	selfRoutes := 0
+	for _, o := range payload.Origins {
+		if _, ok := destSet[o]; ok {
+			selfRoutes++
+		}
+	}
+
+	totalRoutes := len(payload.Origins)*len(payload.Destinations) - selfRoutes
+	log.Printf("[BulkSearchCoordinator] Starting fan-out: %d origins × %d destinations = %d routes (skipped %d self-routes)",
+		len(payload.Origins), len(payload.Destinations), totalRoutes, selfRoutes)
 
 	// Create or get bulk search record
 	var bulkSearchID int
@@ -1687,6 +1712,9 @@ func (m *Manager) processBulkSearchCheapFirst(ctx context.Context, worker *Worke
 	enqueuedCount := 0
 	for _, origin := range payload.Origins {
 		for _, destination := range payload.Destinations {
+			if origin == destination {
+				continue
+			}
 			routePayload := BulkSearchRoutePayload{
 				BulkSearchID:      bulkSearchID,
 				TotalRoutes:       totalRoutes,
@@ -1766,6 +1794,12 @@ func (m *Manager) processBulkSearchRoute(ctx context.Context, worker *Worker, se
 	origin := payload.Origin
 	destination := payload.Destination
 	routeKey := fmt.Sprintf("%s-%s", origin, destination)
+
+	if origin == destination {
+		log.Printf("[BulkSearchRoute] Skipping self-route %s for bulk_search %d", routeKey, payload.BulkSearchID)
+		m.finalizeBulkSearchRouteIfComplete(ctx, payload.BulkSearchID)
+		return nil
+	}
 
 	log.Printf("[BulkSearchRoute] Processing route %s for bulk_search %d", routeKey, payload.BulkSearchID)
 

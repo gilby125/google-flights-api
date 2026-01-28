@@ -2256,13 +2256,30 @@ func CreateBulkSearch(q queue.Queue, pgDB db.PostgresDB, workerManager *worker.M
 			warnings = append(warnings, fmt.Sprintf("%s expanded to %d airports", macros.RegionWorldAll, worldAllCount))
 		}
 
-		totalRoutes := len(expandedOrigins) * len(expandedDestinations)
+		// Never schedule origin==destination routes.
+		// For region<>region searches (e.g. CARIBBEAN<>CARIBBEAN) this prevents N self-routes (A->A),
+		// which are never useful and can add significant work.
+		destSet := make(map[string]struct{}, len(expandedDestinations))
+		for _, d := range expandedDestinations {
+			destSet[d] = struct{}{}
+		}
+		selfRoutes := 0
+		for _, o := range expandedOrigins {
+			if _, ok := destSet[o]; ok {
+				selfRoutes++
+			}
+		}
+
+		totalRoutes := len(expandedOrigins)*len(expandedDestinations) - selfRoutes
 		if totalRoutes == 0 {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error":    "At least one origin and one destination are required (after REGION:* expansion)",
+				"error":    "At least one non-self route is required (origin != destination after REGION:* expansion)",
 				"warnings": warnings,
 			})
 			return
+		}
+		if selfRoutes > 0 {
+			warnings = append(warnings, fmt.Sprintf("skipped %d origin==destination route(s)", selfRoutes))
 		}
 
 		// Guard against accidental workload explosion from region tokens
@@ -2451,7 +2468,7 @@ func updateJob(pgDB db.PostgresDB, workerManager *worker.Manager) gin.HandlerFun
 func GetQueueStatus(q queue.Queue) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Get stats for all queue types
-		queueTypes := []string{"flight_search", "bulk_search", "price_graph_sweep", "continuous_price_graph"}
+		queueTypes := []string{"flight_search", "bulk_search", "bulk_search_route", "price_graph_sweep", "continuous_price_graph"}
 		allStats := make(map[string]map[string]int64)
 
 		for _, queueType := range queueTypes {
@@ -2469,7 +2486,7 @@ func GetQueueStatus(q queue.Queue) gin.HandlerFunc {
 
 func isAllowedQueueName(queueName string) bool {
 	switch queueName {
-	case "flight_search", "bulk_search", "price_graph_sweep", "continuous_price_graph":
+	case "flight_search", "bulk_search", "bulk_search_route", "price_graph_sweep", "continuous_price_graph":
 		return true
 	default:
 		return false

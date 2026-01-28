@@ -357,6 +357,66 @@ func TestCreateBulkSearch_Success(t *testing.T) {
 	mockPostgres.AssertExpectations(t)
 }
 
+func TestCreateBulkSearch_SkipsSelfRoutesInTotal(t *testing.T) {
+	// Arrange
+	mockQueue := new(mocks.Queue)
+	mockPostgres := new(mocks.MockPostgresDB)
+	router := setupRouter()
+	router.POST("/bulk-search", api.CreateBulkSearch(mockQueue, mockPostgres, nil))
+
+	bulkReq := api.BulkSearchRequest{
+		Origins:           []string{"SJU", "STT"},
+		Destinations:      []string{"SJU", "ANU"},
+		DepartureDateFrom: dateOnly(time.Now().AddDate(0, 1, 0)),
+		DepartureDateTo:   dateOnly(time.Now().AddDate(0, 1, 0)),
+		Adults:            1,
+		TripType:          "one_way",
+		Class:             "economy",
+		Stops:             "any",
+		Currency:          "USD",
+	}
+	expectedJobID := "bulk-job-xyz"
+	createdBulkSearchID := 321
+
+	// total routes = 2*2 minus intersection {"SJU"} => 3
+	totalRoutes := 3
+	expectedPayload := worker.BulkSearchPayload{
+		Origins:           bulkReq.Origins,
+		Destinations:      bulkReq.Destinations,
+		DepartureDateFrom: bulkReq.DepartureDateFrom.Time,
+		DepartureDateTo:   bulkReq.DepartureDateTo.Time,
+		ReturnDateFrom:    bulkReq.ReturnDateFrom.Time,
+		ReturnDateTo:      bulkReq.ReturnDateTo.Time,
+		TripLength:        bulkReq.TripLength,
+		Adults:            bulkReq.Adults,
+		Children:          bulkReq.Children,
+		InfantsLap:        bulkReq.InfantsLap,
+		InfantsSeat:       bulkReq.InfantsSeat,
+		TripType:          bulkReq.TripType,
+		Class:             bulkReq.Class,
+		Stops:             bulkReq.Stops,
+		Currency:          strings.ToUpper(bulkReq.Currency),
+		BulkSearchID:      createdBulkSearchID,
+	}
+
+	mockPostgres.On("CreateBulkSearchRecord", mock.Anything, mock.Anything, totalRoutes, strings.ToUpper(bulkReq.Currency), "queued").Return(createdBulkSearchID, nil)
+	mockQueue.On("Enqueue", mock.Anything, "bulk_search",
+		mock.MatchedBy(matchBulkSearchPayload(expectedPayload)),
+	).Return(expectedJobID, nil)
+
+	// Act
+	body, _ := json.Marshal(bulkReq)
+	req, _ := http.NewRequest(http.MethodPost, "/bulk-search", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	// Assert
+	assert.Equal(t, http.StatusAccepted, w.Code)
+	mockQueue.AssertExpectations(t)
+	mockPostgres.AssertExpectations(t)
+}
+
 func TestCreateBulkSearch_BindError(t *testing.T) {
 	// Arrange
 	mockQueue := new(mocks.Queue)
@@ -460,12 +520,14 @@ func TestGetQueueStatus_Success(t *testing.T) {
 
 	expectedStatsFS := map[string]int64{"pending": 10, "active": 2}
 	expectedStatsBS := map[string]int64{"pending": 5, "active": 1}
+	expectedStatsBSR := map[string]int64{"pending": 7, "active": 3}
 	expectedStatsPGS := map[string]int64{"pending": 0, "active": 0}
 	expectedStatsCPG := map[string]int64{"pending": 0, "active": 0}
 
 	// Configure mock
 	mockQueue.On("GetQueueStats", mock.Anything, "flight_search").Return(expectedStatsFS, nil)
 	mockQueue.On("GetQueueStats", mock.Anything, "bulk_search").Return(expectedStatsBS, nil)
+	mockQueue.On("GetQueueStats", mock.Anything, "bulk_search_route").Return(expectedStatsBSR, nil)
 	mockQueue.On("GetQueueStats", mock.Anything, "price_graph_sweep").Return(expectedStatsPGS, nil)
 	mockQueue.On("GetQueueStats", mock.Anything, "continuous_price_graph").Return(expectedStatsCPG, nil)
 
@@ -481,6 +543,7 @@ func TestGetQueueStatus_Success(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, expectedStatsFS, response["flight_search"])
 	assert.Equal(t, expectedStatsBS, response["bulk_search"])
+	assert.Equal(t, expectedStatsBSR, response["bulk_search_route"])
 	assert.Equal(t, expectedStatsPGS, response["price_graph_sweep"])
 	assert.Equal(t, expectedStatsCPG, response["continuous_price_graph"])
 	mockQueue.AssertExpectations(t)

@@ -386,6 +386,11 @@ async function runBulkDiagnostics() {
     const processing = Number(bulkQueue?.processing) || 0;
     const failed = Number(bulkQueue?.failed) || 0;
 
+    const bulkRouteQueue = queueStats?.bulk_search_route || null;
+    const routePending = Number(bulkRouteQueue?.pending) || 0;
+    const routeProcessing = Number(bulkRouteQueue?.processing) || 0;
+    const routeFailed = Number(bulkRouteQueue?.failed) || 0;
+
     const contQueue = queueStats?.continuous_price_graph || null;
     const contPending = Number(contQueue?.pending) || 0;
     const contProcessing = Number(contQueue?.processing) || 0;
@@ -422,7 +427,8 @@ async function runBulkDiagnostics() {
 
     elements.asyncBulkDiag.textContent =
       `Workers: ${workerList.length} (running ${running}, idle ${idle}) • ` +
-      `bulk_search queue: pending ${pending}, processing ${processing}, failed ${failed} • ` +
+      `bulk_search: pending ${pending}, processing ${processing}, failed ${failed} • ` +
+      `bulk_search_route: pending ${routePending}, processing ${routeProcessing}, failed ${routeFailed} • ` +
       `continuous_price_graph: pending ${contPending}, processing ${contProcessing}, failed ${contFailed}${sweepLine}${contEnqueueHint}`;
   } catch (err) {
     elements.asyncBulkDiag.textContent = `Diagnostics unavailable: ${err.message}`;
