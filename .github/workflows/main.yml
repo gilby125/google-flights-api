@@ -103,7 +103,8 @@ jobs:
 
     - name: Setup protocol buffer compiler
       env:
-        PROTOC_VERSION: 3.21.12
+        # Protobuf releases use v21.12 tags, but the compiler reports "libprotoc 3.21.12".
+        PROTOC_VERSION: 21.12
       run: |
         curl -sSL -o protoc.zip https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-x86_64.zip
         unzip -o protoc.zip -d "${HOME}/.local"
