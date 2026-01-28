@@ -4225,31 +4225,63 @@ func equalIntSlice(a, b []int) bool {
 	return true
 }
 
+func updateContinuousSweepDBFlags(ctx context.Context, pgDB db.PostgresDB, isRunning, isPaused *bool) (*db.ContinuousSweepProgress, error) {
+	if pgDB == nil {
+		return nil, fmt.Errorf("postgres is not configured")
+	}
+
+	progress, err := pgDB.GetContinuousSweepProgress(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if progress == nil {
+		progress = &db.ContinuousSweepProgress{ID: 1}
+	}
+
+	if isRunning != nil {
+		progress.IsRunning = *isRunning
+	}
+	if isPaused != nil {
+		progress.IsPaused = *isPaused
+	}
+
+	if err := pgDB.SaveContinuousSweepProgress(ctx, *progress); err != nil {
+		return nil, err
+	}
+
+	return progress, nil
+}
+
 // getContinuousSweepStatus returns the current status of the continuous sweep
-func getContinuousSweepStatus(workerManager *worker.Manager) gin.HandlerFunc {
+func getContinuousSweepStatus(workerManager *worker.Manager, pgDB db.PostgresDB) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		out := gin.H{}
+		if pgDB != nil {
+			dbProgress, err := pgDB.GetContinuousSweepProgress(c.Request.Context())
+			if err == nil && dbProgress != nil {
+				out["db"] = dbProgress
+			}
+		}
+
 		if workerManager == nil {
-			c.JSON(http.StatusOK, gin.H{
-				"initialized": false,
-				"message":     "Worker manager not available",
-			})
+			out["initialized"] = false
+			out["message"] = "Worker manager not available"
+			c.JSON(http.StatusOK, out)
 			return
 		}
 
 		runner := workerManager.GetSweepRunner()
 		if runner == nil {
-			c.JSON(http.StatusOK, gin.H{
-				"initialized": false,
-				"message":     "Continuous sweep runner not initialized. Start the sweep first.",
-			})
+			out["initialized"] = false
+			out["message"] = "Continuous sweep runner not initialized in this process."
+			c.JSON(http.StatusOK, out)
 			return
 		}
 
 		status := runner.GetStatus()
-		c.JSON(http.StatusOK, gin.H{
-			"initialized": true,
-			"status":      status,
-		})
+		out["initialized"] = true
+		out["status"] = status
+		c.JSON(http.StatusOK, out)
 	}
 }
 
@@ -4295,52 +4327,83 @@ func startContinuousSweep(workerManager *worker.Manager, pgDB db.PostgresDB, cfg
 }
 
 // stopContinuousSweep stops the continuous sweep process
-func stopContinuousSweep(workerManager *worker.Manager) gin.HandlerFunc {
+func stopContinuousSweep(workerManager *worker.Manager, pgDB db.PostgresDB) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		runner := workerManager.GetSweepRunner()
-		if runner == nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Continuous sweep runner not initialized"})
-			return
+		running := false
+		paused := false
+		_, _ = updateContinuousSweepDBFlags(c.Request.Context(), pgDB, &running, &paused)
+
+		if workerManager != nil {
+			if runner := workerManager.GetSweepRunner(); runner != nil {
+				runner.Stop()
+			}
 		}
 
-		runner.Stop()
 		c.JSON(http.StatusOK, gin.H{
 			"message": "Continuous sweep stopped",
-			"status":  runner.GetStatus(),
+			"status": func() any {
+				if workerManager == nil {
+					return nil
+				}
+				if runner := workerManager.GetSweepRunner(); runner != nil {
+					return runner.GetStatus()
+				}
+				return nil
+			}(),
 		})
 	}
 }
 
 // pauseContinuousSweep pauses the continuous sweep process
-func pauseContinuousSweep(workerManager *worker.Manager) gin.HandlerFunc {
+func pauseContinuousSweep(workerManager *worker.Manager, pgDB db.PostgresDB) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		runner := workerManager.GetSweepRunner()
-		if runner == nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Continuous sweep runner not initialized"})
-			return
+		paused := true
+		_, _ = updateContinuousSweepDBFlags(c.Request.Context(), pgDB, nil, &paused)
+
+		if workerManager != nil {
+			if runner := workerManager.GetSweepRunner(); runner != nil {
+				runner.Pause()
+			}
 		}
 
-		runner.Pause()
 		c.JSON(http.StatusOK, gin.H{
 			"message": "Continuous sweep paused",
-			"status":  runner.GetStatus(),
+			"status": func() any {
+				if workerManager == nil {
+					return nil
+				}
+				if runner := workerManager.GetSweepRunner(); runner != nil {
+					return runner.GetStatus()
+				}
+				return nil
+			}(),
 		})
 	}
 }
 
 // resumeContinuousSweep resumes the continuous sweep process
-func resumeContinuousSweep(workerManager *worker.Manager) gin.HandlerFunc {
+func resumeContinuousSweep(workerManager *worker.Manager, pgDB db.PostgresDB) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		runner := workerManager.GetSweepRunner()
-		if runner == nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Continuous sweep runner not initialized"})
-			return
+		paused := false
+		_, _ = updateContinuousSweepDBFlags(c.Request.Context(), pgDB, nil, &paused)
+
+		if workerManager != nil {
+			if runner := workerManager.GetSweepRunner(); runner != nil {
+				runner.Resume()
+			}
 		}
 
-		runner.Resume()
 		c.JSON(http.StatusOK, gin.H{
 			"message": "Continuous sweep resumed",
-			"status":  runner.GetStatus(),
+			"status": func() any {
+				if workerManager == nil {
+					return nil
+				}
+				if runner := workerManager.GetSweepRunner(); runner != nil {
+					return runner.GetStatus()
+				}
+				return nil
+			}(),
 		})
 	}
 }

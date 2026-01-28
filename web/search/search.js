@@ -281,8 +281,11 @@ async function runBulkDiagnostics() {
 
     let sweepLine = "";
     if (sweepStatus && typeof sweepStatus === "object") {
-      const isRunning = !!sweepStatus?.is_running;
-      const isPaused = !!sweepStatus?.is_paused;
+      const status = sweepStatus?.status || null;
+      const db = sweepStatus?.db || null;
+      const src = status || db || null;
+      const isRunning = !!src?.is_running;
+      const isPaused = !!src?.is_paused;
       sweepLine = ` • continuous sweep: ${isRunning ? (isPaused ? "paused" : "running") : "stopped"}`;
     }
 

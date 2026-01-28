@@ -178,11 +178,11 @@ func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Ne
 			admin.GET("/events", GetAdminEvents(workerManager, redisClient, cfg.WorkerConfig))
 
 			// Continuous sweep endpoints
-			admin.GET("/continuous-sweep/status", getContinuousSweepStatus(workerManager))
+			admin.GET("/continuous-sweep/status", getContinuousSweepStatus(workerManager, postgresDB))
 			admin.POST("/continuous-sweep/start", startContinuousSweep(workerManager, postgresDB, cfg))
-			admin.POST("/continuous-sweep/stop", stopContinuousSweep(workerManager))
-			admin.POST("/continuous-sweep/pause", pauseContinuousSweep(workerManager))
-			admin.POST("/continuous-sweep/resume", resumeContinuousSweep(workerManager))
+			admin.POST("/continuous-sweep/stop", stopContinuousSweep(workerManager, postgresDB))
+			admin.POST("/continuous-sweep/pause", pauseContinuousSweep(workerManager, postgresDB))
+			admin.POST("/continuous-sweep/resume", resumeContinuousSweep(workerManager, postgresDB))
 			admin.PUT("/continuous-sweep/config", updateContinuousSweepConfig(workerManager))
 			admin.POST("/continuous-sweep/skip", skipCurrentRoute(workerManager))
 			admin.POST("/continuous-sweep/restart", restartCurrentSweep(workerManager))

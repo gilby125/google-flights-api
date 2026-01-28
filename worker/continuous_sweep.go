@@ -143,6 +143,22 @@ func (r *ContinuousSweepRunner) Start() error {
 		r.mu.Unlock()
 		return fmt.Errorf("continuous sweep is already running")
 	}
+	r.mu.Unlock()
+
+	// Best-effort global guard: if another instance is actively running and recently updated its heartbeat,
+	// refuse to start a second runner.
+	if r.postgresDB != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		progress, err := r.postgresDB.GetContinuousSweepProgress(ctx)
+		cancel()
+		if err == nil && progress != nil && progress.IsRunning {
+			if !progress.LastUpdated.IsZero() && time.Since(progress.LastUpdated) < 10*time.Minute {
+				return fmt.Errorf("continuous sweep appears to be running elsewhere (last_updated=%s)", progress.LastUpdated.Format(time.RFC3339))
+			}
+		}
+	}
+
+	r.mu.Lock()
 
 	// Create long-lived context (not tied to HTTP request)
 	baseCtx := queue.WithEnqueueMeta(context.Background(), queue.EnqueueMeta{Actor: "continuous_sweep"})
@@ -168,6 +184,39 @@ func (r *ContinuousSweepRunner) Start() error {
 
 	go r.run(r.ctx)
 	return nil
+}
+
+func (r *ContinuousSweepRunner) syncControlFromDB(ctx context.Context) (stop bool) {
+	if r.postgresDB == nil {
+		return false
+	}
+
+	checkCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	progress, err := r.postgresDB.GetContinuousSweepProgress(checkCtx)
+	cancel()
+	if err != nil || progress == nil {
+		return false
+	}
+
+	if !progress.IsRunning {
+		return true
+	}
+
+	r.mu.Lock()
+	wasPaused := r.isPaused
+	r.isPaused = progress.IsPaused
+	resumeCh := r.resumeCh
+	r.mu.Unlock()
+
+	// If we were paused and DB says resume, poke the channel so the pause select unblocks quickly.
+	if wasPaused && !progress.IsPaused && resumeCh != nil {
+		select {
+		case resumeCh <- struct{}{}:
+		default:
+		}
+	}
+
+	return false
 }
 
 // Stop gracefully stops the continuous sweep
@@ -392,8 +441,18 @@ func (r *ContinuousSweepRunner) run(ctx context.Context) {
 	r.startTime = time.Now()
 	lastProgressSave := time.Now()
 	lastActivityTime := time.Now()
+	lastControlSync := time.Time{}
 
 	for {
+		if lastControlSync.IsZero() || time.Since(lastControlSync) > 5*time.Second {
+			lastControlSync = time.Now()
+			if r.syncControlFromDB(ctx) {
+				log.Println("Continuous sweep stopped: external stop requested")
+				r.Stop()
+				return
+			}
+		}
+
 		select {
 		case <-ctx.Done():
 			log.Println("Continuous sweep stopped: context cancelled")
