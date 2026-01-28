@@ -32,6 +32,7 @@ type ExploreResponse struct {
 	DateFrom string  `json:"dateFrom,omitempty"`
 	DateTo   string  `json:"dateTo,omitempty"`
 	Limit    int     `json:"limit"`
+	Source   string  `json:"source"`
 
 	Count int           `json:"count"`
 	Edges []ExploreEdge `json:"edges"`
@@ -77,6 +78,19 @@ func GetExplore(neo4jDB db.Neo4jDatabase) gin.HandlerFunc {
 		dateFrom := strings.TrimSpace(c.Query("dateFrom"))
 		dateTo := strings.TrimSpace(c.Query("dateTo"))
 
+		source := strings.ToLower(strings.TrimSpace(c.Query("source")))
+		if source == "" {
+			source = "price_point"
+		}
+		if source != "price_point" && source != "route" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "source must be one of: price_point, route"})
+			return
+		}
+		if source == "route" && (dateFrom != "" || dateTo != "") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "dateFrom/dateTo are only supported with source=price_point"})
+			return
+		}
+
 		limit := 500
 		if l := strings.TrimSpace(c.Query("limit")); l != "" {
 			if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 && parsed <= 5000 {
@@ -98,38 +112,69 @@ func GetExplore(neo4jDB db.Neo4jDatabase) gin.HandlerFunc {
 			}
 		}
 
-		query := `
-			MATCH path = (a:Airport {code: $origin})-[:PRICE_POINT*1..$maxHops]->(b:Airport)
-			WHERE a <> b
-			  AND all(r IN relationships(path)
-				WHERE r.price IS NOT NULL AND toFloat(r.price) > 0
-				  AND ($dateFrom = '' OR r.date >= date($dateFrom))
-				  AND ($dateTo = '' OR r.date <= date($dateTo))
-				  AND (size($airlines) = 0 OR r.airline IN $airlines)
-			  )
-			WITH a, b,
-			     reduce(total = 0.0, r IN relationships(path) | total + toFloat(r.price)) AS totalPrice,
-			     length(path) AS hops
-			WHERE totalPrice <= $maxPrice
-			RETURN
-				a.code AS originCode,
-				coalesce(a.latitude, 0.0) AS originLat,
-				coalesce(a.longitude, 0.0) AS originLon,
-				b.code AS destCode,
-				coalesce(b.name, '') AS destName,
-				coalesce(b.city, '') AS destCity,
-				coalesce(b.country, '') AS destCountry,
-				coalesce(b.latitude, 0.0) AS destLat,
-				coalesce(b.longitude, 0.0) AS destLon,
-				min(totalPrice) AS cheapestPrice,
-				min(hops) AS hops
-			ORDER BY cheapestPrice
-			LIMIT $limit
-		`
+		query := ""
+		switch source {
+		case "route":
+			query = `
+				MATCH path = (a:Airport {code: $origin})-[:ROUTE*1..%d]->(b:Airport)
+				WHERE a <> b
+				  AND all(r IN relationships(path)
+					WHERE r.avgPrice IS NOT NULL AND toFloat(r.avgPrice) > 0
+					  AND (size($airlines) = 0 OR r.airline IN $airlines)
+				  )
+				WITH a, b,
+				     reduce(total = 0.0, r IN relationships(path) | total + toFloat(r.avgPrice)) AS totalPrice,
+				     length(path) AS hops
+				WHERE totalPrice <= $maxPrice
+				RETURN
+					a.code AS originCode,
+					coalesce(a.latitude, 0.0) AS originLat,
+					coalesce(a.longitude, 0.0) AS originLon,
+					b.code AS destCode,
+					coalesce(b.name, '') AS destName,
+					coalesce(b.city, '') AS destCity,
+					coalesce(b.country, '') AS destCountry,
+					coalesce(b.latitude, 0.0) AS destLat,
+					coalesce(b.longitude, 0.0) AS destLon,
+					min(totalPrice) AS cheapestPrice,
+					min(hops) AS hops
+				ORDER BY cheapestPrice
+				LIMIT $limit
+			`
+		default: // price_point
+			query = `
+				MATCH path = (a:Airport {code: $origin})-[:PRICE_POINT*1..%d]->(b:Airport)
+				WHERE a <> b
+				  AND all(r IN relationships(path)
+					WHERE r.price IS NOT NULL AND toFloat(r.price) > 0
+					  AND ($dateFrom = '' OR r.date >= date($dateFrom))
+					  AND ($dateTo = '' OR r.date <= date($dateTo))
+					  AND (size($airlines) = 0 OR r.airline IN $airlines)
+				  )
+				WITH a, b,
+				     reduce(total = 0.0, r IN relationships(path) | total + toFloat(r.price)) AS totalPrice,
+				     length(path) AS hops
+				WHERE totalPrice <= $maxPrice
+				RETURN
+					a.code AS originCode,
+					coalesce(a.latitude, 0.0) AS originLat,
+					coalesce(a.longitude, 0.0) AS originLon,
+					b.code AS destCode,
+					coalesce(b.name, '') AS destName,
+					coalesce(b.city, '') AS destCity,
+					coalesce(b.country, '') AS destCountry,
+					coalesce(b.latitude, 0.0) AS destLat,
+					coalesce(b.longitude, 0.0) AS destLon,
+					min(totalPrice) AS cheapestPrice,
+					min(hops) AS hops
+				ORDER BY cheapestPrice
+				LIMIT $limit
+			`
+		}
+		query = sprintfWithMaxHops(query, maxHops)
 
 		result, err := neo4jDB.ExecuteReadQuery(c.Request.Context(), query, map[string]interface{}{
 			"origin":   origin,
-			"maxHops":  maxHops,
 			"maxPrice": maxPrice,
 			"dateFrom": dateFrom,
 			"dateTo":   dateTo,
@@ -208,8 +253,19 @@ func GetExplore(neo4jDB db.Neo4jDatabase) gin.HandlerFunc {
 			DateFrom: dateFrom,
 			DateTo:   dateTo,
 			Limit:    limit,
+			Source:   source,
 			Count:    len(edges),
 			Edges:    edges,
 		})
 	}
+}
+
+func sprintfWithMaxHops(query string, maxHops int) string {
+	// Avoid importing fmt in this file unless needed elsewhere.
+	// This is a tiny helper to keep the handler readable.
+	const placeholder = "%d"
+	if !strings.Contains(query, placeholder) {
+		return query
+	}
+	return strings.Replace(query, placeholder, strconv.Itoa(maxHops), 1)
 }
