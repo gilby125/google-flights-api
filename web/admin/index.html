@@ -388,8 +388,43 @@
                     >
                       <i class="bi bi-hourglass display-4 d-block mb-2"></i>
                       <p>Sweep not running. Click Start to begin.</p>
+                      <div
+                        id="sweepDbStatusNotReady"
+                        class="small text-muted mt-3"
+                        style="display: none"
+                      >
+                        <div><strong>DB control:</strong> <span id="sweepDbControlTextNotReady">-</span></div>
+                        <div><strong>DB last updated:</strong> <span id="sweepDbLastUpdatedNotReady">-</span></div>
+                      </div>
                     </div>
                     <div id="sweepStatusContent" style="display: none">
+                      <div
+                        id="sweepDbMismatchWarning"
+                        class="alert alert-warning py-2 mb-3"
+                        style="display: none"
+                      >
+                        <small>
+                          <strong>State mismatch:</strong>
+                          runner and DB disagree. Use DB control state as source of truth for STOP/PAUSE.
+                        </small>
+                      </div>
+                      <div
+                        id="sweepDbStaleWarning"
+                        class="alert alert-warning py-2 mb-3"
+                        style="display: none"
+                      >
+                        <small>
+                          <strong>DB heartbeat stale:</strong>
+                          DB says sweep is running, but last update is old. The runner may be down or stuck.
+                        </small>
+                      </div>
+                      <div class="mb-3">
+                        <small class="text-muted">DB Control</small>
+                        <div class="d-flex justify-content-between align-items-center">
+                          <div id="sweepDbControlText">-</div>
+                          <small class="text-muted" id="sweepDbLastUpdated">-</small>
+                        </div>
+                      </div>
                       <div class="mb-3">
                         <small class="text-muted">Status</small>
                         <div class="d-flex align-items-center">

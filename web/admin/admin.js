@@ -1852,20 +1852,23 @@ async function loadContinuousSweepStatus() {
     }
 
     const body = await response.json();
+    // Always render DB control state if present (even when the runner isn't initialized in this process).
+    updateSweepDbControlUI(body?.db ?? null);
+
     if (!body || body.initialized === false) {
       showSweepNotReady();
       return;
     }
 
     const status = body.status ?? body;
-    updateSweepStatusUI(status);
+    updateSweepStatusUI(status, body?.db ?? null);
   } catch (error) {
     console.error("Error loading sweep status:", error);
   }
 }
 
 // Update sweep status UI
-function updateSweepStatusUI(status) {
+function updateSweepStatusUI(status, dbProgress) {
   const notReady = document.getElementById("sweepStatusNotReady");
   const content = document.getElementById("sweepStatusContent");
 
@@ -1873,6 +1876,8 @@ function updateSweepStatusUI(status) {
     showSweepNotReady();
     return;
   }
+
+  updateSweepDbControlUI(dbProgress, status);
 
   // Show status content
   if (notReady) notReady.style.display = "none";
@@ -1982,6 +1987,68 @@ function updateSweepStatusUI(status) {
 
   // Sync config inputs without overwriting in-progress edits.
   syncSweepConfigFormFromStatus(status);
+}
+
+function updateSweepDbControlUI(dbProgress, runnerStatus) {
+  const controlText =
+    document.getElementById("sweepDbControlText") ||
+    document.getElementById("sweepDbControlTextNotReady");
+  const lastUpdatedEl =
+    document.getElementById("sweepDbLastUpdated") ||
+    document.getElementById("sweepDbLastUpdatedNotReady");
+  const notReadyContainer = document.getElementById("sweepDbStatusNotReady");
+  const mismatchWarning = document.getElementById("sweepDbMismatchWarning");
+  const staleWarning = document.getElementById("sweepDbStaleWarning");
+
+  if (!dbProgress) {
+    if (notReadyContainer) notReadyContainer.style.display = "none";
+    if (controlText) controlText.textContent = "-";
+    if (lastUpdatedEl) lastUpdatedEl.textContent = "-";
+    if (mismatchWarning) mismatchWarning.style.display = "none";
+    if (staleWarning) staleWarning.style.display = "none";
+    return;
+  }
+
+  if (notReadyContainer) notReadyContainer.style.display = "block";
+
+  const running = !!dbProgress.is_running;
+  const paused = !!dbProgress.is_paused;
+  const stateLabel = !running ? "Stopped" : paused ? "Paused" : "Running";
+
+  if (controlText) {
+    controlText.textContent = `${stateLabel} (DB)`;
+  }
+
+  let ageSec = null;
+  if (lastUpdatedEl) {
+    if (dbProgress.last_updated) {
+      const last = new Date(dbProgress.last_updated);
+      ageSec = Math.max(0, Math.round((Date.now() - last.getTime()) / 1000));
+      lastUpdatedEl.textContent = `${last.toLocaleString()} • ${ageSec}s ago`;
+    } else {
+      lastUpdatedEl.textContent = "-";
+    }
+  }
+
+  if (mismatchWarning) {
+    if (
+      runnerStatus &&
+      (String(runnerStatus.is_running) !== String(running) ||
+        String(runnerStatus.is_paused) !== String(paused))
+    ) {
+      mismatchWarning.style.display = "block";
+    } else {
+      mismatchWarning.style.display = "none";
+    }
+  }
+
+  if (staleWarning) {
+    if (running && ageSec != null && ageSec > 90) {
+      staleWarning.style.display = "block";
+    } else {
+      staleWarning.style.display = "none";
+    }
+  }
 }
 
 // Show sweep not ready state
