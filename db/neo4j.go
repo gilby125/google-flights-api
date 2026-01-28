@@ -480,13 +480,12 @@ func (n *Neo4jDB) GetRouteStats(ctx context.Context, origin, dest string) (*Rout
 
 	query := `
 		MATCH (a:Airport {code: $origin})-[r:PRICE_POINT]->(b:Airport {code: $dest})
-		WITH a, b, collect(r) AS pricePoints
 		RETURN a.code AS origin, b.code AS destination,
-		       min([p IN pricePoints | p.price]) AS minPrice,
-		       max([p IN pricePoints | p.price]) AS maxPrice,
-		       avg([p IN pricePoints | p.price]) AS avgPrice,
-		       size(pricePoints) AS pricePointCount,
-		       [p IN pricePoints | p.airline] AS airlines
+		       min(toFloat(r.price)) AS minPrice,
+		       max(toFloat(r.price)) AS maxPrice,
+		       avg(toFloat(r.price)) AS avgPrice,
+		       count(r) AS pricePointCount,
+		       collect(DISTINCT r.airline) AS airlines
 	`
 
 	result, err := session.Run(query, map[string]interface{}{
