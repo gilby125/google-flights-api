@@ -1637,6 +1637,13 @@ function displayMultiRouteResults(searchResult) {
     const destB = String(b?.destination || "");
     return destA.localeCompare(destB);
   });
+
+  if (!currentRoutes.length) {
+    elements.flightResults.innerHTML +=
+      '<div class="alert alert-info">No flights found matching your criteria.</div>';
+    return;
+  }
+
   let cheapest = null;
   if (
     searchResult?.cheapest?.offer &&
@@ -1674,12 +1681,6 @@ function displayMultiRouteResults(searchResult) {
     note.textContent =
       "Select a route tab to load full offers. Results are arriving as the bulk search runs.";
     elements.flightResults.appendChild(note);
-  }
-
-  if (!currentRoutes.length) {
-    elements.flightResults.innerHTML +=
-      '<div class="alert alert-info">No flights found matching your criteria.</div>';
-    return;
   }
 
   const tabsNav = document.createElement("ul");
