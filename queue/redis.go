@@ -115,6 +115,13 @@ type RedisQueue struct {
 	lastAutoClaimID map[string]string
 }
 
+type ContinuousSweepControl struct {
+	IsRunning   bool      `json:"is_running"`
+	IsPaused    bool      `json:"is_paused"`
+	LastUpdated time.Time `json:"last_updated"`
+	Source      string    `json:"source"` // e.g. "redis"
+}
+
 // NewRedisQueue creates a new Redis-backed queue
 func NewRedisQueue(cfg config.RedisConfig) (*RedisQueue, error) {
 	client := redis.NewClient(&redis.Options{
@@ -974,4 +981,101 @@ func (q *RedisQueue) recordEnqueueMetric(ctx context.Context, queueName string, 
 // GetClient returns the underlying Redis client for advanced operations like distributed locking
 func (q *RedisQueue) GetClient() *redis.Client {
 	return q.client
+}
+
+func (q *RedisQueue) continuousSweepControlKey() string {
+	prefix := strings.TrimSpace(q.cfg.QueueStreamPrefix)
+	if prefix == "" {
+		prefix = "flights"
+	}
+	return fmt.Sprintf("%s:continuous_sweep:control", prefix)
+}
+
+// SetContinuousSweepControlFlags persists continuous sweep control flags in Redis.
+// This is a fallback control plane for environments where Postgres is unavailable/misconfigured.
+func (q *RedisQueue) SetContinuousSweepControlFlags(ctx context.Context, isRunning, isPaused *bool) (*ContinuousSweepControl, error) {
+	if isRunning == nil && isPaused == nil {
+		return nil, fmt.Errorf("no control flags provided")
+	}
+
+	now := time.Now().UTC()
+	key := q.continuousSweepControlKey()
+	fields := map[string]any{
+		"last_updated": now.Format(time.RFC3339Nano),
+	}
+	if isRunning != nil {
+		fields["is_running"] = boolTo01(*isRunning)
+	}
+	if isPaused != nil {
+		fields["is_paused"] = boolTo01(*isPaused)
+	}
+
+	if err := q.client.HSet(ctx, key, fields).Err(); err != nil {
+		return nil, fmt.Errorf("failed to set continuous sweep control flags: %w", err)
+	}
+
+	// Return a best-effort view of current state.
+	control, err := q.GetContinuousSweepControlFlags(ctx)
+	if err == nil && control != nil {
+		return control, nil
+	}
+	return &ContinuousSweepControl{
+		IsRunning:   isRunning != nil && *isRunning,
+		IsPaused:    isPaused != nil && *isPaused,
+		LastUpdated: now,
+		Source:      "redis",
+	}, nil
+}
+
+// GetContinuousSweepControlFlags retrieves continuous sweep control flags from Redis.
+func (q *RedisQueue) GetContinuousSweepControlFlags(ctx context.Context) (*ContinuousSweepControl, error) {
+	key := q.continuousSweepControlKey()
+	m, err := q.client.HGetAll(ctx, key).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to read continuous sweep control flags: %w", err)
+	}
+	if len(m) == 0 {
+		return nil, nil
+	}
+
+	running, _ := parseBool01(m["is_running"])
+	paused, _ := parseBool01(m["is_paused"])
+
+	var lastUpdated time.Time
+	if v := strings.TrimSpace(m["last_updated"]); v != "" {
+		if t, err := time.Parse(time.RFC3339Nano, v); err == nil {
+			lastUpdated = t
+		} else if t, err := time.Parse(time.RFC3339, v); err == nil {
+			lastUpdated = t
+		}
+	}
+
+	return &ContinuousSweepControl{
+		IsRunning:   running,
+		IsPaused:    paused,
+		LastUpdated: lastUpdated,
+		Source:      "redis",
+	}, nil
+}
+
+func boolTo01(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
+}
+
+func parseBool01(v string) (bool, bool) {
+	s := strings.TrimSpace(strings.ToLower(v))
+	switch s {
+	case "1", "true", "t", "yes", "y", "on":
+		return true, true
+	case "0", "false", "f", "no", "n", "off":
+		return false, true
+	default:
+		return false, false
+	}
 }

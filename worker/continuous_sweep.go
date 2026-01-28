@@ -98,6 +98,11 @@ type ContinuousSweepRunner struct {
 	resumeCh chan struct{}
 }
 
+type continuousSweepControlStore interface {
+	GetContinuousSweepControlFlags(ctx context.Context) (*queue.ContinuousSweepControl, error)
+	SetContinuousSweepControlFlags(ctx context.Context, isRunning, isPaused *bool) (*queue.ContinuousSweepControl, error)
+}
+
 type ContinuousPriceGraphPayload struct {
 	Origin         string    `json:"origin"`
 	Destination    string    `json:"destination"`
@@ -156,6 +161,17 @@ func (r *ContinuousSweepRunner) Start() error {
 				return fmt.Errorf("continuous sweep appears to be running elsewhere (last_updated=%s)", progress.LastUpdated.Format(time.RFC3339))
 			}
 		}
+	} else if r.queue != nil {
+		if store, ok := r.queue.(continuousSweepControlStore); ok {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			ctrl, err := store.GetContinuousSweepControlFlags(ctx)
+			cancel()
+			if err == nil && ctrl != nil && ctrl.IsRunning {
+				if !ctrl.LastUpdated.IsZero() && time.Since(ctrl.LastUpdated) < 10*time.Minute {
+					return fmt.Errorf("continuous sweep appears to be running elsewhere (redis last_updated=%s)", ctrl.LastUpdated.Format(time.RFC3339))
+				}
+			}
+		}
 	}
 
 	r.mu.Lock()
@@ -181,6 +197,15 @@ func (r *ContinuousSweepRunner) Start() error {
 		_ = r.postgresDB.SetContinuousSweepControlFlags(ctrlCtx, &running, &paused)
 		cancel()
 	}
+	if r.queue != nil {
+		if store, ok := r.queue.(continuousSweepControlStore); ok {
+			running := true
+			paused := false
+			ctrlCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_, _ = store.SetContinuousSweepControlFlags(ctrlCtx, &running, &paused)
+			cancel()
+		}
+	}
 
 	// Try to restore progress from DB (use the long-lived context)
 	if err := r.restoreProgress(r.ctx); err != nil {
@@ -197,35 +222,82 @@ func (r *ContinuousSweepRunner) Start() error {
 }
 
 func (r *ContinuousSweepRunner) syncControlFromDB(ctx context.Context) (stop bool) {
-	if r.postgresDB == nil {
-		return false
+	var (
+		dbRunningSet bool
+		dbRunning    bool
+		dbPausedSet  bool
+		dbPaused     bool
+		dbLast       time.Time
+	)
+	if r.postgresDB != nil {
+		checkCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		progress, err := r.postgresDB.GetContinuousSweepProgress(checkCtx)
+		cancel()
+		if err == nil && progress != nil {
+			dbRunningSet = true
+			dbRunning = progress.IsRunning
+			dbPausedSet = true
+			dbPaused = progress.IsPaused
+			dbLast = progress.LastUpdated
+		}
 	}
 
-	checkCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	progress, err := r.postgresDB.GetContinuousSweepProgress(checkCtx)
-	cancel()
-	if err != nil || progress == nil {
-		return false
+	var (
+		redisRunningSet bool
+		redisRunning    bool
+		redisPausedSet  bool
+		redisPaused     bool
+		redisLast       time.Time
+	)
+	if r.queue != nil {
+		if store, ok := r.queue.(continuousSweepControlStore); ok {
+			checkCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			ctrl, err := store.GetContinuousSweepControlFlags(checkCtx)
+			cancel()
+			if err == nil && ctrl != nil {
+				redisRunningSet = true
+				redisRunning = ctrl.IsRunning
+				redisPausedSet = true
+				redisPaused = ctrl.IsPaused
+				redisLast = ctrl.LastUpdated
+			}
+		}
 	}
 
-	if !progress.IsRunning {
+	// STOP is treated as a kill-switch: if either control plane explicitly says "not running", stop.
+	if (dbRunningSet && !dbRunning) || (redisRunningSet && !redisRunning) {
 		return true
+	}
+
+	// Determine paused state (prefer Postgres if available, otherwise Redis).
+	var nextPaused *bool
+	switch {
+	case dbPausedSet:
+		nextPaused = &dbPaused
+	case redisPausedSet:
+		nextPaused = &redisPaused
+	}
+
+	if nextPaused == nil {
+		return false
 	}
 
 	r.mu.Lock()
 	wasPaused := r.isPaused
-	r.isPaused = progress.IsPaused
+	r.isPaused = *nextPaused
 	resumeCh := r.resumeCh
 	r.mu.Unlock()
 
-	// If we were paused and DB says resume, poke the channel so the pause select unblocks quickly.
-	if wasPaused && !progress.IsPaused && resumeCh != nil {
+	// If we were paused and control says resume, poke the channel so the pause select unblocks quickly.
+	if wasPaused && !*nextPaused && resumeCh != nil {
 		select {
 		case resumeCh <- struct{}{}:
 		default:
 		}
 	}
 
+	_ = dbLast
+	_ = redisLast
 	return false
 }
 
@@ -261,6 +333,15 @@ func (r *ContinuousSweepRunner) Stop() {
 		_ = r.postgresDB.SetContinuousSweepControlFlags(ctrlCtx, &running, &paused)
 		cancel()
 	}
+	if r.queue != nil {
+		if store, ok := r.queue.(continuousSweepControlStore); ok {
+			running := false
+			paused := false
+			ctrlCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_, _ = store.SetContinuousSweepControlFlags(ctrlCtx, &running, &paused)
+			cancel()
+		}
+	}
 }
 
 // Pause pauses the sweep (can be resumed)
@@ -278,6 +359,14 @@ func (r *ContinuousSweepRunner) Pause() {
 		ctrlCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		_ = r.postgresDB.SetContinuousSweepControlFlags(ctrlCtx, nil, &nextPaused)
 		cancel()
+	}
+	if running && !paused && r.queue != nil {
+		if store, ok := r.queue.(continuousSweepControlStore); ok {
+			nextPaused := true
+			ctrlCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_, _ = store.SetContinuousSweepControlFlags(ctrlCtx, nil, &nextPaused)
+			cancel()
+		}
 	}
 }
 
@@ -301,6 +390,14 @@ func (r *ContinuousSweepRunner) Resume() {
 		ctrlCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		_ = r.postgresDB.SetContinuousSweepControlFlags(ctrlCtx, nil, &nextPaused)
 		cancel()
+	}
+	if running && paused && r.queue != nil {
+		if store, ok := r.queue.(continuousSweepControlStore); ok {
+			nextPaused := false
+			ctrlCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_, _ = store.SetContinuousSweepControlFlags(ctrlCtx, nil, &nextPaused)
+			cancel()
+		}
 	}
 }
 
@@ -584,10 +681,6 @@ func (r *ContinuousSweepRunner) run(ctx context.Context) {
 }
 
 func (r *ContinuousSweepRunner) watchControlFromDB(ctx context.Context) {
-	if r.postgresDB == nil {
-		return
-	}
-
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
@@ -598,14 +691,7 @@ func (r *ContinuousSweepRunner) watchControlFromDB(ctx context.Context) {
 		case <-ticker.C:
 		}
 
-		checkCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		progress, err := r.postgresDB.GetContinuousSweepProgress(checkCtx)
-		cancel()
-		if err != nil || progress == nil {
-			continue
-		}
-
-		if !progress.IsRunning {
+		if r.syncControlFromDB(ctx) {
 			r.mu.RLock()
 			cancelFn := r.cancelCtx
 			r.mu.RUnlock()
@@ -613,20 +699,6 @@ func (r *ContinuousSweepRunner) watchControlFromDB(ctx context.Context) {
 				cancelFn()
 			}
 			return
-		}
-
-		r.mu.Lock()
-		wasPaused := r.isPaused
-		r.isPaused = progress.IsPaused
-		resumeCh := r.resumeCh
-		r.mu.Unlock()
-
-		// If we were paused and DB says resume, poke the channel so the pause select unblocks quickly.
-		if wasPaused && !progress.IsPaused && resumeCh != nil {
-			select {
-			case resumeCh <- struct{}{}:
-			default:
-			}
 		}
 	}
 }

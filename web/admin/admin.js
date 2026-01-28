@@ -1855,8 +1855,10 @@ async function loadContinuousSweepStatus() {
     }
 
     const body = await response.json();
+    const control = body?.control ?? body?.db ?? null;
+    const controlError = body?.control_error ?? body?.db_error ?? null;
     // Always render DB control state if present (even when the runner isn't initialized in this process).
-    updateSweepDbControlUI(body?.db ?? null, null, body?.queues ?? null, body?.db_error ?? null);
+    updateSweepDbControlUI(control, null, body?.queues ?? null, controlError);
 
     if (!body || body.initialized === false) {
       showSweepNotReady();
@@ -1864,7 +1866,7 @@ async function loadContinuousSweepStatus() {
     }
 
     const status = body.status ?? body;
-    updateSweepStatusUI(status, body?.db ?? null, body?.queues ?? null, body?.db_error ?? null);
+    updateSweepStatusUI(status, control, body?.queues ?? null, controlError);
   } catch (error) {
     console.error("Error loading sweep status:", error);
   }
@@ -2007,7 +2009,8 @@ function updateSweepDbControlUI(dbProgress, runnerStatus, queues, dbError) {
 
   if (!dbProgress) {
     if (notReadyContainer) notReadyContainer.style.display = "none";
-    if (controlText) controlText.textContent = dbError ? `DB error: ${dbError}` : "-";
+    if (controlText)
+      controlText.textContent = dbError ? `Control error: ${dbError}` : "-";
     if (lastUpdatedEl) lastUpdatedEl.textContent = "-";
     if (mismatchWarning) mismatchWarning.style.display = "none";
     if (staleWarning) staleWarning.style.display = "none";
@@ -2023,11 +2026,18 @@ function updateSweepDbControlUI(dbProgress, runnerStatus, queues, dbError) {
   const paused =
     dbProgress.is_paused != null ? !!dbProgress.is_paused : !!dbProgress.IsPaused;
   const stateLabel = !running ? "Stopped" : paused ? "Paused" : "Running";
+  const source =
+    dbProgress.source != null
+      ? String(dbProgress.source)
+      : dbProgress.Source != null
+        ? String(dbProgress.Source)
+        : "";
+  const sourceLabel = source ? ` • ${source}` : "";
 
   if (controlText) {
     controlText.textContent = dbError
-      ? `${stateLabel} (DB) • DB error: ${dbError}`
-      : `${stateLabel} (DB)`;
+      ? `${stateLabel}${sourceLabel} • ${dbError}`
+      : `${stateLabel}${sourceLabel}`;
   }
 
   let ageSec = null;

@@ -846,6 +846,20 @@ func (m *Manager) processJob(ctx context.Context, worker *Worker, queueName stri
 				return nil
 			}
 		}
+		// Redis control is a kill-switch fallback: if Redis says the sweep is stopped, skip these jobs too.
+		if m.queue != nil {
+			if store, ok := m.queue.(interface {
+				GetContinuousSweepControlFlags(ctx context.Context) (*queue.ContinuousSweepControl, error)
+			}); ok {
+				checkCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				ctrl, err := store.GetContinuousSweepControlFlags(checkCtx)
+				cancel()
+				if err == nil && ctrl != nil && !ctrl.IsRunning {
+					log.Printf("Skipping continuous_price_graph job %s: sweep is stopped in Redis control", job.ID)
+					return nil
+				}
+			}
+		}
 
 		session, err := m.getFlightSession("price_graph")
 		if err != nil {
