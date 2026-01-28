@@ -61,6 +61,15 @@ func (m *MockQueue) CancelJob(ctx context.Context, queueName, jobID string) erro
 	return args.Error(0)
 }
 
+func (m *MockQueue) CancelProcessing(ctx context.Context, queueName string) (int64, error) {
+	args := m.Called(ctx, queueName)
+	var canceled int64
+	if args.Get(0) != nil {
+		canceled = args.Get(0).(int64)
+	}
+	return canceled, args.Error(1)
+}
+
 func (m *MockQueue) IsJobCanceled(ctx context.Context, jobID string) (bool, error) {
 	args := m.Called(ctx, jobID)
 	return args.Bool(0), args.Error(1)

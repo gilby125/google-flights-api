@@ -429,6 +429,10 @@ func (r *ContinuousSweepRunner) run(ctx context.Context) {
 		r.saveProgress(ctx)
 	}()
 
+	// Watch DB control flags in the background so STOP/PAUSE/RESUME apply quickly even if
+	// the main loop is sleeping on pacing delays.
+	go r.watchControlFromDB(ctx)
+
 	log.Printf("Starting continuous sweep runner with %d routes, pacing mode: %s",
 		len(r.routes), r.config.PacingMode)
 
@@ -533,6 +537,54 @@ func (r *ContinuousSweepRunner) run(ctx context.Context) {
 			return
 		case <-ctx.Done():
 			return
+		}
+	}
+}
+
+func (r *ContinuousSweepRunner) watchControlFromDB(ctx context.Context) {
+	if r.postgresDB == nil {
+		return
+	}
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+
+		checkCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		progress, err := r.postgresDB.GetContinuousSweepProgress(checkCtx)
+		cancel()
+		if err != nil || progress == nil {
+			continue
+		}
+
+		if !progress.IsRunning {
+			r.mu.RLock()
+			cancelFn := r.cancelCtx
+			r.mu.RUnlock()
+			if cancelFn != nil {
+				cancelFn()
+			}
+			return
+		}
+
+		r.mu.Lock()
+		wasPaused := r.isPaused
+		r.isPaused = progress.IsPaused
+		resumeCh := r.resumeCh
+		r.mu.Unlock()
+
+		// If we were paused and DB says resume, poke the channel so the pause select unblocks quickly.
+		if wasPaused && !progress.IsPaused && resumeCh != nil {
+			select {
+			case resumeCh <- struct{}{}:
+			default:
+			}
 		}
 	}
 }

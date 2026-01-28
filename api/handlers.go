@@ -2760,6 +2760,71 @@ func CancelQueueJob(q queue.Queue) gin.HandlerFunc {
 	}
 }
 
+// CancelQueueProcessing requests cancellation for all currently processing jobs in a queue (admin/debug endpoint).
+func CancelQueueProcessing(q queue.Queue) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		queueName := c.Param("name")
+		if !isAllowedQueueName(queueName) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid queue name"})
+			return
+		}
+
+		canceled, err := q.CancelProcessing(c.Request.Context(), queueName)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		stats, err := q.GetQueueStats(c.Request.Context(), queueName)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"queue":    queueName,
+			"canceled": canceled,
+			"stats":    stats,
+		})
+	}
+}
+
+// DrainQueue cancels all processing jobs and clears all pending jobs for a queue (admin/debug endpoint).
+func DrainQueue(q queue.Queue) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		queueName := c.Param("name")
+		if !isAllowedQueueName(queueName) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid queue name"})
+			return
+		}
+
+		canceled, err := q.CancelProcessing(c.Request.Context(), queueName)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		cleared, err := q.ClearQueue(c.Request.Context(), queueName)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		stats, err := q.GetQueueStats(c.Request.Context(), queueName)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"queue":    queueName,
+			"canceled": canceled,
+			"cleared":  cleared,
+			"stats":    stats,
+		})
+	}
+}
+
 // getJobById returns a handler for getting a job by ID
 func getJobById(pgDB db.PostgresDB) gin.HandlerFunc { // Changed parameter type
 	return func(c *gin.Context) {

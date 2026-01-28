@@ -82,6 +82,8 @@ type Queue interface {
 	GetQueueStats(ctx context.Context, queueName string) (map[string]int64, error)
 	// CancelJob requests cancellation for a job. Workers may stop immediately or on their next cancellation check.
 	CancelJob(ctx context.Context, queueName, jobID string) error
+	// CancelProcessing requests cancellation for all currently-processing jobs in a queue.
+	CancelProcessing(ctx context.Context, queueName string) (canceled int64, err error)
 	// IsJobCanceled returns whether a cancellation has been requested for the job.
 	IsJobCanceled(ctx context.Context, jobID string) (bool, error)
 	// GetJob fetches persisted job details by job ID.
@@ -418,6 +420,30 @@ func (q *RedisQueue) CancelJob(ctx context.Context, queueName, jobID string) err
 	}
 
 	return nil
+}
+
+func (q *RedisQueue) CancelProcessing(ctx context.Context, queueName string) (int64, error) {
+	if err := q.ensureStream(ctx, queueName); err != nil {
+		return 0, err
+	}
+
+	jobIDs, err := q.client.SMembers(ctx, q.processingKey(queueName)).Result()
+	if err != nil {
+		return 0, fmt.Errorf("failed to list processing jobs: %w", err)
+	}
+
+	var canceled int64
+	for _, jobID := range jobIDs {
+		// Set cancel flag; do not clear processing bookkeeping here.
+		// The worker will observe cancellation, abort, and ACK the stream entry, which
+		// removes it from the processing set cleanly.
+		if err := q.client.Set(ctx, q.cancelKey(jobID), "1", jobTTL).Err(); err != nil {
+			return canceled, fmt.Errorf("failed to set cancel flag: %w", err)
+		}
+		canceled++
+	}
+
+	return canceled, nil
 }
 
 func (q *RedisQueue) IsJobCanceled(ctx context.Context, jobID string) (bool, error) {

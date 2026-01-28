@@ -170,6 +170,8 @@ func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Ne
 			admin.GET("/queue/:name/jobs/:id", GetQueueJob(queue))
 			admin.POST("/queue/:name/jobs/:id/cancel", CancelQueueJob(queue))
 			admin.GET("/queue/:name/enqueues", GetQueueEnqueueMetrics(queue))
+			admin.POST("/queue/:name/cancel-processing", CancelQueueProcessing(queue))
+			admin.POST("/queue/:name/drain", DrainQueue(queue))
 			admin.POST("/queue/:name/clear", ClearQueue(queue))
 			admin.POST("/queue/:name/clear-failed", ClearQueueFailed(queue))
 			admin.POST("/queue/:name/clear-processing", ClearQueueProcessing(queue))

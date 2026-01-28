@@ -74,6 +74,8 @@ async function initAdminPanel() {
         switch (action) {
           case "clear-queue":
             return () => clearQueue(queueName, pending);
+          case "drain-queue":
+            return () => drainQueue(queueName, pending, processing);
           case "clear-processing":
             return () => clearProcessing(queueName, processing);
           case "clear-failed":
@@ -489,6 +491,7 @@ async function loadQueueStatus() {
     const clearProcessingDisabled = processing === 0;
     const clearFailedDisabled = failed === 0;
     const retryFailedDisabled = failed === 0;
+    const drainDisabled = pending === 0 && processing === 0;
     row.innerHTML = `
             <td>${queueName}</td>
             <td>${pending}</td>
@@ -496,6 +499,17 @@ async function loadQueueStatus() {
             <td>${completed}</td>
             <td>${failed}</td>
             <td class="text-end">
+                <button
+                    type="button"
+                    class="btn btn-sm btn-outline-danger me-1"
+                    data-action="drain-queue"
+                    data-queue="${queueName}"
+                    data-pending="${pending}"
+                    data-processing="${processing}"
+                    ${drainDisabled ? "disabled" : ""}
+                    title="${drainDisabled ? "Nothing to drain" : "Cancel in-flight jobs and clear pending jobs"}">
+                    <i class="bi bi-stop-fill me-1"></i>Drain
+                </button>
                 <button
                     type="button"
                     class="btn btn-sm btn-outline-danger me-1"
@@ -568,6 +582,31 @@ async function clearQueue(queueName, pending) {
     "success",
   );
   await loadQueueStatus();
+}
+
+async function drainQueue(queueName, pending, processing) {
+  if (!queueName) return;
+
+  const message =
+    pending > 0 || processing > 0
+      ? `Drain "${queueName}"? This requests cancellation for ${processing} in-flight job(s) and clears ${pending} pending job(s).`
+      : `Drain "${queueName}"?`;
+  if (!confirm(message)) return;
+
+  const url = `${ENDPOINTS.QUEUE}/${encodeURIComponent(queueName)}/drain`;
+  const response = await fetch(url, { method: "POST" });
+  const responseText = await response.text();
+  const body = safeParseJSON(responseText, {});
+
+  if (!response.ok) {
+    const errorMessage =
+      body && body.error ? body.error : `HTTP ${response.status}`;
+    throw new Error(errorMessage);
+  }
+
+  showAlert(`Drained "${queueName}".`, "success");
+  await loadQueueStatus();
+  await loadWorkers();
 }
 
 async function cancelQueueJob(queueName, jobID) {
