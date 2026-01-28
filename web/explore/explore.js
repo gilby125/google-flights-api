@@ -164,11 +164,20 @@ function initMap() {
       },
     });
 
+    state.map.on("click", "explore-lines", (e) => {
+      const f = e.features && e.features[0];
+      if (!f || !f.properties || !f.properties.destCode) return;
+      onSelectDestination(f.properties.destCode);
+    });
+
     state.map.on("click", "explore-points", (e) => {
       const f = e.features && e.features[0];
       if (!f || !f.properties || !f.properties.destCode) return;
       onSelectDestination(f.properties.destCode);
     });
+
+    state.map.on("mouseenter", "explore-lines", () => (state.map.getCanvas().style.cursor = "pointer"));
+    state.map.on("mouseleave", "explore-lines", () => (state.map.getCanvas().style.cursor = ""));
 
     state.map.on("mouseenter", "explore-points", () => (state.map.getCanvas().style.cursor = "pointer"));
     state.map.on("mouseleave", "explore-points", () => (state.map.getCanvas().style.cursor = ""));
@@ -341,6 +350,9 @@ function render() {
         },
         properties: {
           color: priceColor(e.cheapestPrice, maxPrice),
+          destCode: e.destCode,
+          cheapestPrice: e.cheapestPrice,
+          hops: e.hops,
         },
       });
       pointFeatures.push({
