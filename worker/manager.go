@@ -1545,7 +1545,8 @@ func (m *Manager) processBulkSearchCheapFirst(ctx context.Context, worker *Worke
 		minPrice    float64 = math.MaxFloat64
 		maxPrice    float64
 		sumPrice    float64
-		completed   int
+		processed   int
+		withResults int
 	)
 
 	for _, origin := range payload.Origins {
@@ -1590,36 +1591,36 @@ func (m *Manager) processBulkSearchCheapFirst(ctx context.Context, worker *Worke
 				log.Printf("[CheapFirst] Error getting price graph for %s: %v", routeKey, err)
 				searchErrors = append(searchErrors, fmt.Errorf("price graph for %s failed: %w", routeKey, err))
 				// Count the route as processed for progress reporting even if it failed.
-				completed++
-				if completed%5 == 0 {
-					_ = m.postgresDB.UpdateBulkSearchProgress(ctx, bulkSearchID, completed, totalOffers, len(searchErrors))
+				processed++
+				if processed%5 == 0 {
+					_ = m.postgresDB.UpdateBulkSearchProgress(ctx, bulkSearchID, processed, totalOffers, len(searchErrors))
 				}
 				continue
 			}
 
 			if len(priceOffers) == 0 {
 				log.Printf("[CheapFirst] No prices found for %s", routeKey)
-				completed++
-				if completed%5 == 0 {
-					_ = m.postgresDB.UpdateBulkSearchProgress(ctx, bulkSearchID, completed, totalOffers, len(searchErrors))
+				processed++
+				if processed%5 == 0 {
+					_ = m.postgresDB.UpdateBulkSearchProgress(ctx, bulkSearchID, processed, totalOffers, len(searchErrors))
 				}
 				continue
 			}
 
-			// Price=0 means price unavailable; skip these to avoid treating them as "free".
+			// Price=0 means price unavailable; also skip values that cannot be stored in DB.
 			filtered := priceOffers[:0]
 			for _, offer := range priceOffers {
-				if offer.Price <= 0 {
+				if !isDBSafePrice(offer.Price) {
 					continue
 				}
 				filtered = append(filtered, offer)
 			}
 			priceOffers = filtered
 			if len(priceOffers) == 0 {
-				log.Printf("[CheapFirst] No priced offers found for %s (all offers were price=0)", routeKey)
-				completed++
-				if completed%5 == 0 {
-					_ = m.postgresDB.UpdateBulkSearchProgress(ctx, bulkSearchID, completed, totalOffers, len(searchErrors))
+				log.Printf("[CheapFirst] No priced offers found for %s (all offers were unpriced or invalid)", routeKey)
+				processed++
+				if processed%5 == 0 {
+					_ = m.postgresDB.UpdateBulkSearchProgress(ctx, bulkSearchID, processed, totalOffers, len(searchErrors))
 				}
 				continue
 			}
@@ -1677,6 +1678,10 @@ func (m *Manager) processBulkSearchCheapFirst(ctx context.Context, worker *Worke
 
 				// Find best offer by composite deal score (skip excluded airlines)
 				for i := range fullOffers {
+					// Skip offers with non-storable prices (prevents DB overflows and bogus min/max).
+					if !isDBSafePrice(fullOffers[i].Price) {
+						continue
+					}
 					// Skip offers from excluded airlines (Spirit, Allegiant, Frontier)
 					if m.isExcludedAirline(fullOffers[i]) {
 						continue
@@ -1703,6 +1708,7 @@ func (m *Manager) processBulkSearchCheapFirst(ctx context.Context, worker *Worke
 					maxPrice = bestOffer.Price
 				}
 				sumPrice += bestOffer.Price
+				withResults++
 
 				returnDate := sql.NullTime{}
 				if !bestReturn.IsZero() {
@@ -1749,9 +1755,9 @@ func (m *Manager) processBulkSearchCheapFirst(ctx context.Context, worker *Worke
 				log.Printf("[CheapFirst] Route %s: no valid offers found", routeKey)
 			}
 
-			completed++
-			if completed%5 == 0 || completed == totalRoutes {
-				_ = m.postgresDB.UpdateBulkSearchProgress(ctx, bulkSearchID, completed, totalOffers, len(searchErrors))
+			processed++
+			if processed%5 == 0 || processed == totalRoutes {
+				_ = m.postgresDB.UpdateBulkSearchProgress(ctx, bulkSearchID, processed, totalOffers, len(searchErrors))
 			}
 		}
 	}
@@ -1761,28 +1767,16 @@ func (m *Manager) processBulkSearchCheapFirst(ctx context.Context, worker *Worke
 		totalRoutes*len(m.generateDateRange(payload.DepartureDateFrom, payload.DepartureDateTo, payload.TripLength)))
 
 	// Finalize bulk search
-	var minPriceNull, maxPriceNull, avgPriceNull sql.NullFloat64
-	if completed > 0 {
-		minPriceNull = sql.NullFloat64{Float64: minPrice, Valid: true}
-		maxPriceNull = sql.NullFloat64{Float64: maxPrice, Valid: true}
-		avgPriceNull = sql.NullFloat64{Float64: sumPrice / float64(completed), Valid: true}
-	}
+	minPriceNull, maxPriceNull, avgPriceNull := cheapFirstFinalizePriceStats(withResults, minPrice, maxPrice, sumPrice)
+	status := cheapFirstFinalizeStatus(withResults, len(searchErrors))
 
-	status := "completed"
-	if len(searchErrors) > 0 && completed > 0 {
-		status = "completed_with_errors"
-	}
-	if completed == 0 {
-		status = "failed"
-	}
-
-	log.Printf("[CheapFirst] Bulk search completed: %d routes, %d offers, status=%s",
-		completed, totalOffers, status)
+	log.Printf("[CheapFirst] Bulk search completed: processed=%d, with_results=%d, offers=%d, status=%s",
+		processed, withResults, totalOffers, status)
 
 	summary := db.BulkSearchSummary{
 		ID:           bulkSearchID,
 		Status:       status,
-		Completed:    completed,
+		Completed:    processed,
 		TotalOffers:  totalOffers,
 		ErrorCount:   len(searchErrors),
 		MinPrice:     minPriceNull,
