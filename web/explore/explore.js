@@ -96,8 +96,8 @@ function initGlobe() {
   state.globe = Globe()(container)
     .globeImageUrl("https://unpkg.com/three-globe/example/img/earth-dark.jpg")
     .backgroundImageUrl("https://unpkg.com/three-globe/example/img/night-sky.png")
-    .atmosphereColor("#7c3aed")
-    .atmosphereAltitude(0.16)
+    .atmosphereColor("rgba(124, 58, 237, 0.35)")
+    .atmosphereAltitude(0.09)
     .pointAltitude(0.01)
     .pointRadius(0.18)
     .pointColor((d) => d.color)
@@ -112,8 +112,8 @@ function initGlobe() {
     .onPointClick((d) => onSelectRoute(d.originCode, d.destCode))
     .onArcClick((d) => onSelectRoute(d.originCode, d.destCode));
 
-  state.globe.controls().autoRotate = true;
-  state.globe.controls().autoRotateSpeed = 0.35;
+  state.globe.controls().autoRotate = false;
+  state.globe.controls().autoRotateSpeed = 0.2;
   state.globe.controls().enableDamping = true;
   state.globe.controls().dampingFactor = 0.08;
 }
@@ -369,9 +369,7 @@ function render() {
     state.globe.arcsData(arcs);
     state.globe.pointsData(points);
     state.globe.pointLabel((d) => `${d.originCode} → ${d.destCode}`);
-    state.globe
-      .controls()
-      .autoRotate = state.edges.length > 0;
+    state.globe.controls().autoRotate = false;
 
     // recentre gently
     state.globe.pointOfView({ lat: originLat, lng: originLon, altitude: 2.0 }, 900);
