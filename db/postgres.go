@@ -52,10 +52,16 @@ type PostgresDB interface {
 	ListBulkSearchOffers(ctx context.Context, searchID int) ([]BulkSearchOffer, error)
 	CreateBulkSearchRecord(ctx context.Context, jobID sql.NullInt32, totalSearches int, currency, status string) (int, error)
 	UpdateBulkSearchStatus(ctx context.Context, bulkSearchID int, status string) error
+	UpdateBulkSearchTotalSearches(ctx context.Context, bulkSearchID int, totalSearches int) error
 	UpdateBulkSearchProgress(ctx context.Context, bulkSearchID int, completed, totalOffers, errorCount int) error
 	CompleteBulkSearch(ctx context.Context, summary BulkSearchSummary) error
 	InsertBulkSearchResult(ctx context.Context, result BulkSearchResultRecord) error
 	InsertBulkSearchResultsBatch(ctx context.Context, results []BulkSearchResultRecord) error
+	// IncrementBulkSearchProgress atomically increments the completed count for a fan-out bulk search
+	// and returns the new completed count and total routes.
+	IncrementBulkSearchProgress(ctx context.Context, bulkSearchID int) (completed, total int, err error)
+	// FinalizeBulkSearch computes final stats (min/max/avg price) and marks the search complete.
+	FinalizeBulkSearch(ctx context.Context, bulkSearchID int) error
 	ListBulkSearches(ctx context.Context, limit, offset int) (Rows, error)
 	CreatePriceGraphSweep(ctx context.Context, jobID sql.NullInt32, originCount, destinationCount int, tripLengthMin, tripLengthMax sql.NullInt32, currency string) (int, error)
 	UpdatePriceGraphSweepStatus(ctx context.Context, sweepID int, status string, startedAt, completedAt sql.NullTime, errorCount int) error
@@ -613,6 +619,19 @@ func (p *PostgresDBImpl) UpdateBulkSearchStatus(ctx context.Context, bulkSearchI
 	return nil
 }
 
+func (p *PostgresDBImpl) UpdateBulkSearchTotalSearches(ctx context.Context, bulkSearchID int, totalSearches int) error {
+	_, err := p.db.ExecContext(ctx,
+		`UPDATE bulk_searches
+         SET total_searches = $1, updated_at = NOW()
+         WHERE id = $2`,
+		totalSearches, bulkSearchID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update bulk search %d total_searches to %d: %w", bulkSearchID, totalSearches, err)
+	}
+	return nil
+}
+
 func (p *PostgresDBImpl) UpdateBulkSearchProgress(ctx context.Context, bulkSearchID int, completed, totalOffers, errorCount int) error {
 	_, err := p.db.ExecContext(ctx,
 		`UPDATE bulk_searches
@@ -656,6 +675,66 @@ func (p *PostgresDBImpl) CompleteBulkSearch(ctx context.Context, summary BulkSea
 	)
 	if err != nil {
 		return fmt.Errorf("failed to complete bulk search %d: %w", summary.ID, err)
+	}
+	return nil
+}
+
+// IncrementBulkSearchProgress atomically increments the completed count for a fan-out bulk search
+// and returns the new completed count along with total_searches to check if we're done.
+func (p *PostgresDBImpl) IncrementBulkSearchProgress(ctx context.Context, bulkSearchID int) (completed, total int, err error) {
+	err = p.db.QueryRowContext(ctx,
+		`UPDATE bulk_searches
+		 SET completed = completed + 1, updated_at = NOW()
+		 WHERE id = $1
+		 RETURNING completed, total_searches`,
+		bulkSearchID,
+	).Scan(&completed, &total)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to increment bulk search %d progress: %w", bulkSearchID, err)
+	}
+	return completed, total, nil
+}
+
+// FinalizeBulkSearch computes final stats from bulk_search_results and marks the search complete.
+func (p *PostgresDBImpl) FinalizeBulkSearch(ctx context.Context, bulkSearchID int) error {
+	// Compute stats from the results table
+	var minPrice, maxPrice, avgPrice sql.NullFloat64
+	var resultCount int
+	err := p.db.QueryRowContext(ctx,
+		`SELECT COUNT(*), MIN(price), MAX(price), AVG(price)
+		 FROM bulk_search_results
+		 WHERE bulk_search_id = $1`,
+		bulkSearchID,
+	).Scan(&resultCount, &minPrice, &maxPrice, &avgPrice)
+	if err != nil {
+		return fmt.Errorf("failed to compute stats for bulk search %d: %w", bulkSearchID, err)
+	}
+
+	// Determine status
+	status := "completed"
+	if resultCount == 0 {
+		status = "no_results"
+	}
+
+	_, err = p.db.ExecContext(ctx,
+		`UPDATE bulk_searches
+		 SET status = $1,
+		     total_offers = $2,
+		     min_price = $3,
+		     max_price = $4,
+		     average_price = $5,
+		     completed_at = NOW(),
+		     updated_at = NOW()
+		 WHERE id = $6`,
+		status,
+		resultCount,
+		minPrice,
+		maxPrice,
+		avgPrice,
+		bulkSearchID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to finalize bulk search %d: %w", bulkSearchID, err)
 	}
 	return nil
 }

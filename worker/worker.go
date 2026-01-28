@@ -135,6 +135,27 @@ type BulkSearchPayload struct {
 	JobID             int      `json:"job_id,omitempty"`
 }
 
+// BulkSearchRoutePayload represents a single route in a fanned-out bulk search.
+// Each route is processed independently by any available worker.
+type BulkSearchRoutePayload struct {
+	BulkSearchID      int       `json:"bulk_search_id"`
+	TotalRoutes       int       `json:"total_routes"` // Total routes in the parent bulk search
+	Origin            string    `json:"origin"`
+	Destination       string    `json:"destination"`
+	DepartureDateFrom time.Time `json:"departure_date_from"`
+	DepartureDateTo   time.Time `json:"departure_date_to"`
+	TripLength        int       `json:"trip_length"`
+	TripType          string    `json:"trip_type"`
+	Class             string    `json:"class"`
+	Stops             string    `json:"stops"`
+	Currency          string    `json:"currency"`
+	Adults            int       `json:"adults"`
+	Children          int       `json:"children,omitempty"`
+	InfantsLap        int       `json:"infants_lap,omitempty"`
+	InfantsSeat       int       `json:"infants_seat,omitempty"`
+	Carriers          []string  `json:"carriers,omitempty"`
+}
+
 // PriceGraphSweepPayload defines the data needed to execute a price graph sweep
 type PriceGraphSweepPayload struct {
 	SweepID           int       `json:"sweep_id,omitempty"`

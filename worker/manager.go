@@ -284,17 +284,38 @@ func (m *Manager) bulkSearchBusy() bool {
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
-	stats, err := m.queue.GetQueueStats(ctx, "bulk_search")
-	cancel()
-	if err != nil {
-		// If stats can't be fetched, fall back to the last known value.
+	defer cancel()
+
+	// Fan-out bulk searches now run most of their work on the bulk_search_route queue.
+	// Treat both queues as "bulk-search busy" to avoid running background sweeps concurrently.
+	queueNames := []string{"bulk_search", "bulk_search_route"}
+	var (
+		anyStatsErr bool
+		busy        bool
+	)
+	for _, queueName := range queueNames {
+		stats, err := m.queue.GetQueueStats(ctx, queueName)
+		if err != nil {
+			anyStatsErr = true
+			continue
+		}
+
+		pending := stats["pending"]
+		processing := stats["processing"]
+		if pending > 0 || processing > 0 {
+			busy = true
+			break
+		}
+	}
+
+	// If stats can't be fetched for any queue, fall back to the last known value
+	// (or any observed busy=true from the queues we did fetch).
+	if anyStatsErr && !busy {
 		m.bulkBusyCheckedAt = time.Now()
 		return m.bulkBusyCached
 	}
 
-	pending := stats["pending"]
-	processing := stats["processing"]
-	m.bulkBusyCached = pending > 0 || processing > 0
+	m.bulkBusyCached = busy
 	m.bulkBusyCheckedAt = time.Now()
 	return m.bulkBusyCached
 }
@@ -601,6 +622,11 @@ func (m *Manager) runWorker(id int, worker *Worker) {
 				log.Printf("Worker %d error processing bulk_search queue: %v", displayID, err)
 			}
 
+			// Process fanned-out bulk search routes (high priority - distributes work across workers)
+			if err := m.processQueue(id, worker, "bulk_search_route"); err != nil {
+				log.Printf("Worker %d error processing bulk_search_route queue: %v", displayID, err)
+			}
+
 			// If any bulk search is pending/processing, avoid running background sweeps.
 			// This prevents background jobs from competing for rate-limited Google endpoints,
 			// which can stall user-initiated bulk searches.
@@ -822,6 +848,19 @@ func (m *Manager) processJob(ctx context.Context, worker *Worker, queueName stri
 		// Process the bulk search using 2-phase cheap-first strategy.
 		// This reduces API calls from O(routes × dates) to O(routes + routes × topNDeals)
 		return m.processBulkSearchCheapFirst(ctx, worker, session, payload)
+	case "bulk_search_route":
+		// Process a single route from a fanned-out bulk search
+		session, err := m.getFlightSession("bulk_search")
+		if err != nil {
+			return fmt.Errorf("failed to get flight session: %w", err)
+		}
+
+		var payload BulkSearchRoutePayload
+		if err := json.Unmarshal(job.Payload, &payload); err != nil {
+			return fmt.Errorf("failed to unmarshal bulk search route payload: %w", err)
+		}
+
+		return m.processBulkSearchRoute(ctx, worker, session, payload)
 	case "price_graph_sweep":
 		session, err := m.getFlightSession("price_graph")
 		if err != nil {
@@ -1597,15 +1636,14 @@ func scoreDeal(offer flights.FullOffer, distanceMiles float64) float64 {
 	return score
 }
 
-// processBulkSearchCheapFirst implements a 2-phase "cheap-first" bulk search strategy:
-// Phase 1: Use GetPriceGraph to find prices for ALL dates in one API call per route
-// Phase 2: Call GetOffers only for the top N cheapest dates to get full itineraries
+// processBulkSearchCheapFirst is a coordinator that fans out individual route jobs.
+// Instead of processing all routes in a single job, it enqueues each route as a
+// separate bulk_search_route job, allowing all workers to process routes in parallel.
 //
-// This reduces API calls from O(routes × dates) to O(routes + routes × N)
-// Example: 100 routes × 30 dates → 3000 calls becomes 100 + 300 = 400 calls
+// This dramatically reduces bulk search time:
+// - Before: 1 worker × (routes × API calls) sequentially = 10+ minutes
+// - After: N workers × (routes / N × API calls) in parallel = minutes
 func (m *Manager) processBulkSearchCheapFirst(ctx context.Context, worker *Worker, session *flights.Session, payload BulkSearchPayload) (err error) {
-	topN := m.topNDeals
-
 	// Validate origins and destinations
 	if len(payload.Origins) == 0 {
 		return fmt.Errorf("bulk search payload requires at least one origin")
@@ -1614,45 +1652,23 @@ func (m *Manager) processBulkSearchCheapFirst(ctx context.Context, worker *Worke
 		return fmt.Errorf("bulk search payload requires at least one destination")
 	}
 
-	// Map the payload to flights API arguments
-	var tripType flights.TripType
-	switch payload.TripType {
-	case "one_way":
-		tripType = flights.OneWay
-	case "round_trip":
-		tripType = flights.RoundTrip
-	default:
-		return fmt.Errorf("invalid trip type: %s", payload.TripType)
-	}
-
-	// Parse currency
-	cur, err := currency.ParseISO(payload.Currency)
-	if err != nil {
-		log.Printf("Warning: Invalid currency '%s', defaulting to USD. Error: %v", payload.Currency, err)
-		cur = currency.USD
-	}
-
-	// Parse class and stops
-	flightClass := parseClass(payload.Class)
-	flightStops := parseStops(payload.Stops)
-
 	totalRoutes := len(payload.Origins) * len(payload.Destinations)
-	log.Printf("[CheapFirst] Starting 2-phase bulk search: %d origins × %d destinations = %d routes",
+	log.Printf("[BulkSearchCoordinator] Starting fan-out: %d origins × %d destinations = %d routes",
 		len(payload.Origins), len(payload.Destinations), totalRoutes)
 
 	// Create or get bulk search record
 	var bulkSearchID int
 	if payload.BulkSearchID > 0 {
 		bulkSearchID = payload.BulkSearchID
-		if updateErr := m.postgresDB.UpdateBulkSearchStatus(ctx, bulkSearchID, "running"); updateErr != nil {
-			log.Printf("Failed to update bulk search %d status to running: %v", bulkSearchID, updateErr)
+		if updateErr := m.postgresDB.UpdateBulkSearchStatus(ctx, bulkSearchID, "coordinating"); updateErr != nil {
+			log.Printf("Failed to update bulk search %d status: %v", bulkSearchID, updateErr)
 		}
 	} else {
 		var jobRef sql.NullInt32
 		if payload.JobID > 0 {
 			jobRef = sql.NullInt32{Int32: int32(payload.JobID), Valid: true}
 		}
-		newID, createErr := m.postgresDB.CreateBulkSearchRecord(ctx, jobRef, totalRoutes, payload.Currency, "running")
+		newID, createErr := m.postgresDB.CreateBulkSearchRecord(ctx, jobRef, totalRoutes, payload.Currency, "coordinating")
 		if createErr != nil {
 			return fmt.Errorf("failed to create bulk search record: %w", createErr)
 		}
@@ -1667,260 +1683,308 @@ func (m *Manager) processBulkSearchCheapFirst(ctx context.Context, worker *Worke
 		}
 	}()
 
-	var searchErrors []error
-
-	// Track stats
-	var (
-		phase1Calls int
-		phase2Calls int
-		totalOffers int
-		minPrice    float64 = math.MaxFloat64
-		maxPrice    float64
-		sumPrice    float64
-		processed   int
-		withResults int
-	)
-
+	// Fan out: enqueue individual route jobs
+	enqueuedCount := 0
 	for _, origin := range payload.Origins {
 		for _, destination := range payload.Destinations {
-			routeKey := fmt.Sprintf("%s-%s", origin, destination)
-			log.Printf("[CheapFirst] Phase 1: Getting price graph for %s", routeKey)
-
-			// Calculate distance for deal scoring
-			distanceMiles, _ := calculateDistanceAndCostPerMile(origin, destination, 1.0)
-			dist := 0.0
-			if distanceMiles.Valid {
-				dist = distanceMiles.Float64
+			routePayload := BulkSearchRoutePayload{
+				BulkSearchID:      bulkSearchID,
+				TotalRoutes:       totalRoutes,
+				Origin:            origin,
+				Destination:       destination,
+				DepartureDateFrom: payload.DepartureDateFrom,
+				DepartureDateTo:   payload.DepartureDateTo,
+				TripLength:        payload.TripLength,
+				TripType:          payload.TripType,
+				Class:             payload.Class,
+				Stops:             payload.Stops,
+				Currency:          payload.Currency,
+				Adults:            payload.Adults,
+				Children:          payload.Children,
+				InfantsLap:        payload.InfantsLap,
+				InfantsSeat:       payload.InfantsSeat,
+				Carriers:          payload.Carriers,
 			}
 
-			// PHASE 1: Get prices for all dates in ONE call
-			priceGraphArgs := flights.PriceGraphArgs{
-				RangeStartDate: payload.DepartureDateFrom,
-				RangeEndDate:   payload.DepartureDateTo,
-				TripLength:     payload.TripLength,
-				SrcAirports:    []string{origin},
-				DstAirports:    []string{destination},
-				Options: flights.Options{
-					Travelers: flights.Travelers{
-						Adults:       payload.Adults,
-						Children:     payload.Children,
-						InfantOnLap:  payload.InfantsLap,
-						InfantInSeat: payload.InfantsSeat,
-					},
-					Currency: cur,
-					Stops:    flightStops,
-					Class:    flightClass,
-					TripType: tripType,
-					Lang:     language.English,
-					Carriers: payload.Carriers,
-				},
-			}
-
-			priceOffers, _, err := session.GetPriceGraph(ctx, priceGraphArgs)
-			phase1Calls++
-
-			if err != nil {
-				log.Printf("[CheapFirst] Error getting price graph for %s: %v", routeKey, err)
-				searchErrors = append(searchErrors, fmt.Errorf("price graph for %s failed: %w", routeKey, err))
-				// Count the route as processed for progress reporting even if it failed.
-				processed++
-				if processed%5 == 0 {
-					_ = m.postgresDB.UpdateBulkSearchProgress(ctx, bulkSearchID, processed, totalOffers, len(searchErrors))
-				}
-				continue
-			}
-
-			if len(priceOffers) == 0 {
-				log.Printf("[CheapFirst] No prices found for %s", routeKey)
-				processed++
-				if processed%5 == 0 {
-					_ = m.postgresDB.UpdateBulkSearchProgress(ctx, bulkSearchID, processed, totalOffers, len(searchErrors))
-				}
-				continue
-			}
-
-			// Price=0 means price unavailable; also skip values that cannot be stored in DB.
-			filtered := priceOffers[:0]
-			for _, offer := range priceOffers {
-				if !isDBSafePrice(offer.Price) {
-					continue
-				}
-				filtered = append(filtered, offer)
-			}
-			priceOffers = filtered
-			if len(priceOffers) == 0 {
-				log.Printf("[CheapFirst] No priced offers found for %s (all offers were unpriced or invalid)", routeKey)
-				processed++
-				if processed%5 == 0 {
-					_ = m.postgresDB.UpdateBulkSearchProgress(ctx, bulkSearchID, processed, totalOffers, len(searchErrors))
-				}
-				continue
-			}
-
-			// Sort offers by price to find top N cheapest dates
-			sort.Slice(priceOffers, func(i, j int) bool {
-				return priceOffers[i].Price < priceOffers[j].Price
-			})
-
-			// Take top N (or fewer if not enough offers)
-			topOffers := priceOffers
-			if len(topOffers) > topN {
-				topOffers = topOffers[:topN]
-			}
-
-			log.Printf("[CheapFirst] Phase 2: Getting full itineraries for top %d dates for %s", len(topOffers), routeKey)
-
-			// PHASE 2: Get full itineraries only for cheapest dates
-			var bestOffer *flights.FullOffer
-			var bestScore float64 = math.MaxFloat64
-			var bestDate, bestReturn time.Time
-
-			for _, priceOffer := range topOffers {
-				args := flights.Args{
-					Date:        priceOffer.StartDate,
-					ReturnDate:  priceOffer.ReturnDate,
-					SrcAirports: []string{origin},
-					DstAirports: []string{destination},
-					Options: flights.Options{
-						Travelers: flights.Travelers{
-							Adults:       payload.Adults,
-							Children:     payload.Children,
-							InfantOnLap:  payload.InfantsLap,
-							InfantInSeat: payload.InfantsSeat,
-						},
-						Currency: cur,
-						Stops:    flightStops,
-						Class:    flightClass,
-						TripType: tripType,
-						Lang:     language.English,
-						Carriers: payload.Carriers,
-					},
-				}
-
-				fullOffers, _, err := session.GetOffers(ctx, args)
-				phase2Calls++
-
-				if err != nil {
-					log.Printf("[CheapFirst] Error getting offers for %s on %s: %v",
-						routeKey, priceOffer.StartDate.Format("2006-01-02"), err)
-					continue
-				}
-
-				totalOffers += len(fullOffers)
-
-				// Find best offer by composite deal score (skip excluded airlines)
-				for i := range fullOffers {
-					// Skip offers with non-storable prices (prevents DB overflows and bogus min/max).
-					if !isDBSafePrice(fullOffers[i].Price) {
-						continue
-					}
-					// Skip offers from excluded airlines (Spirit, Allegiant, Frontier)
-					if m.isExcludedAirline(fullOffers[i]) {
-						continue
-					}
-					score := scoreDeal(fullOffers[i], dist)
-					if score < bestScore {
-						bestScore = score
-						bestOffer = &fullOffers[i]
-						bestDate = priceOffer.StartDate
-						bestReturn = priceOffer.ReturnDate
-					}
-				}
-			}
-
-			if bestOffer != nil {
-				log.Printf("[CheapFirst] Route %s: best deal $%.2f (score: %.2f) on %s",
-					routeKey, bestOffer.Price, bestScore, bestDate.Format("2006-01-02"))
-
-				// Update price stats
-				if bestOffer.Price < minPrice {
-					minPrice = bestOffer.Price
-				}
-				if bestOffer.Price > maxPrice {
-					maxPrice = bestOffer.Price
-				}
-				sumPrice += bestOffer.Price
-				withResults++
-
-				returnDate := sql.NullTime{}
-				if !bestReturn.IsZero() {
-					returnDate = sql.NullTime{Time: bestReturn, Valid: true}
-				}
-
-				airlineCode := ""
-				if len(bestOffer.Flight) > 0 {
-					flightNumber := bestOffer.Flight[0].FlightNumber
-					if len(flightNumber) >= 2 {
-						airlineCode = flightNumber[:2]
-					}
-				}
-
-				flightDuration := int(bestOffer.FlightDuration.Minutes())
-				returnFlightDuration := int(bestOffer.ReturnFlightDuration.Minutes())
-				totalDuration := flightDuration + returnFlightDuration
-
-				record := db.BulkSearchResultRecord{
-					BulkSearchID:         bulkSearchID,
-					Origin:               origin,
-					Destination:          destination,
-					DepartureDate:        bestDate,
-					ReturnDate:           returnDate,
-					Price:                bestOffer.Price,
-					Currency:             strings.ToUpper(payload.Currency),
-					AirlineCode:          nullString(airlineCode),
-					Duration:             nullInt32(totalDuration),
-					SrcAirportCode:       nullString(bestOffer.SrcAirportCode),
-					DstAirportCode:       nullString(bestOffer.DstAirportCode),
-					SrcCity:              nullString(bestOffer.SrcCity),
-					DstCity:              nullString(bestOffer.DstCity),
-					FlightDuration:       durationToNullMinutes(bestOffer.FlightDuration),
-					ReturnFlightDuration: durationToNullMinutes(bestOffer.ReturnFlightDuration),
-					OutboundFlightsJSON:  flightsToJSON(bestOffer.Flight),
-					ReturnFlightsJSON:    flightsToJSON(bestOffer.ReturnFlight),
-					OfferJSON:            offerToJSON(*bestOffer),
-				}
-
-				if insertErr := m.postgresDB.InsertBulkSearchResult(ctx, record); insertErr != nil {
-					log.Printf("[CheapFirst] Failed to insert result for %s -> %s: %v", origin, destination, insertErr)
-				}
+			if _, enqueueErr := m.queue.Enqueue(ctx, "bulk_search_route", routePayload); enqueueErr != nil {
+				log.Printf("[BulkSearchCoordinator] Failed to enqueue route %s->%s: %v", origin, destination, enqueueErr)
+				// Continue with other routes - don't fail the whole search
 			} else {
-				log.Printf("[CheapFirst] Route %s: no valid offers found", routeKey)
-			}
-
-			processed++
-			if processed%5 == 0 || processed == totalRoutes {
-				_ = m.postgresDB.UpdateBulkSearchProgress(ctx, bulkSearchID, processed, totalOffers, len(searchErrors))
+				enqueuedCount++
 			}
 		}
 	}
 
-	log.Printf("[CheapFirst] API call summary: Phase1=%d, Phase2=%d, Total=%d (vs old method: %d)",
-		phase1Calls, phase2Calls, phase1Calls+phase2Calls,
-		totalRoutes*len(m.generateDateRange(payload.DepartureDateFrom, payload.DepartureDateTo, payload.TripLength)))
+	log.Printf("[BulkSearchCoordinator] Enqueued %d/%d route jobs for bulk_search %d",
+		enqueuedCount, totalRoutes, bulkSearchID)
 
-	// Finalize bulk search
-	minPriceNull, maxPriceNull, avgPriceNull := cheapFirstFinalizePriceStats(withResults, minPrice, maxPrice, sumPrice)
-	status := cheapFirstFinalizeStatus(withResults, len(searchErrors))
-
-	log.Printf("[CheapFirst] Bulk search completed: processed=%d, with_results=%d, offers=%d, status=%s",
-		processed, withResults, totalOffers, status)
-
-	summary := db.BulkSearchSummary{
-		ID:           bulkSearchID,
-		Status:       status,
-		Completed:    processed,
-		TotalOffers:  totalOffers,
-		ErrorCount:   len(searchErrors),
-		MinPrice:     minPriceNull,
-		MaxPrice:     maxPriceNull,
-		AveragePrice: avgPriceNull,
+	if enqueuedCount == 0 {
+		return fmt.Errorf("failed to enqueue any routes for bulk_search %d", bulkSearchID)
 	}
 
-	if completeErr := m.postgresDB.CompleteBulkSearch(ctx, summary); completeErr != nil {
-		log.Printf("[CheapFirst] Failed to update bulk search summary for %d: %v", bulkSearchID, completeErr)
+	// If we failed to enqueue some routes, adjust total_searches so progress/finalization can't hang.
+	// Also handle the race where routes finished before we update total_searches by checking for
+	// completion after updating.
+	if enqueuedCount != totalRoutes {
+		log.Printf("[BulkSearchCoordinator] Warning: only enqueued %d/%d routes for bulk_search %d; adjusting total_searches to match enqueued routes",
+			enqueuedCount, totalRoutes, bulkSearchID)
+
+		if updateErr := m.postgresDB.UpdateBulkSearchTotalSearches(ctx, bulkSearchID, enqueuedCount); updateErr != nil {
+			return fmt.Errorf("failed to update bulk search %d total_searches to %d: %w", bulkSearchID, enqueuedCount, updateErr)
+		}
+
+		search, getErr := m.postgresDB.GetBulkSearchByID(ctx, bulkSearchID)
+		if getErr != nil {
+			log.Printf("[BulkSearchCoordinator] Failed to reload bulk_search %d after updating total_searches: %v", bulkSearchID, getErr)
+		} else if search.Completed >= search.TotalSearches {
+			log.Printf("[BulkSearchCoordinator] bulk_search %d already complete (%d/%d) after total_searches adjustment; finalizing...",
+				bulkSearchID, search.Completed, search.TotalSearches)
+			if finalizeErr := m.postgresDB.FinalizeBulkSearch(ctx, bulkSearchID); finalizeErr != nil {
+				log.Printf("[BulkSearchCoordinator] Failed to finalize bulk_search %d: %v", bulkSearchID, finalizeErr)
+			}
+		}
 	}
+
+	// Update status to running (routes are being processed in parallel)
+	if updateErr := m.postgresDB.UpdateBulkSearchStatus(ctx, bulkSearchID, "running"); updateErr != nil {
+		log.Printf("Failed to update bulk search %d status to running: %v", bulkSearchID, updateErr)
+	}
+
+	// The coordinator's job is done - individual route workers will:
+	// 1. Process their route
+	// 2. Insert results
+	// 3. Increment progress
+	// 4. Finalize the search when all routes complete
 
 	return nil
+}
+
+// processBulkSearchRoute processes a single route from a fanned-out bulk search.
+// This is the per-route worker that runs in parallel across all workers.
+func (m *Manager) processBulkSearchRoute(ctx context.Context, worker *Worker, session *flights.Session, payload BulkSearchRoutePayload) error {
+	topN := m.topNDeals
+	origin := payload.Origin
+	destination := payload.Destination
+	routeKey := fmt.Sprintf("%s-%s", origin, destination)
+
+	log.Printf("[BulkSearchRoute] Processing route %s for bulk_search %d", routeKey, payload.BulkSearchID)
+
+	// Parse flight options
+	var tripType flights.TripType
+	switch payload.TripType {
+	case "one_way":
+		tripType = flights.OneWay
+	case "round_trip":
+		tripType = flights.RoundTrip
+	default:
+		tripType = flights.RoundTrip
+	}
+
+	cur, err := currency.ParseISO(payload.Currency)
+	if err != nil {
+		cur = currency.USD
+	}
+
+	flightClass := parseClass(payload.Class)
+	flightStops := parseStops(payload.Stops)
+
+	// Calculate distance for deal scoring
+	distanceMiles, _ := calculateDistanceAndCostPerMile(origin, destination, 1.0)
+	dist := 0.0
+	if distanceMiles.Valid {
+		dist = distanceMiles.Float64
+	}
+
+	// PHASE 1: Get prices for all dates in ONE call
+	priceGraphArgs := flights.PriceGraphArgs{
+		RangeStartDate: payload.DepartureDateFrom,
+		RangeEndDate:   payload.DepartureDateTo,
+		TripLength:     payload.TripLength,
+		SrcAirports:    []string{origin},
+		DstAirports:    []string{destination},
+		Options: flights.Options{
+			Travelers: flights.Travelers{
+				Adults:       payload.Adults,
+				Children:     payload.Children,
+				InfantOnLap:  payload.InfantsLap,
+				InfantInSeat: payload.InfantsSeat,
+			},
+			Currency: cur,
+			Stops:    flightStops,
+			Class:    flightClass,
+			TripType: tripType,
+			Lang:     language.English,
+			Carriers: payload.Carriers,
+		},
+	}
+
+	priceOffers, _, err := session.GetPriceGraph(ctx, priceGraphArgs)
+	if err != nil {
+		log.Printf("[BulkSearchRoute] Error getting price graph for %s: %v", routeKey, err)
+		// Increment progress even on error. Returning a non-nil error would NACK and retry the job,
+		// which can double-count progress and prematurely finalize the bulk search.
+		m.finalizeBulkSearchRouteIfComplete(ctx, payload.BulkSearchID)
+		return nil
+	}
+
+	if len(priceOffers) == 0 {
+		log.Printf("[BulkSearchRoute] No prices found for %s", routeKey)
+		m.finalizeBulkSearchRouteIfComplete(ctx, payload.BulkSearchID)
+		return nil
+	}
+
+	// Filter out invalid prices
+	filtered := priceOffers[:0]
+	for _, offer := range priceOffers {
+		if !isDBSafePrice(offer.Price) {
+			continue
+		}
+		filtered = append(filtered, offer)
+	}
+	priceOffers = filtered
+
+	if len(priceOffers) == 0 {
+		log.Printf("[BulkSearchRoute] No priced offers found for %s", routeKey)
+		m.finalizeBulkSearchRouteIfComplete(ctx, payload.BulkSearchID)
+		return nil
+	}
+
+	// Sort by price to find top N
+	sort.Slice(priceOffers, func(i, j int) bool {
+		return priceOffers[i].Price < priceOffers[j].Price
+	})
+
+	topOffers := priceOffers
+	if len(topOffers) > topN {
+		topOffers = topOffers[:topN]
+	}
+
+	log.Printf("[BulkSearchRoute] Phase 2: Getting full itineraries for top %d dates for %s", len(topOffers), routeKey)
+
+	// PHASE 2: Get full itineraries for cheapest dates
+	var bestOffer *flights.FullOffer
+	var bestScore float64 = math.MaxFloat64
+	var bestDate, bestReturn time.Time
+
+	for _, priceOffer := range topOffers {
+		args := flights.Args{
+			Date:        priceOffer.StartDate,
+			ReturnDate:  priceOffer.ReturnDate,
+			SrcAirports: []string{origin},
+			DstAirports: []string{destination},
+			Options: flights.Options{
+				Travelers: flights.Travelers{
+					Adults:       payload.Adults,
+					Children:     payload.Children,
+					InfantOnLap:  payload.InfantsLap,
+					InfantInSeat: payload.InfantsSeat,
+				},
+				Currency: cur,
+				Stops:    flightStops,
+				Class:    flightClass,
+				TripType: tripType,
+				Lang:     language.English,
+				Carriers: payload.Carriers,
+			},
+		}
+
+		fullOffers, _, err := session.GetOffers(ctx, args)
+		if err != nil {
+			log.Printf("[BulkSearchRoute] Error getting offers for %s on %s: %v",
+				routeKey, priceOffer.StartDate.Format("2006-01-02"), err)
+			continue
+		}
+
+		// Find best offer by deal score
+		for i := range fullOffers {
+			if !isDBSafePrice(fullOffers[i].Price) {
+				continue
+			}
+			if m.isExcludedAirline(fullOffers[i]) {
+				continue
+			}
+			score := scoreDeal(fullOffers[i], dist)
+			if score < bestScore {
+				bestScore = score
+				bestOffer = &fullOffers[i]
+				bestDate = priceOffer.StartDate
+				bestReturn = priceOffer.ReturnDate
+			}
+		}
+	}
+
+	// Store the result
+	if bestOffer != nil {
+		log.Printf("[BulkSearchRoute] Route %s: best deal $%.2f on %s",
+			routeKey, bestOffer.Price, bestDate.Format("2006-01-02"))
+
+		returnDate := sql.NullTime{}
+		if !bestReturn.IsZero() {
+			returnDate = sql.NullTime{Time: bestReturn, Valid: true}
+		}
+
+		airlineCode := ""
+		if len(bestOffer.Flight) > 0 {
+			flightNumber := bestOffer.Flight[0].FlightNumber
+			if len(flightNumber) >= 2 {
+				airlineCode = flightNumber[:2]
+			}
+		}
+
+		flightDuration := int(bestOffer.FlightDuration.Minutes())
+		returnFlightDuration := int(bestOffer.ReturnFlightDuration.Minutes())
+		totalDuration := flightDuration + returnFlightDuration
+
+		record := db.BulkSearchResultRecord{
+			BulkSearchID:         payload.BulkSearchID,
+			Origin:               origin,
+			Destination:          destination,
+			DepartureDate:        bestDate,
+			ReturnDate:           returnDate,
+			Price:                bestOffer.Price,
+			Currency:             strings.ToUpper(payload.Currency),
+			AirlineCode:          nullString(airlineCode),
+			Duration:             nullInt32(totalDuration),
+			SrcAirportCode:       nullString(bestOffer.SrcAirportCode),
+			DstAirportCode:       nullString(bestOffer.DstAirportCode),
+			SrcCity:              nullString(bestOffer.SrcCity),
+			DstCity:              nullString(bestOffer.DstCity),
+			FlightDuration:       durationToNullMinutes(bestOffer.FlightDuration),
+			ReturnFlightDuration: durationToNullMinutes(bestOffer.ReturnFlightDuration),
+			OutboundFlightsJSON:  flightsToJSON(bestOffer.Flight),
+			ReturnFlightsJSON:    flightsToJSON(bestOffer.ReturnFlight),
+			OfferJSON:            offerToJSON(*bestOffer),
+		}
+
+		if insertErr := m.postgresDB.InsertBulkSearchResult(ctx, record); insertErr != nil {
+			log.Printf("[BulkSearchRoute] Failed to insert result for %s: %v", routeKey, insertErr)
+		}
+	} else {
+		log.Printf("[BulkSearchRoute] Route %s: no valid offers found", routeKey)
+	}
+
+	// Increment progress and check if complete
+	m.finalizeBulkSearchRouteIfComplete(ctx, payload.BulkSearchID)
+
+	return nil
+}
+
+// finalizeBulkSearchRouteIfComplete increments progress and finalizes the bulk search if all routes are done.
+func (m *Manager) finalizeBulkSearchRouteIfComplete(ctx context.Context, bulkSearchID int) {
+	completed, total, err := m.postgresDB.IncrementBulkSearchProgress(ctx, bulkSearchID)
+	if err != nil {
+		log.Printf("[BulkSearchRoute] Failed to increment progress for bulk_search %d: %v", bulkSearchID, err)
+		return
+	}
+
+	log.Printf("[BulkSearchRoute] Progress: %d/%d for bulk_search %d", completed, total, bulkSearchID)
+
+	if completed >= total {
+		log.Printf("[BulkSearchRoute] All routes complete for bulk_search %d, finalizing...", bulkSearchID)
+		if finalizeErr := m.postgresDB.FinalizeBulkSearch(ctx, bulkSearchID); finalizeErr != nil {
+			log.Printf("[BulkSearchRoute] Failed to finalize bulk_search %d: %v", bulkSearchID, finalizeErr)
+		}
+	}
 }
 
 // processPriceGraphSweep executes a price graph sweep job and stores the cheapest fares for each date

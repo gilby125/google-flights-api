@@ -308,6 +308,11 @@ func (m *MockPostgresDB) UpdateBulkSearchStatus(ctx context.Context, bulkSearchI
 	return args.Error(0)
 }
 
+func (m *MockPostgresDB) UpdateBulkSearchTotalSearches(ctx context.Context, bulkSearchID int, totalSearches int) error {
+	args := m.Called(ctx, bulkSearchID, totalSearches)
+	return args.Error(0)
+}
+
 func (m *MockPostgresDB) UpdateBulkSearchProgress(ctx context.Context, bulkSearchID int, completed, totalOffers, errorCount int) error {
 	args := m.Called(ctx, bulkSearchID, completed, totalOffers, errorCount)
 	return args.Error(0)
@@ -500,6 +505,18 @@ func (m *MockPostgresDB) ListDealAlerts(ctx context.Context, limit, offset int) 
 		alerts = a.([]db.DealAlert)
 	}
 	return alerts, args.Error(1)
+}
+
+// IncrementBulkSearchProgress mocks atomic increment for fan-out bulk search
+func (m *MockPostgresDB) IncrementBulkSearchProgress(ctx context.Context, bulkSearchID int) (completed, total int, err error) {
+	args := m.Called(ctx, bulkSearchID)
+	return args.Int(0), args.Int(1), args.Error(2)
+}
+
+// FinalizeBulkSearch mocks final status update for fan-out bulk search
+func (m *MockPostgresDB) FinalizeBulkSearch(ctx context.Context, bulkSearchID int) error {
+	args := m.Called(ctx, bulkSearchID)
+	return args.Error(0)
 }
 
 // Ensure MockPostgresDB implements db.PostgresDB
