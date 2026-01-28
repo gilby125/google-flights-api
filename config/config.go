@@ -201,6 +201,22 @@ func Load() (*Config, error) {
 		queueVisibilityTimeout = 2 * time.Minute
 	}
 
+	concurrency, _ := strconv.Atoi(getEnv("WORKER_CONCURRENCY", "5"))
+	maxRetries, _ := strconv.Atoi(getEnv("WORKER_MAX_RETRIES", "3"))
+	retryDelay, _ := time.ParseDuration(getEnv("WORKER_RETRY_DELAY", "30s"))
+	jobTimeout, _ := time.ParseDuration(getEnv("WORKER_JOB_TIMEOUT", "10m"))
+	shutdownTimeout, _ := time.ParseDuration(getEnv("WORKER_SHUTDOWN_TIMEOUT", "30s"))
+	schedulerLockTTL, _ := time.ParseDuration(getEnv("SCHEDULER_LOCK_TTL", "30s"))
+	schedulerLockRenew, _ := time.ParseDuration(getEnv("SCHEDULER_LOCK_RENEW", "10s"))
+	schedulerLockKey := getEnv("SCHEDULER_LOCK_KEY", "scheduler:leader")
+
+	// Prevent Redis consumer-group re-delivery (XAUTOCLAIM) from stealing long-running jobs.
+	// QueueVisibilityTimeout is used as MinIdle for XAUTOCLAIM; if it is less than the max job runtime,
+	// multiple workers can process the same job concurrently (seen especially for bulk_search).
+	if jobTimeout > 0 && queueVisibilityTimeout < jobTimeout {
+		queueVisibilityTimeout = jobTimeout
+	}
+
 	redisConfig := RedisConfig{
 		Host:                   getEnv("REDIS_HOST", "redis"),
 		Port:                   getEnv("REDIS_PORT", "6379"),
@@ -211,15 +227,6 @@ func Load() (*Config, error) {
 		QueueBlockTimeout:      queueBlockTimeout,
 		QueueVisibilityTimeout: queueVisibilityTimeout,
 	}
-
-	concurrency, _ := strconv.Atoi(getEnv("WORKER_CONCURRENCY", "5"))
-	maxRetries, _ := strconv.Atoi(getEnv("WORKER_MAX_RETRIES", "3"))
-	retryDelay, _ := time.ParseDuration(getEnv("WORKER_RETRY_DELAY", "30s"))
-	jobTimeout, _ := time.ParseDuration(getEnv("WORKER_JOB_TIMEOUT", "10m"))
-	shutdownTimeout, _ := time.ParseDuration(getEnv("WORKER_SHUTDOWN_TIMEOUT", "30s"))
-	schedulerLockTTL, _ := time.ParseDuration(getEnv("SCHEDULER_LOCK_TTL", "30s"))
-	schedulerLockRenew, _ := time.ParseDuration(getEnv("SCHEDULER_LOCK_RENEW", "10s"))
-	schedulerLockKey := getEnv("SCHEDULER_LOCK_KEY", "scheduler:leader")
 
 	workerID := getEnv("WORKER_ID", "")
 	if workerID == "" {

@@ -43,7 +43,7 @@ func TestLoad(t *testing.T) {
 		assert.Equal(t, "flights_workers", cfg.RedisConfig.QueueGroup)
 		assert.Equal(t, "flights", cfg.RedisConfig.QueueStreamPrefix)
 		assert.Equal(t, 5*time.Second, cfg.RedisConfig.QueueBlockTimeout)
-		assert.Equal(t, 2*time.Minute, cfg.RedisConfig.QueueVisibilityTimeout)
+		assert.Equal(t, 10*time.Minute, cfg.RedisConfig.QueueVisibilityTimeout)
 	})
 
 	t.Run("environment variable override", func(t *testing.T) {
