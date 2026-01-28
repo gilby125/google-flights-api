@@ -216,6 +216,23 @@ func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Ne
 		c.File("./web/bulk-search/index.html")
 	})
 
+	// Admin UI: avoid stale cached JS/HTML during rapid iteration.
+	router.GET("/admin", func(c *gin.Context) {
+		c.Header("Cache-Control", "no-store")
+		c.Header("Content-Type", "text/html")
+		c.File("./web/admin/index.html")
+	})
+	router.GET("/admin/", func(c *gin.Context) {
+		c.Header("Cache-Control", "no-store")
+		c.Header("Content-Type", "text/html")
+		c.File("./web/admin/index.html")
+	})
+	router.GET("/admin/admin.js", func(c *gin.Context) {
+		c.Header("Cache-Control", "no-store")
+		c.Header("Content-Type", "application/javascript")
+		c.File("./web/admin/admin.js")
+	})
+
 	// Serve static files for the web UI
 	router.Static("/admin", "./web/admin")
 	router.Static("/search", "./web/search")
