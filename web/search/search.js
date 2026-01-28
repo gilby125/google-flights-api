@@ -634,6 +634,8 @@ function initSearchPage() {
     inputs.returnDate.min = today;
   }
 
+  applyPrefillFromUrl();
+
   if (elements.advancedBtn && elements.advancedOptions) {
     elements.advancedBtn.addEventListener("click", () => {
       advancedOptionsVisible = !advancedOptionsVisible;
@@ -694,6 +696,36 @@ function initSearchPage() {
   restoreActiveBulkSearchIfPresent().catch((err) => {
     console.warn("Failed to restore bulk search:", err);
   });
+}
+
+function applyPrefillFromUrl() {
+  let url;
+  try {
+    url = new URL(window.location.href);
+  } catch {
+    return;
+  }
+  const params = url.searchParams;
+
+  const origin = String(params.get("origin") || "").trim();
+  const destination = String(params.get("destination") || "").trim();
+  const departureDate = toYyyyMmDd(params.get("departure_date"));
+  const returnDate = toYyyyMmDd(params.get("return_date"));
+  const tripType = String(params.get("trip_type") || "").trim();
+  const cabin = String(params.get("class") || "").trim();
+  const stops = String(params.get("stops") || "").trim();
+  const adults = String(params.get("adults") || "").trim();
+  const currency = String(params.get("currency") || "").trim();
+
+  if (inputs.origin && origin) inputs.origin.value = origin;
+  if (inputs.destination && destination) inputs.destination.value = destination;
+  if (inputs.departureDate && departureDate) inputs.departureDate.value = departureDate;
+  if (inputs.returnDate && returnDate) inputs.returnDate.value = returnDate;
+  if (inputs.tripType && (tripType === "one_way" || tripType === "round_trip")) inputs.tripType.value = tripType;
+  if (inputs.travelClass && cabin) inputs.travelClass.value = cabin;
+  if (inputs.stops && stops) inputs.stops.value = stops;
+  if (inputs.adults && adults && /^\d+$/.test(adults)) inputs.adults.value = adults;
+  if (inputs.currency && currency && currency.length === 3) inputs.currency.value = currency.toUpperCase();
 }
 
 function setRecurringDynamicFieldVisibility(show) {

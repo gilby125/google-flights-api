@@ -118,6 +118,40 @@ function formatUSD(x) {
   return `$${Math.round(x).toLocaleString()}`;
 }
 
+function formatDateYYYYMMDD(d) {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getSuggestedDepartureDate() {
+  const df = $("dateFrom")?.value || "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(df)) return df;
+  const d = new Date();
+  d.setDate(d.getDate() + 30);
+  return formatDateYYYYMMDD(d);
+}
+
+function buildSearchUrl(origin, dest) {
+  const departure = getSuggestedDepartureDate();
+  const url = new URL("/search", window.location.origin);
+  url.searchParams.set("origin", origin);
+  url.searchParams.set("destination", dest);
+  url.searchParams.set("departure_date", departure);
+  url.searchParams.set("trip_type", "one_way");
+  return url.pathname + url.search;
+}
+
+function buildGoogleFlightsUrl(origin, dest) {
+  const departure = getSuggestedDepartureDate();
+  const encodedOrigin = encodeURIComponent(origin);
+  const encodedDest = encodeURIComponent(dest);
+  const encodedDate = encodeURIComponent(departure);
+  // Match the search page's convention.
+  return `https://www.google.com/travel/flights?q=Flights%20from%20${encodedOrigin}%20to%20${encodedDest}%20on%20${encodedDate}&tfs=oneway`;
+}
+
 function initGlobe() {
   const container = $("globeContainer");
   container.innerHTML = "";
@@ -552,18 +586,33 @@ async function onSelectRoute(origin, destCode) {
 
   $("routeDetails").textContent = `Loading stats for ${origin} → ${destCode}…`;
 
+  const searchUrl = buildSearchUrl(origin, destCode);
+  const googleUrl = buildGoogleFlightsUrl(origin, destCode);
+
   try {
     const stats = await fetchJSON(`/api/v1/graph/route-stats?origin=${encodeURIComponent(origin)}&dest=${encodeURIComponent(destCode)}`);
     const airlines = Array.isArray(stats.airlines) ? stats.airlines.filter(Boolean).slice(0, 10).join(", ") : "";
     const html = `
       <div><strong>${escapeHtml(origin)} → ${escapeHtml(destCode)}</strong></div>
+      <div class="mt-2 d-flex flex-wrap gap-2">
+        <a class="btn btn-sm btn-outline-light" href="${escapeHtml(searchUrl)}">Open in Search</a>
+        <a class="btn btn-sm btn-outline-secondary" href="${escapeHtml(googleUrl)}" target="_blank" rel="noreferrer">Google Flights</a>
+      </div>
       <div class="mt-1">Min: <code>${escapeHtml(formatUSD(stats.min_price))}</code> • Avg: <code>${escapeHtml(formatUSD(stats.avg_price))}</code> • Max: <code>${escapeHtml(formatUSD(stats.max_price))}</code></div>
       <div class="mt-1">Price points: <code>${escapeHtml(String(stats.price_points ?? "—"))}</code></div>
       ${airlines ? `<div class="mt-1">Airlines: <code>${escapeHtml(airlines)}</code></div>` : "" }
     `;
     $("routeDetails").innerHTML = html;
   } catch (e) {
-    $("routeDetails").textContent = `No stats for ${origin} → ${destCode} (${e.message}).`;
+    const html = `
+      <div><strong>${escapeHtml(origin)} → ${escapeHtml(destCode)}</strong></div>
+      <div class="mt-2 d-flex flex-wrap gap-2">
+        <a class="btn btn-sm btn-outline-light" href="${escapeHtml(searchUrl)}">Open in Search</a>
+        <a class="btn btn-sm btn-outline-secondary" href="${escapeHtml(googleUrl)}" target="_blank" rel="noreferrer">Google Flights</a>
+      </div>
+      <div class="mt-2">No stats available: <code>${escapeHtml(e.message)}</code></div>
+    `;
+    $("routeDetails").innerHTML = html;
   }
 }
 
