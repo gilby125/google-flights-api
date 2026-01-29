@@ -1044,6 +1044,7 @@ func (m *Manager) processContinuousPriceGraph(ctx context.Context, worker *Worke
 			cheapest.Price,
 			"", // No specific airline for price graph results
 			tripType,
+			defaultString(payload.Class, "economy"),
 		); syncErr != nil {
 			// Log but don't fail - Postgres is the source of truth
 			log.Printf("Warning: failed to sync price point to Neo4j for %s->%s: %v", payload.Origin, payload.Destination, syncErr)
@@ -2369,7 +2370,7 @@ func (m *Manager) processPriceGraphSweep(ctx context.Context, worker *Worker, se
 									tripType = "round_trip"
 								}
 							}
-							if syncErr := m.neo4jDB.AddPricePoint(origin, destination, dateStr, returnDateStr, offer.Price, "", tripType); syncErr != nil {
+							if syncErr := m.neo4jDB.AddPricePoint(origin, destination, dateStr, returnDateStr, offer.Price, "", tripType, class); syncErr != nil {
 								log.Printf("Warning: failed to sync price point to Neo4j for %s->%s: %v", origin, destination, syncErr)
 							}
 						}

@@ -205,8 +205,8 @@ func (m *MockNeo4jDB) CreateRoute(origin string, dest string, airline string, fl
 	return args.Error(0)
 }
 
-func (m *MockNeo4jDB) AddPricePoint(origin string, dest string, departDate string, returnDate string, price float64, airline string, tripType string) error {
-	args := m.Called(origin, dest, departDate, returnDate, price, airline, tripType)
+func (m *MockNeo4jDB) AddPricePoint(origin string, dest string, departDate string, returnDate string, price float64, airline string, tripType string, class string) error {
+	args := m.Called(origin, dest, departDate, returnDate, price, airline, tripType, class)
 	return args.Error(0)
 }
 

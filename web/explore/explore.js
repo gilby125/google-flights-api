@@ -52,13 +52,13 @@ function loadSettings() {
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") return;
     state.settings = { ...state.settings, ...parsed };
-  } catch (_) {}
+  } catch (_) { }
 }
 
 function saveSettings() {
   try {
     localStorage.setItem("exploreSettings", JSON.stringify(state.settings));
-  } catch (_) {}
+  } catch (_) { }
 }
 
 function escapeHtml(s) {
@@ -77,7 +77,7 @@ async function fetchJSON(url) {
     try {
       const body = await res.json();
       if (body && body.error) msg = body.error;
-    } catch (_) {}
+    } catch (_) { }
     throw new Error(msg);
   }
   return res.json();
@@ -360,6 +360,7 @@ function buildExploreUrl() {
   const excludeAirlines = ($("excludeAirlines")?.value || "").trim();
   const tripType = ($("tripType")?.value || "").trim();
   const maxAgeDays = Number($("maxAgeDays")?.value || 0);
+  const cabinClass = ($("cabinClass")?.value || "").trim();
   const source = "price_point";
 
   const qs = new URLSearchParams();
@@ -375,6 +376,7 @@ function buildExploreUrl() {
   if (excludeAirlines) qs.set("excludeAirlines", excludeAirlines);
   if (tripType) qs.set("tripType", tripType);
   if (Number.isFinite(maxAgeDays) && maxAgeDays > 0) qs.set("maxAgeDays", String(maxAgeDays));
+  if (cabinClass) qs.set("class", cabinClass);
 
   return { origins, maxPrice, url: `/api/v1/graph/explore?${qs.toString()}`, qs };
 }
@@ -717,10 +719,9 @@ async function onSelectRoute(origin, destCode) {
       ${observedLine}
       ${unknownTripNote}
       ${noteLine}
-      ${airlines ? `<div class="mt-1">Airlines: <code>${escapeHtml(airlines)}</code></div>` : "" }
-      ${
-        samplesRows
-          ? `<div class="mt-2">
+      ${airlines ? `<div class="mt-1">Airlines: <code>${escapeHtml(airlines)}</code></div>` : ""}
+      ${samplesRows
+        ? `<div class="mt-2">
                <div class="k">Recent samples</div>
                <div class="table-responsive mt-1">
                  <table class="table table-sm table-dark table-striped align-middle" style="margin-bottom: 0;">
@@ -738,7 +739,7 @@ async function onSelectRoute(origin, destCode) {
                  </table>
                </div>
              </div>`
-          : ""
+        : ""
       }
     `;
     $("routeDetails").innerHTML = html;

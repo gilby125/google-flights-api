@@ -357,7 +357,7 @@ func (w *Worker) StoreFlightOffers(ctx context.Context, payload FlightSearchPayl
 		}
 
 		// Store in Neo4j for graph analysis
-		if err := w.StoreFlightInNeo4j(ctx, offer); err != nil { // Call exported method
+		if err := w.StoreFlightInNeo4j(ctx, offer, payload.Class); err != nil { // Call exported method
 			return fmt.Errorf("failed to store flight in Neo4j: %w", err)
 		}
 	}
@@ -371,9 +371,14 @@ func (w *Worker) StoreFlightOffers(ctx context.Context, payload FlightSearchPayl
 }
 
 // StoreFlightInNeo4j stores flight data in Neo4j for graph analysis (Exported for testing)
-func (w *Worker) StoreFlightInNeo4j(ctx context.Context, offer flights.FullOffer) error {
+func (w *Worker) StoreFlightInNeo4j(ctx context.Context, offer flights.FullOffer, class string) error {
 	if w.neo4jDB == nil {
 		return nil
+	}
+
+	// Default to economy if class is empty
+	if class == "" {
+		class = "economy"
 	}
 
 	overallAirlineCode := ""
@@ -443,6 +448,7 @@ func (w *Worker) StoreFlightInNeo4j(ctx context.Context, offer flights.FullOffer
 			offer.Price,
 			flight.FlightNumber[:2], // Airline code
 			tripType,
+			class,
 		); err != nil {
 			return fmt.Errorf("failed to add price point in Neo4j: %w", err)
 		}
@@ -466,6 +472,7 @@ func (w *Worker) StoreFlightInNeo4j(ctx context.Context, offer flights.FullOffer
 			offer.Price,
 			overallAirlineCode,
 			tripType,
+			class,
 		); err != nil {
 			return fmt.Errorf("failed to add route-level price point in Neo4j: %w", err)
 		}

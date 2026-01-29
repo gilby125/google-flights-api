@@ -3070,7 +3070,7 @@ func DirectFlightSearch(pgDB db.PostgresDB, neo4jDB db.Neo4jDatabase) gin.Handle
 				}
 			case neo4jDB != nil:
 				for _, offer := range offers {
-					if err := searchWorker.StoreFlightInNeo4j(ctx, offer); err != nil {
+					if err := searchWorker.StoreFlightInNeo4j(ctx, offer, searchRequest.Class); err != nil {
 						log.Printf("Failed to persist direct search %s->%s in Neo4j: %v", routeOrigin, routeDestination, err)
 						break
 					}

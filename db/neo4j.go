@@ -13,7 +13,7 @@ import (
 type Neo4jDatabase interface {
 	CreateAirport(code, name, city, country string, latitude, longitude float64) error
 	CreateRoute(originCode, destCode, airlineCode, flightNumber string, avgPrice float64, avgDuration int) error
-	AddPricePoint(originCode, destCode string, departDate string, returnDate string, price float64, airlineCode string, tripType string) error
+	AddPricePoint(originCode, destCode string, departDate string, returnDate string, price float64, airlineCode string, tripType string, class string) error
 	CreateAirline(code, name, country string) error
 	Close() error
 	ExecuteReadQuery(ctx context.Context, query string, params map[string]interface{}) (Neo4jResult, error)
@@ -330,8 +330,11 @@ func (n *Neo4jDB) CreateRoute(originCode, destCode, airlineCode, flightNumber st
 }
 
 // AddPricePoint adds or updates a price point for a route on a specific date
-func (n *Neo4jDB) AddPricePoint(originCode, destCode string, departDate string, returnDate string, price float64, airlineCode string, tripType string) error {
-	// ctx := context.Background() // Removed unused ctx
+func (n *Neo4jDB) AddPricePoint(originCode, destCode string, departDate string, returnDate string, price float64, airlineCode string, tripType string, class string) error {
+	// Default to economy if class is empty
+	if class == "" {
+		class = "economy"
+	}
 	// NewSession takes only SessionConfig
 	session := n.driver.NewSession(neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
 	defer session.Close() // Close takes no arguments
@@ -339,21 +342,27 @@ func (n *Neo4jDB) AddPricePoint(originCode, destCode string, departDate string, 
 	// WriteTransaction takes work function (NO ctx)
 	_, err := session.WriteTransaction(func(tx neo4j.Transaction) (interface{}, error) {
 		// tx.Run takes query, params (NO ctx)
+		// OPTIONAL MATCH finds legacy edges WITHOUT requiring class property
+		// This allows upgrading pre-existing edges that don't have class set yet
 		_, err := tx.Run(
 			"MATCH (origin:Airport {code: $originCode}), (dest:Airport {code: $destCode}) "+
 				"WITH origin, dest, CASE WHEN $returnDate = '' THEN null ELSE date($returnDate) END AS retDate "+
+				// Match legacy edges: same date/airline but WITHOUT class, or with matching class
 				"OPTIONAL MATCH (origin)-[existing:PRICE_POINT {date: date($departDate), airline: $airlineCode}]->(dest) "+
-				"WHERE existing.trip_type IS NULL AND existing.return_date IS NULL "+
+				"WHERE (existing.class IS NULL OR existing.class = $class) "+
+				"  AND (existing.trip_type IS NULL OR existing.trip_type = $tripType) "+
+				"  AND (existing.return_date IS NULL OR existing.return_date = retDate) "+
 				"WITH origin, dest, retDate, existing "+
-				"FOREACH (_ IN CASE WHEN existing IS NULL THEN [] ELSE [1] END | "+
+				"FOREACH (_ IN CASE WHEN existing IS NOT NULL THEN [1] ELSE [] END | "+
 				"  SET existing.price = $price, "+
 				"      existing.trip_type = $tripType, "+
 				"      existing.return_date = retDate, "+
+				"      existing.class = $class, "+
 				"      existing.last_seen_at = datetime(), "+
 				"      existing.first_seen_at = coalesce(existing.first_seen_at, datetime())"+
 				") "+
 				"FOREACH (_ IN CASE WHEN existing IS NULL THEN [1] ELSE [] END | "+
-				"  MERGE (origin)-[r:PRICE_POINT {date: date($departDate), airline: $airlineCode, trip_type: $tripType, return_date: retDate}]->(dest) "+
+				"  MERGE (origin)-[r:PRICE_POINT {date: date($departDate), airline: $airlineCode, trip_type: $tripType, return_date: retDate, class: $class}]->(dest) "+
 				"  SET r.price = $price, "+
 				"      r.last_seen_at = datetime(), "+
 				"      r.first_seen_at = coalesce(r.first_seen_at, datetime())"+
@@ -366,6 +375,7 @@ func (n *Neo4jDB) AddPricePoint(originCode, destCode string, departDate string, 
 				"price":       price,
 				"airlineCode": airlineCode,
 				"tripType":    tripType,
+				"class":       class,
 			},
 		)
 		return nil, err

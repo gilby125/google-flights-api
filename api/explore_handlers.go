@@ -134,6 +134,13 @@ func GetExplore(neo4jDB db.Neo4jDatabase) gin.HandlerFunc {
 			return
 		}
 
+		// Parse class filter (economy, premium_economy, business, first)
+		class := strings.ToLower(strings.TrimSpace(c.Query("class")))
+		if class != "" && class != "economy" && class != "premium_economy" && class != "business" && class != "first" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "class must be one of: economy, premium_economy, business, first"})
+			return
+		}
+
 		limit := 500
 		if l := strings.TrimSpace(c.Query("limit")); l != "" {
 			if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 && parsed <= 5000 {
@@ -213,6 +220,7 @@ func GetExplore(neo4jDB db.Neo4jDatabase) gin.HandlerFunc {
 					  AND (size($excludeAirlines) = 0 OR r.airline IS NULL OR NOT r.airline IN $excludeAirlines)
 					  AND ($maxAgeDays = 0 OR coalesce(r.last_seen_at, r.first_seen_at) IS NULL OR coalesce(r.last_seen_at, r.first_seen_at) >= datetime() - duration({days: $maxAgeDays}))
 					  AND ($tripType = '' OR coalesce(r.trip_type, 'unknown') = $tripType)
+					  AND ($class = '' OR coalesce(r.class, 'economy') = $class)
 				  )
 				WITH a, b,
 				     reduce(total = 0.0, r IN relationships(path) | total + toFloat(r.price)) AS totalPrice,
@@ -245,6 +253,7 @@ func GetExplore(neo4jDB db.Neo4jDatabase) gin.HandlerFunc {
 			"maxAgeDays":      maxAgeDays,
 			"tripType":        tripType,
 			"excludeAirlines": excludeAirlines,
+			"class":           class,
 		})
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
