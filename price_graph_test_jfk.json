@@ -1,2 +1,0 @@
-{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "cli", "version": "1.0.0"}}}
-{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "get_price_graph", "arguments": {"origin": "ORD", "destination": "JFK", "range_start_date": "2026-04-01", "range_end_date": "2026-04-30", "trip_length": 3}}}

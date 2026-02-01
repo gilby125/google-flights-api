@@ -1,0 +1,5 @@
+{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "cli", "version": "1.0.0"}}}
+{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "search_flights", "arguments": {"trip_type": "round_trip", "origin": "ORD", "destination": "SJO", "date": "2026-03-03", "return_date": "2026-03-10"}}}
+{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "search_flights", "arguments": {"trip_type": "round_trip", "origin": "ORD", "destination": "SJO", "date": "2026-03-04", "return_date": "2026-03-11"}}}
+{"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "search_flights", "arguments": {"trip_type": "round_trip", "origin": "ORD", "destination": "SJO", "date": "2026-02-24", "return_date": "2026-03-04"}}}
+{"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "search_flights", "arguments": {"trip_type": "round_trip", "origin": "ORD", "destination": "SJO", "date": "2026-03-03", "return_date": "2026-03-11"}}}

@@ -31,7 +31,7 @@ func main() {
 	)
 
 	// Register search_flights tool
-	tool := mcp.NewTool("search_flights",
+	t := mcp.NewTool("search_flights",
 		mcp.WithDescription("Search for flights using Google Flights"),
 		mcp.WithString("origin",
 			mcp.Description("Origin airport code (e.g., SFO, LHR)"),
@@ -54,12 +54,15 @@ func main() {
 		mcp.WithString("currency",
 			mcp.Description("Currency code (e.g., USD, EUR). Default USD."),
 		),
+		mcp.WithString("carriers",
+			mcp.Description("Comma-separated list of IATA carrier codes to include (e.g., 'UA,DL,AA')."),
+		),
 		mcp.WithString("trip_type",
 			mcp.Description("Trip type: 'round_trip', 'one_way', or 'multi_city'. Default is round_trip if return_date is provided, else one_way."),
 		),
 	)
 
-	s.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	s.AddTool(t, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		argsMap, ok := request.Params.Arguments.(map[string]interface{})
 		if !ok {
 			return mcp.NewToolResultError("Invalid arguments format"), nil
@@ -70,6 +73,7 @@ func main() {
 		dateStr, _ := argsMap["date"].(string)
 		returnDateStr, _ := argsMap["return_date"].(string)
 		segmentsStr, _ := argsMap["segments"].(string)
+		carriersStr, _ := argsMap["carriers"].(string)
 		
 		adultsVal, _ := argsMap["adults"].(float64)
 		adults := int(adultsVal)
@@ -83,6 +87,14 @@ func main() {
 		}
 
 		tripTypeStr, _ := argsMap["trip_type"].(string)
+
+		// Parse carriers
+		var carriers []string
+		if carriersStr != "" {
+			for _, c := range strings.Split(carriersStr, ",") {
+				carriers = append(carriers, strings.TrimSpace(c))
+			}
+		}
 
 		// Parse dates
 		var date time.Time
@@ -142,6 +154,7 @@ func main() {
 				Class:     flights.Economy,
 				TripType:  tripType,
 				Lang:      language.English,
+				Carriers:  carriers,
 			},
 		}
 
@@ -173,7 +186,7 @@ func main() {
 			args.SrcAirports = nil
 			args.DstAirports = nil
 		} else {
-			if origin == "" || destination == "" || dateStr == "" {
+			if origin == "" || destination == "" || (dateStr == "" && tripType != flights.MultiCity) {
 				return mcp.NewToolResultError("origin, destination, and date are required for one_way and round_trip"), nil
 			}
 		}
@@ -270,6 +283,9 @@ func main() {
 		mcp.WithString("currency",
 			mcp.Description("Currency code (e.g., USD). Default USD."),
 		),
+		mcp.WithString("carriers",
+			mcp.Description("Comma-separated list of IATA carrier codes to include (e.g., 'UA,DL,AA')."),
+		),
 	)
 
 	s.AddTool(pgTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -282,6 +298,7 @@ func main() {
 		destination, _ := argsMap["destination"].(string)
 		rangeStartDateStr, _ := argsMap["range_start_date"].(string)
 		rangeEndDateStr, _ := argsMap["range_end_date"].(string)
+		carriersStr, _ := argsMap["carriers"].(string)
 		
 		tripLengthVal, _ := argsMap["trip_length"].(float64)
 		tripLength := int(tripLengthVal)
@@ -294,12 +311,20 @@ func main() {
 			currencyStr = "USD"
 		}
 
+		// Parse carriers
+		var carriers []string
+		if carriersStr != "" {
+			for _, c := range strings.Split(carriersStr, ",") {
+				carriers = append(carriers, strings.TrimSpace(c))
+			}
+		}
+
 		// Parse dates
-		rangeStartDate, err := time.Parse("2006-01-02", rangeStartDateStr)
+	rangeStartDate, err := time.Parse("2006-01-02", rangeStartDateStr)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Invalid range_start_date: %v", err)), nil
 		}
-		rangeEndDate, err := time.Parse("2006-01-02", rangeEndDateStr)
+	rangeEndDate, err := time.Parse("2006-01-02", rangeEndDateStr)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Invalid range_end_date: %v", err)), nil
 		}
@@ -313,6 +338,7 @@ func main() {
 		options := flights.OptionsDefault()
 		options.Currency = currUnit
 		options.Lang = language.English
+		options.Carriers = carriers
 
 		pgArgs := flights.PriceGraphArgs{
 			RangeStartDate: rangeStartDate,
@@ -329,7 +355,14 @@ func main() {
 		}
 
 		var formattedOffers []FormattedGraphOffer
+		var minPrice float64
+		var bestOffer *flights.Offer
+
 		for _, o := range offers {
+			if o.Price > 0 && (minPrice == 0 || o.Price < minPrice) {
+				minPrice = o.Price
+				bestOffer = &o
+			}
 			formattedOffers = append(formattedOffers, FormattedGraphOffer{
 				StartDate:  o.StartDate.Format("2006-01-02"),
 				ReturnDate: o.ReturnDate.Format("2006-01-02"),
@@ -338,8 +371,26 @@ func main() {
 			})
 		}
 
+		var bestAirline string
+		if bestOffer != nil {
+			// Sample the best date to find the airline
+			sampleArgs := flights.Args{
+				Date:        bestOffer.StartDate,
+				ReturnDate:  bestOffer.ReturnDate,
+				SrcAirports: []string{origin},
+				DstAirports: []string{destination},
+				Options:     options,
+			}
+			sampleOffers, _, err := session.GetOffers(ctx, sampleArgs)
+			if err == nil && len(sampleOffers) > 0 && len(sampleOffers[0].Flight) > 0 {
+				bestAirline = sampleOffers[0].Flight[0].AirlineName
+			}
+		}
+
 		response := map[string]interface{}{
-			"offers": formattedOffers,
+			"offers":             formattedOffers,
+			"best_price":         minPrice,
+			"best_price_airline": bestAirline,
 		}
 
 		jsonBytes, err := json.MarshalIndent(response, "", "  ")
@@ -382,7 +433,7 @@ func generateASCIIChart(offers []FormattedGraphOffer) string {
 	minPrice := offers[0].Price
 	maxPrice := offers[0].Price
 	for _, o := range offers {
-		if o.Price < minPrice { minPrice = o.Price }
+		if o.Price < minPrice && o.Price > 0 { minPrice = o.Price }
 		if o.Price > maxPrice { maxPrice = o.Price }
 	}
 	
@@ -390,9 +441,6 @@ func generateASCIIChart(offers []FormattedGraphOffer) string {
 	sb.WriteString("\nPrice History (ASCII Chart):\n")
 	
 	// Determine scale
-	// Max bar width = 40 chars
-	// If maxPrice is huge, scale handles it.
-	// If maxPrice is 0 (shouldn't happen), avoid div by zero
 	if maxPrice == 0 {
 		return "No price data available."
 	}
