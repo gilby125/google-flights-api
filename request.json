@@ -1,0 +1,2 @@
+{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "test-client", "version": "1.0.0"}}}
+{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "search_flights", "arguments": {"trip_type": "multi_city", "segments": "[{\"origin\":\"SFO\",\"destination\":\"JFK\",\"date\":\"2026-06-01\"},{\"origin\":\"JFK\",\"destination\":\"LHR\",\"date\":\"2026-06-05\"}]"}}}
