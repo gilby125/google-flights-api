@@ -404,7 +404,7 @@ func generateASCIIChart(offers []FormattedGraphOffer) string {
 		if barLen == 0 && o.Price > 0 {
 			barLen = 1
 		}
-		bar := strings.Repeat("█", barLen)
+		bar := strings.Repeat("▒", barLen)
 		sb.WriteString(fmt.Sprintf("%s | %-41s $%.0f\n", o.StartDate, bar, o.Price))
 	}
 	
