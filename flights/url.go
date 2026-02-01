@@ -41,6 +41,13 @@ func serializeFlight(
 }
 
 func serializeFlights(args Args) []*urlpb.Url_Flight {
+	if args.TripType == MultiCity {
+		flights := make([]*urlpb.Url_Flight, len(args.Segments))
+		for i, seg := range args.Segments {
+			flights[i] = serializeFlight(seg.Date, seg.SrcCities, seg.SrcAirports, seg.DstCities, seg.DstAirports, args.Stops, args.Carriers)
+		}
+		return flights
+	}
 	if args.TripType == OneWay {
 		return []*urlpb.Url_Flight{
 			serializeFlight(args.Date, args.SrcCities, args.SrcAirports, args.DstCities, args.DstAirports, args.Stops, args.Carriers),
@@ -86,15 +93,29 @@ func (s *Session) SerializeURL(ctx context.Context, args Args) (string, error) {
 		return "", err
 	}
 
-	args.SrcCities, err = s.abbrCities(ctx, args.SrcCities, args.Lang)
-	if err != nil {
-		return "", fmt.Errorf("could not get abbreviated src cities: %v", err)
+	if args.TripType == MultiCity {
+		for i := range args.Segments {
+			args.Segments[i].SrcCities, err = s.abbrCities(ctx, args.Segments[i].SrcCities, args.Lang)
+			if err != nil {
+				return "", fmt.Errorf("could not get abbreviated src cities for segment %d: %v", i, err)
+			}
+			args.Segments[i].DstCities, err = s.abbrCities(ctx, args.Segments[i].DstCities, args.Lang)
+			if err != nil {
+				return "", fmt.Errorf("could not get abbreviated dst cities for segment %d: %v", i, err)
+			}
+		}
+	} else {
+		args.SrcCities, err = s.abbrCities(ctx, args.SrcCities, args.Lang)
+		if err != nil {
+			return "", fmt.Errorf("could not get abbreviated src cities: %v", err)
+		}
+
+		args.DstCities, err = s.abbrCities(ctx, args.DstCities, args.Lang)
+		if err != nil {
+			return "", fmt.Errorf("could not get abbreviated dst cities: %v", err)
+		}
 	}
 
-	args.DstCities, err = s.abbrCities(ctx, args.DstCities, args.Lang)
-	if err != nil {
-		return "", fmt.Errorf("could not get abbreviated dst cities: %v", err)
-	}
 	urlProto := &urlpb.Url{
 		Flight:    serializeFlights(args),
 		Travelers: serializeTravelers(args.Travelers),
