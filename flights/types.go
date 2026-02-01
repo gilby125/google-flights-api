@@ -302,8 +302,8 @@ func (a *PriceGraphArgs) Convert() Args {
 type Args struct {
 	Date, ReturnDate                               time.Time // start trip date and return date
 	SrcCities, SrcAirports, DstCities, DstAirports []string  // source and destination; cities and airports of the trip
-	Segments                                       []Segment // For multi-city trips
 	Options                                                  // additional options
+	Segments                                       []Segment // For multi-city trips
 }
 
 type Segment struct {

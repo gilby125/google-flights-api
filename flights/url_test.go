@@ -37,6 +37,7 @@ func TestSerializeURL1(t *testing.T) {
 				TripType:  RoundTrip,
 				Lang:      language.English,
 			},
+			nil,
 		},
 	)
 
@@ -77,6 +78,7 @@ func TestSerializeURL2(t *testing.T) {
 				TripType:  RoundTrip,
 				Lang:      language.English,
 			},
+			nil,
 		},
 	)
 

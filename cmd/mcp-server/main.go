@@ -310,28 +310,22 @@ func main() {
 			return mcp.NewToolResultError(fmt.Sprintf("Invalid currency code: %v", err)), nil
 		}
 
+		options := flights.OptionsDefault()
+		options.Currency = currUnit
+		options.Lang = language.English
+
 		pgArgs := flights.PriceGraphArgs{
 			RangeStartDate: rangeStartDate,
 			RangeEndDate:   rangeEndDate,
 			TripLength:     tripLength,
 			SrcAirports:    []string{origin},
 			DstAirports:    []string{destination},
-			Options: flights.Options{
-				Currency: currUnit,
-				Lang:     language.English,
-			},
+			Options:        options,
 		}
 
 		offers, _, err := session.GetPriceGraph(ctx, pgArgs)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Error getting price graph: %v", err)), nil
-		}
-
-		type FormattedGraphOffer struct {
-			StartDate  string  `json:"start_date"`
-			ReturnDate string  `json:"return_date"`
-			Price      float64 `json:"price"`
-			Currency   string  `json:"currency"`
 		}
 
 		var formattedOffers []FormattedGraphOffer
@@ -353,12 +347,68 @@ func main() {
 			return mcp.NewToolResultError(fmt.Sprintf("Error marshaling response: %v", err)), nil
 		}
 
-		return mcp.NewToolResultText(string(jsonBytes)), nil
+		jsonContent := mcp.TextContent{
+			Type: "text",
+			Text: string(jsonBytes),
+		}
+		
+		chartContent := mcp.TextContent{
+			Type: "text",
+			Text: generateASCIIChart(formattedOffers),
+		}
+
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{jsonContent, chartContent},
+		}, nil
 	})
 
 	if err := server.ServeStdio(s); err != nil {
 		fmt.Fprintf(os.Stderr, "Server error: %v\n", err)
 	}
+}
+
+type FormattedGraphOffer struct {
+	StartDate  string  `json:"start_date"`
+	ReturnDate string  `json:"return_date"`
+	Price      float64 `json:"price"`
+	Currency   string  `json:"currency"`
+}
+
+func generateASCIIChart(offers []FormattedGraphOffer) string {
+	if len(offers) == 0 {
+		return ""
+	}
+	
+	minPrice := offers[0].Price
+	maxPrice := offers[0].Price
+	for _, o := range offers {
+		if o.Price < minPrice { minPrice = o.Price }
+		if o.Price > maxPrice { maxPrice = o.Price }
+	}
+	
+	var sb strings.Builder
+	sb.WriteString("\nPrice History (ASCII Chart):\n")
+	
+	// Determine scale
+	// Max bar width = 40 chars
+	// If maxPrice is huge, scale handles it.
+	// If maxPrice is 0 (shouldn't happen), avoid div by zero
+	if maxPrice == 0 {
+		return "No price data available."
+	}
+	
+	scale := 40.0 / maxPrice
+	
+	for _, o := range offers {
+		barLen := int(o.Price * scale)
+		if barLen == 0 && o.Price > 0 {
+			barLen = 1
+		}
+		bar := strings.Repeat("█", barLen)
+		sb.WriteString(fmt.Sprintf("%s | %-41s $%.0f\n", o.StartDate, bar, o.Price))
+	}
+	
+	return sb.String()
 }
 
 type FlightInfo struct {

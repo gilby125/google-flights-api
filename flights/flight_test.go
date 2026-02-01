@@ -46,6 +46,7 @@ func TestGetOffersUSDPLN(t *testing.T) {
 				TripType:  OneWay,
 				Lang:      language.English,
 			},
+			nil,
 		},
 	)
 
@@ -70,6 +71,7 @@ func TestGetOffersUSDPLN(t *testing.T) {
 				TripType:  OneWay,
 				Lang:      language.English,
 			},
+			nil,
 		},
 	)
 	if err != nil {
@@ -142,6 +144,7 @@ func TestGetOffersTravelers(t *testing.T) {
 			TripType:  OneWay,
 			Lang:      language.English,
 		},
+		nil,
 	}
 
 	offers, _, err := session.GetOffers(context.Background(), args)
@@ -273,6 +276,7 @@ func TestGetOffersMock(t *testing.T) {
 				TripType:  TripType(dummyValue),
 				Lang:      language.Tag{},
 			},
+			nil,
 		},
 	)
 	if err != nil {
@@ -336,6 +340,7 @@ func TestFlightReqData(t *testing.T) {
 				TripType:  RoundTrip,
 				Lang:      language.English,
 			},
+			nil,
 		},
 	)
 	if err != nil {
@@ -368,6 +373,7 @@ func TestFlightReqData(t *testing.T) {
 				TripType:  OneWay,
 				Lang:      language.English,
 			},
+			nil,
 		},
 	)
 	if err != nil {
