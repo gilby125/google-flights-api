@@ -184,6 +184,13 @@ func main() {
 			return mcp.NewToolResultError(fmt.Sprintf("Error searching flights: %v", err)), nil
 		}
 
+		// Generate Google Flights URL
+		searchURL, err := session.SerializeURL(ctx, args)
+		if err != nil {
+			// Don't fail the whole request, just log/ignore
+			fmt.Fprintf(os.Stderr, "Error generating URL: %v\n", err)
+		}
+
 		// Format results
 		type FormattedOffer struct {
 			Price          float64       `json:"price"`
@@ -227,6 +234,118 @@ func main() {
 		response := map[string]interface{}{
 			"offers":      formattedOffers,
 			"price_range": priceRange,
+			"search_url":  searchURL,
+		}
+
+		jsonBytes, err := json.MarshalIndent(response, "", "  ")
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Error marshaling response: %v", err)), nil
+		}
+
+		return mcp.NewToolResultText(string(jsonBytes)), nil
+	})
+
+	// Register get_price_graph tool
+	pgTool := mcp.NewTool("get_price_graph",
+		mcp.WithDescription("Get price graph data for a range of dates (Round Trip or One Way only)"),
+		mcp.WithString("origin",
+			mcp.Description("Origin airport code (e.g., SFO)"),
+			mcp.Required(),
+		),
+		mcp.WithString("destination",
+			mcp.Description("Destination airport code (e.g., JFK)"),
+			mcp.Required(),
+		),
+		mcp.WithString("range_start_date",
+			mcp.Description("Start date of the range (YYYY-MM-DD)"),
+			mcp.Required(),
+		),
+		mcp.WithString("range_end_date",
+			mcp.Description("End date of the range (YYYY-MM-DD)"),
+			mcp.Required(),
+		),
+		mcp.WithNumber("trip_length",
+			mcp.Description("Length of the trip in days (for round trip). Default is 7."),
+		),
+		mcp.WithString("currency",
+			mcp.Description("Currency code (e.g., USD). Default USD."),
+		),
+	)
+
+	s.AddTool(pgTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		argsMap, ok := request.Params.Arguments.(map[string]interface{})
+		if !ok {
+			return mcp.NewToolResultError("Invalid arguments format"), nil
+		}
+
+		origin, _ := argsMap["origin"].(string)
+		destination, _ := argsMap["destination"].(string)
+		rangeStartDateStr, _ := argsMap["range_start_date"].(string)
+		rangeEndDateStr, _ := argsMap["range_end_date"].(string)
+		
+		tripLengthVal, _ := argsMap["trip_length"].(float64)
+		tripLength := int(tripLengthVal)
+		if tripLength == 0 {
+			tripLength = 7 // Default to 7 days if not specified
+		}
+
+		currencyStr, _ := argsMap["currency"].(string)
+		if currencyStr == "" {
+			currencyStr = "USD"
+		}
+
+		// Parse dates
+		rangeStartDate, err := time.Parse("2006-01-02", rangeStartDateStr)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid range_start_date: %v", err)), nil
+		}
+		rangeEndDate, err := time.Parse("2006-01-02", rangeEndDateStr)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid range_end_date: %v", err)), nil
+		}
+
+		// Parse Currency
+		currUnit, err := currency.ParseISO(currencyStr)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid currency code: %v", err)), nil
+		}
+
+		pgArgs := flights.PriceGraphArgs{
+			RangeStartDate: rangeStartDate,
+			RangeEndDate:   rangeEndDate,
+			TripLength:     tripLength,
+			SrcAirports:    []string{origin},
+			DstAirports:    []string{destination},
+			Options: flights.Options{
+				Currency: currUnit,
+				Lang:     language.English,
+			},
+		}
+
+		offers, _, err := session.GetPriceGraph(ctx, pgArgs)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Error getting price graph: %v", err)), nil
+		}
+
+		type FormattedGraphOffer struct {
+			StartDate  string  `json:"start_date"`
+			ReturnDate string  `json:"return_date"`
+			Price      float64 `json:"price"`
+			Currency   string  `json:"currency"`
+		}
+
+		var formattedOffers []FormattedGraphOffer
+		for _, o := range offers {
+			formattedOffers = append(formattedOffers, FormattedGraphOffer{
+				StartDate:  o.StartDate.Format("2006-01-02"),
+				ReturnDate: o.ReturnDate.Format("2006-01-02"),
+				Price:      o.Price,
+				Currency:   currencyStr,
+			})
+		}
+
+		response := map[string]interface{}{
+			"offers": formattedOffers,
 		}
 
 		jsonBytes, err := json.MarshalIndent(response, "", "  ")

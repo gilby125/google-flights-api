@@ -32,7 +32,9 @@ func serializeFlight(
 		Date:         date.Format(time.DateOnly),
 		SrcLocations: append(serializeLocations(srcCities, urlpb.Url_CITY), serializeLocations(srcAirports, urlpb.Url_AIRPORT)...),
 		DstLocations: append(serializeLocations(dstCities, urlpb.Url_CITY), serializeLocations(dstAirports, urlpb.Url_AIRPORT)...),
-		Stops:        urlpb.Url_Stops(stops).Enum(),
+	}
+	if stops != AnyStops {
+		flight.Stops = urlpb.Url_Stops(stops).Enum()
 	}
 	if len(carriers) > 0 {
 		flight.Carriers = append([]string{}, carriers...)
