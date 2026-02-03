@@ -1,0 +1,23 @@
+name = "google-flights-price-probe"
+main = "src/index.ts"
+compatibility_date = "2025-07-18"
+
+# Optional: deploy multiple variants pinned near different cloud regions.
+# This is the closest thing to “picking an exit node” for Worker egress.
+# Deploy with: `wrangler deploy -e us_east` (or `npm run deploy -- -e us_east`)
+#
+# Docs: https://developers.cloudflare.com/workers/configuration/placement/
+[env.us_east]
+name = "google-flights-price-probe-us-east"
+[env.us_east.placement]
+region = "aws:us-east-1"
+
+[env.eu_west]
+name = "google-flights-price-probe-eu-west"
+[env.eu_west.placement]
+region = "aws:eu-west-1"
+
+[env.ap_singapore]
+name = "google-flights-price-probe-ap-singapore"
+[env.ap_singapore.placement]
+region = "aws:ap-southeast-1"
