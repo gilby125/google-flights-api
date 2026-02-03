@@ -23,13 +23,13 @@ func TestSerializeURL1(t *testing.T) {
 	url, err := session.SerializeURL(
 		context.Background(),
 		Args{
-			date,
-			returnDate,
-			[]string{"Los Angeles"},
-			[]string{"SFO"},
-			[]string{"London"},
-			[]string{"CDG"},
-			Options{
+			Date:        date,
+			ReturnDate:  returnDate,
+			SrcCities:   []string{"Los Angeles"},
+			SrcAirports: []string{"SFO"},
+			DstCities:   []string{"London"},
+			DstAirports: []string{"CDG"},
+			Options: Options{
 				Travelers: Travelers{Adults: 1},
 				Currency:  currency.USD,
 				Stops:     Stop1,
@@ -63,13 +63,13 @@ func TestSerializeURL2(t *testing.T) {
 	url, err := session.SerializeURL(
 		context.Background(),
 		Args{
-			date,
-			returnDate,
-			[]string{"London"},
-			[]string{"SFO"},
-			[]string{"Miami"},
-			[]string{},
-			Options{
+			Date:        date,
+			ReturnDate:  returnDate,
+			SrcCities:   []string{"London"},
+			SrcAirports: []string{"SFO"},
+			DstCities:   []string{"Miami"},
+			DstAirports: []string{},
+			Options: Options{
 				Travelers: Travelers{Adults: 2, Children: 1, InfantOnLap: 1},
 				Currency:  currency.USD,
 				Stops:     Stop2,

@@ -124,6 +124,7 @@ type TripType int64
 const (
 	RoundTrip TripType = iota + 1
 	OneWay
+	MultiCity
 )
 
 // It describes travelers of the trip.
@@ -302,6 +303,12 @@ type Args struct {
 	Date, ReturnDate                               time.Time // start trip date and return date
 	SrcCities, SrcAirports, DstCities, DstAirports []string  // source and destination; cities and airports of the trip
 	Options                                                  // additional options
+	Segments                                       []Segment // For multi-city trips
+}
+
+type Segment struct {
+	Date                                           time.Time
+	SrcCities, SrcAirports, DstCities, DstAirports []string
 }
 
 // Validates Offers arguments requirements:
@@ -310,6 +317,26 @@ type Args struct {
 //   - srcAirports and dstAirports have to be in the right IATA format: https://en.wikipedia.org/wiki/IATA_airport_code
 //   - dates have to be in chronological order: today's date -> Date -> ReturnDate
 func (a *Args) ValidateOffersArgs() error {
+	if a.TripType == MultiCity {
+		if len(a.Segments) < 1 {
+			return fmt.Errorf("multi-city trip must have at least 1 segment")
+		}
+		for i, segment := range a.Segments {
+			if err := validateLocations(segment.SrcCities, segment.SrcAirports, segment.DstCities, segment.DstAirports); err != nil {
+				return fmt.Errorf("segment %d: %s", i, err)
+			}
+			if i > 0 {
+				if segment.Date.Before(a.Segments[i-1].Date) {
+					return fmt.Errorf("segment %d date is before previous segment date", i)
+				}
+			}
+			if truncateToDay(segment.Date).Before(truncateToDay(timeNow().In(segment.Date.Location()))) {
+				return fmt.Errorf("segment %d date is before today's date", i)
+			}
+		}
+		return nil
+	}
+
 	if err := validateLocations(a.SrcCities, a.SrcAirports, a.DstCities, a.DstAirports); err != nil {
 		return err
 	}
@@ -329,6 +356,17 @@ func (a *Args) ValidateOffersArgs() error {
 //   - at least one destination location (dstCities / dstAirports)
 //   - srcAirports and dstAirports have to be in the right IATA format: https://en.wikipedia.org/wiki/IATA_airport_code
 func (a *Args) ValidateURLArgs() error {
+	if a.TripType == MultiCity {
+		if len(a.Segments) < 1 {
+			return fmt.Errorf("multi-city trip must have at least 1 segment")
+		}
+		for i, segment := range a.Segments {
+			if err := validateLocations(segment.SrcCities, segment.SrcAirports, segment.DstCities, segment.DstAirports); err != nil {
+				return fmt.Errorf("segment %d: %s", i, err)
+			}
+		}
+		return nil
+	}
 	return validateLocations(a.SrcCities, a.SrcAirports, a.DstCities, a.DstAirports)
 }
 
