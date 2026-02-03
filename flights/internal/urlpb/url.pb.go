@@ -235,6 +235,7 @@ const (
 	Url_UNSPECIFIED_TRIP Url_TripType = 0
 	Url_ROUND_TRIP       Url_TripType = 1
 	Url_ONE_WAY          Url_TripType = 2
+	Url_MULTI_CITY       Url_TripType = 3
 )
 
 // Enum value maps for Url_TripType.
@@ -243,11 +244,13 @@ var (
 		0: "UNSPECIFIED_TRIP",
 		1: "ROUND_TRIP",
 		2: "ONE_WAY",
+		3: "MULTI_CITY",
 	}
 	Url_TripType_value = map[string]int32{
 		"UNSPECIFIED_TRIP": 0,
 		"ROUND_TRIP":       1,
 		"ONE_WAY":          2,
+		"MULTI_CITY":       3,
 	}
 )
 
@@ -480,7 +483,7 @@ var File_url_proto protoreflect.FileDescriptor
 
 const file_url_proto_rawDesc = "" +
 	"\n" +
-	"\turl.proto\x12\x05urlpb\"\xc9\x06\n" +
+	"\turl.proto\x12\x05urlpb\"\xd9\x06\n" +
 	"\x03Url\x12)\n" +
 	"\x06flight\x18\x03 \x03(\v2\x11.urlpb.Url.FlightR\x06flight\x121\n" +
 	"\ttravelers\x18\b \x03(\x0e2\x13.urlpb.Url.TravelerR\ttravelers\x12&\n" +
@@ -515,12 +518,14 @@ const file_url_proto_rawDesc = "" +
 	"\aECONOMY\x10\x01\x12\x13\n" +
 	"\x0fPREMIUM_ECONOMY\x10\x02\x12\f\n" +
 	"\bBUSINESS\x10\x03\x12\t\n" +
-	"\x05FIRST\x10\x04\"=\n" +
+	"\x05FIRST\x10\x04\"M\n" +
 	"\bTripType\x12\x14\n" +
 	"\x10UNSPECIFIED_TRIP\x10\x00\x12\x0e\n" +
 	"\n" +
 	"ROUND_TRIP\x10\x01\x12\v\n" +
-	"\aONE_WAY\x10\x02B?Z=github.com/gilby125/google-flights-api/flights/internal/urlpbb\x06proto3"
+	"\aONE_WAY\x10\x02\x12\x0e\n" +
+	"\n" +
+	"MULTI_CITY\x10\x03B?Z=github.com/gilby125/google-flights-api/flights/internal/urlpbb\x06proto3"
 
 var (
 	file_url_proto_rawDescOnce sync.Once

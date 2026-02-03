@@ -120,7 +120,7 @@ func (s *Session) SerializeURL(ctx context.Context, args Args) (string, error) {
 		Flight:    serializeFlights(args),
 		Travelers: serializeTravelers(args.Travelers),
 		Class:     urlpb.Url_Class(args.Class),
-		TripType:  urlpb.Url_TripType(args.TripType),
+		TripType:  serializeTripType(args.TripType),
 	}
 
 	tfs, err := proto.Marshal(urlProto)
@@ -132,4 +132,17 @@ func (s *Session) SerializeURL(ctx context.Context, args Args) (string, error) {
 		"?tfs=" + base64.RawURLEncoding.EncodeToString(tfs) +
 		"&curr=" + args.Currency.String() +
 		"&hl=" + args.Lang.String(), nil
+}
+
+func serializeTripType(tripType TripType) urlpb.Url_TripType {
+	switch tripType {
+	case RoundTrip:
+		return urlpb.Url_ROUND_TRIP
+	case OneWay:
+		return urlpb.Url_ONE_WAY
+	case MultiCity:
+		return urlpb.Url_MULTI_CITY
+	default:
+		return urlpb.Url_UNSPECIFIED_TRIP
+	}
 }
