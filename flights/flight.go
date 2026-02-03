@@ -135,18 +135,6 @@ func serializeCarriers(carriers []string) string {
 }
 
 func (s *Session) getRawData(ctx context.Context, args Args) (string, error) {
-	serSrcs, err := s.serializeFlightLocations(ctx, args.SrcCities, args.SrcAirports, args.Lang)
-	if err != nil {
-		return "", fmt.Errorf("could not serialize src flight src locations: %v", err)
-	}
-	serDsts, err := s.serializeFlightLocations(ctx, args.DstCities, args.DstAirports, args.Lang)
-	if err != nil {
-		return "", fmt.Errorf("could not serialize src flight dst locations: %v", err)
-	}
-
-	serDate := args.Date.Format("2006-01-02")
-	serReturnDate := args.ReturnDate.Format("2006-01-02")
-
 	serAdults := serializeFlightTravelers(args)
 	serStops := serializeFlightStop(args.Stops)
 	serCarriers := serializeCarriers(args.Carriers)
@@ -156,12 +144,44 @@ func (s *Session) getRawData(ctx context.Context, args Args) (string, error) {
 	rawData += fmt.Sprintf(`[null,null,%d,null,[],%d,%s,null,null,null,null,null,null,[`,
 		args.TripType, args.Class, serAdults)
 
-	rawData += fmt.Sprintf(`[[[%s]],[[%s]],null,%s,%s,[],\"%s\",null,[],[],[],null,null,[],3]`,
-		serSrcs, serDsts, serStops, serCarriers, serDate)
+	if args.TripType == MultiCity {
+		for i, segment := range args.Segments {
+			if i > 0 {
+				rawData += ","
+			}
+			serSrcs, err := s.serializeFlightLocations(ctx, segment.SrcCities, segment.SrcAirports, args.Lang)
+			if err != nil {
+				return "", fmt.Errorf("could not serialize segment %d src locations: %v", i, err)
+			}
+			serDsts, err := s.serializeFlightLocations(ctx, segment.DstCities, segment.DstAirports, args.Lang)
+			if err != nil {
+				return "", fmt.Errorf("could not serialize segment %d dst locations: %v", i, err)
+			}
+			serDate := segment.Date.Format("2006-01-02")
 
-	if args.TripType == RoundTrip {
-		rawData += fmt.Sprintf(`,[[[%s]],[[%s]],null,%s,%s,[],\"%s\",null,[],[],[],null,null,[],3]`,
-			serDsts, serSrcs, serStops, serCarriers, serReturnDate)
+			rawData += fmt.Sprintf(`[[[%s]],[[%s]],null,%s,%s,[],\"%s\",null,[],[],[],null,null,[],3]`,
+				serSrcs, serDsts, serStops, serCarriers, serDate)
+		}
+	} else {
+		serSrcs, err := s.serializeFlightLocations(ctx, args.SrcCities, args.SrcAirports, args.Lang)
+		if err != nil {
+			return "", fmt.Errorf("could not serialize flight src locations: %v", err)
+		}
+		serDsts, err := s.serializeFlightLocations(ctx, args.DstCities, args.DstAirports, args.Lang)
+		if err != nil {
+			return "", fmt.Errorf("could not serialize flight dst locations: %v", err)
+		}
+
+		serDate := args.Date.Format("2006-01-02")
+
+		rawData += fmt.Sprintf(`[[[%s]],[[%s]],null,%s,%s,[],\"%s\",null,[],[],[],null,null,[],3]`,
+			serSrcs, serDsts, serStops, serCarriers, serDate)
+
+		if args.TripType == RoundTrip {
+			serReturnDate := args.ReturnDate.Format("2006-01-02")
+			rawData += fmt.Sprintf(`,[[[%s]],[[%s]],null,%s,%s,[],\"%s\",null,[],[],[],null,null,[],3]`,
+				serDsts, serSrcs, serStops, serCarriers, serReturnDate)
+		}
 	}
 
 	return rawData, nil

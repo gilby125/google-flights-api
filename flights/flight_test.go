@@ -32,13 +32,13 @@ func TestGetOffersUSDPLN(t *testing.T) {
 	offersPLN, _, err := session.GetOffers(
 		context.Background(),
 		Args{
-			date,
-			returnDate,
-			[]string{"Los Angeles"},
-			[]string{"SFO"},
-			[]string{"London"},
-			[]string{"CDG"},
-			Options{
+			Date:        date,
+			ReturnDate:  returnDate,
+			SrcCities:   []string{"Los Angeles"},
+			SrcAirports: []string{"SFO"},
+			DstCities:   []string{"London"},
+			DstAirports: []string{"CDG"},
+			Options: Options{
 				Travelers: Travelers{Adults: 2},
 				Currency:  currency.PLN,
 				Stops:     Stop1,
@@ -56,13 +56,13 @@ func TestGetOffersUSDPLN(t *testing.T) {
 	offersUSD, _, err := session.GetOffers(
 		context.Background(),
 		Args{
-			date,
-			returnDate,
-			[]string{"Los Angeles"},
-			[]string{"SFO"},
-			[]string{"London"},
-			[]string{"CDG"},
-			Options{
+			Date:        date,
+			ReturnDate:  returnDate,
+			SrcCities:   []string{"Los Angeles"},
+			SrcAirports: []string{"SFO"},
+			DstCities:   []string{"London"},
+			DstAirports: []string{"CDG"},
+			Options: Options{
 				Travelers: Travelers{Adults: 2},
 				Currency:  currency.USD,
 				Stops:     Stop1,
@@ -128,13 +128,13 @@ func TestGetOffersTravelers(t *testing.T) {
 	returnDate := time.Now().AddDate(0, 7, 0)
 
 	args := Args{
-		date,
-		returnDate,
-		[]string{"Los Angeles"},
-		[]string{"SFO"},
-		[]string{"London"},
-		[]string{"CDG"},
-		Options{
+		Date:        date,
+		ReturnDate:  returnDate,
+		SrcCities:   []string{"Los Angeles"},
+		SrcAirports: []string{"SFO"},
+		DstCities:   []string{"London"},
+		DstAirports: []string{"CDG"},
+		Options: Options{
 			Travelers: Travelers{Adults: 1},
 			Currency:  currency.USD,
 			Stops:     Stop1,
@@ -259,13 +259,13 @@ func TestGetOffersMock(t *testing.T) {
 	offers, priceRange, err := session.GetOffers(
 		context.Background(),
 		Args{
-			date,
-			returnDate,
-			[]string{"Warsaw"},
-			[]string{},
-			[]string{"Athens"},
-			[]string{},
-			Options{
+			Date:        date,
+			ReturnDate:  returnDate,
+			SrcCities:   []string{"Warsaw"},
+			SrcAirports: []string{},
+			DstCities:   []string{"Athens"},
+			DstAirports: []string{},
+			Options: Options{
 				Travelers: Travelers{},
 				Currency:  currency.Unit{},
 				Stops:     Stops(dummyValue),
@@ -322,13 +322,13 @@ func TestFlightReqData(t *testing.T) {
 	_reqData1, err := session.getFlightReqData(
 		context.Background(),
 		Args{
-			date,
-			returnDate,
-			[]string{"Los Angeles"},
-			[]string{"SFO"},
-			[]string{"London"},
-			[]string{"CDG"},
-			Options{
+			Date:        date,
+			ReturnDate:  returnDate,
+			SrcCities:   []string{"Los Angeles"},
+			SrcAirports: []string{"SFO"},
+			DstCities:   []string{"London"},
+			DstAirports: []string{"CDG"},
+			Options: Options{
 				Travelers: Travelers{Adults: 1},
 				Currency:  currency.Unit{},
 				Stops:     AnyStops,
@@ -354,13 +354,13 @@ func TestFlightReqData(t *testing.T) {
 	_reqData2, err := session.getFlightReqData(
 		context.Background(),
 		Args{
-			date,
-			returnDate,
-			[]string{"Los Angeles"},
-			[]string{"SFO"},
-			[]string{"London"},
-			[]string{"CDG"},
-			Options{
+			Date:        date,
+			ReturnDate:  returnDate,
+			SrcCities:   []string{"Los Angeles"},
+			SrcAirports: []string{"SFO"},
+			DstCities:   []string{"London"},
+			DstAirports: []string{"CDG"},
+			Options: Options{
 				Travelers: Travelers{Adults: 2},
 				Currency:  currency.Unit{},
 				Stops:     Stop2,
