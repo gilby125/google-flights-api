@@ -149,7 +149,12 @@ jobs:
     - name: Compute Docker image tags
       id: meta
       run: |
-        BRANCH="${GITHUB_REF_NAME}"
+        RAW_REF="${GITHUB_REF_NAME}"
+        # Docker tags must match [A-Za-z0-9_.-] and cannot include slashes.
+        BRANCH="$(printf "%s" "${RAW_REF}" | tr '[:upper:]' '[:lower:]' | sed -E 's#[^a-z0-9_.-]+#-#g; s#^-+##; s#-+$##')"
+        if [ -z "${BRANCH}" ]; then
+          BRANCH="unknown"
+        fi
         {
           echo "tags<<EOF"
           echo "${DOCKER_IMAGE}:${BRANCH}"
