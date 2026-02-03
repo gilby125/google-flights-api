@@ -111,6 +111,13 @@ The sweep data is stored separately in `price_graph_sweeps` and `price_graph_res
 
 This section details how to use the `flights` package directly in your own Go projects.
 
+## MCP Server
+
+This repo also includes a small MCP (Model Context Protocol) server (Go, stdio) that exposes `search_flights` and `get_price_graph` tools backed by the `flights` package.
+
+- Docs: `docs/MCP_SERVER.md`
+- Build: `go build -o mcp-server ./cmd/mcp-server`
+
 ### Price Graph Diagnostics (Troubleshooting)
 
 `Session.GetPriceGraph` now returns parsed offers *and* non-fatal parsing diagnostics:

@@ -1,5 +1,6 @@
 # Binaries
 /google-flights-api*
+/mcp-server
 *.exe
 *.dll
 *.so
