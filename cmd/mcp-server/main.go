@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gilby125/google-flights-api/flights"
+	"github.com/gilby125/google-flights-api/hotels"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"golang.org/x/text/currency"
@@ -51,10 +52,16 @@ type segmentInput struct {
 }
 
 func main() {
-	session, err := flights.New()
+	flightSession, err := flights.New()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error initializing flights session: %v\n", err)
 		os.Exit(1)
+	}
+
+	hotelSession, err := hotels.New()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: error initializing hotels session: %v\n", err)
+		hotelSession = nil
 	}
 
 	s := server.NewMCPServer(
@@ -207,12 +214,12 @@ func main() {
 			}
 		}
 
-		offers, priceRange, err := session.GetOffers(ctx, searchArgs)
+		offers, priceRange, err := flightSession.GetOffers(ctx, searchArgs)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Error searching flights: %v", err)), nil
 		}
 
-		searchURL, err := session.SerializeURL(ctx, searchArgs)
+		searchURL, err := flightSession.SerializeURL(ctx, searchArgs)
 		if err != nil {
 			searchURL = ""
 		}
@@ -333,7 +340,7 @@ func main() {
 			Options:        options,
 		}
 
-		offers, _, err := session.GetPriceGraph(ctx, pgArgs)
+		offers, _, err := flightSession.GetPriceGraph(ctx, pgArgs)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Error getting price graph: %v", err)), nil
 		}
@@ -365,7 +372,7 @@ func main() {
 				DstAirports: []string{destination},
 				Options:     options,
 			}
-			sampleOffers, _, err := session.GetOffers(ctx, sampleArgs)
+			sampleOffers, _, err := flightSession.GetOffers(ctx, sampleArgs)
 			if err == nil && len(sampleOffers) > 0 && len(sampleOffers[0].Flight) > 0 {
 				bestAirline = sampleOffers[0].Flight[0].AirlineName
 			}
@@ -375,6 +382,108 @@ func main() {
 			"offers":             formattedOffers,
 			"best_price":         minPrice,
 			"best_price_airline": bestAirline,
+		}
+
+		jsonBytes, err := json.MarshalIndent(resp, "", "  ")
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Error marshaling response: %v", err)), nil
+		}
+
+		return mcp.NewToolResultText(string(jsonBytes)), nil
+	})
+
+	searchHotelsTool := mcp.NewTool("search_hotels",
+		mcp.WithDescription("Search for hotels using Google Hotels"),
+		mcp.WithString("location", mcp.Description("City/region/hotel location query (e.g., 'Paris', 'San Francisco')"), mcp.Required()),
+		mcp.WithString("checkin_date", mcp.Description("Check-in date (YYYY-MM-DD)"), mcp.Required()),
+		mcp.WithString("checkout_date", mcp.Description("Check-out date (YYYY-MM-DD)"), mcp.Required()),
+		mcp.WithNumber("adults", mcp.Description("Number of adults (default 1)")),
+		mcp.WithNumber("children", mcp.Description("Number of children (default 0)")),
+		mcp.WithString("currency", mcp.Description("Currency code (e.g., USD, EUR). Default USD.")),
+		mcp.WithString("lang", mcp.Description("Language tag (BCP-47, e.g., 'en', 'en-US'). Default 'en'.")),
+	)
+
+	s.AddTool(searchHotelsTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if hotelSession == nil {
+			return mcp.NewToolResultError("Hotels session is not initialized"), nil
+		}
+
+		argsMap, ok := request.Params.Arguments.(map[string]any)
+		if !ok {
+			return mcp.NewToolResultError("Invalid arguments format"), nil
+		}
+
+		location, _ := argsMap["location"].(string)
+		checkInStr, _ := argsMap["checkin_date"].(string)
+		checkOutStr, _ := argsMap["checkout_date"].(string)
+
+		adultsVal, _ := argsMap["adults"].(float64)
+		adults := int(adultsVal)
+		if adults <= 0 {
+			adults = 1
+		}
+
+		childrenVal, _ := argsMap["children"].(float64)
+		children := int(childrenVal)
+		if children < 0 {
+			children = 0
+		}
+
+		currencyStr, _ := argsMap["currency"].(string)
+		if currencyStr == "" {
+			currencyStr = "USD"
+		}
+
+		langStr, _ := argsMap["lang"].(string)
+		langTag := language.English
+		if strings.TrimSpace(langStr) != "" {
+			parsed, err := language.Parse(langStr)
+			if err != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("Invalid lang: %v", err)), nil
+			}
+			langTag = parsed
+		}
+
+		checkIn, err := time.Parse(dateLayout, checkInStr)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid checkin_date: %v", err)), nil
+		}
+		checkOut, err := time.Parse(dateLayout, checkOutStr)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid checkout_date: %v", err)), nil
+		}
+
+		currUnit, err := currency.ParseISO(currencyStr)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid currency code: %v", err)), nil
+		}
+
+		searchArgs := hotels.Args{
+			Location:     location,
+			CheckInDate:  checkIn,
+			CheckOutDate: checkOut,
+			Travelers: hotels.Travelers{
+				Adults:   adults,
+				Children: children,
+			},
+			Currency: currUnit,
+			Lang:     langTag,
+		}
+
+		offers, err := hotelSession.GetOffers(ctx, searchArgs)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Error searching hotels: %v", err)), nil
+		}
+
+		searchURL, err := hotelSession.SerializeURL(ctx, searchArgs)
+		if err != nil {
+			searchURL = ""
+		}
+
+		resp := map[string]any{
+			"offers":     offers,
+			"count":      len(offers),
+			"search_url": searchURL,
 		}
 
 		jsonBytes, err := json.MarshalIndent(resp, "", "  ")
