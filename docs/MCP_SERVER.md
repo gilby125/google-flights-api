@@ -67,3 +67,20 @@ Response:
 - `best_price`: minimum observed price (0 means “none found”).
 - `best_price_airline`: best-effort inferred airline from sampling a single full offer for the cheapest date pair.
 
+### `search_hotels`
+
+Searches Google Hotels for a location + date range.
+
+Arguments:
+- `location` (string, required): City/region query (e.g., `Paris`, `San Francisco`).
+- `checkin_date` (string, required): `YYYY-MM-DD`.
+- `checkout_date` (string, required): `YYYY-MM-DD`.
+- `adults` (number, optional): Number of adults (default `1`).
+- `children` (number, optional): Number of children (default `0`).
+- `currency` (string, optional): ISO currency code (default `USD`).
+- `lang` (string, optional): BCP-47 language tag (default `en`).
+
+Response:
+- `offers`: array of hotel results (best-effort parsed).
+- `count`: number of parsed offers.
+- `search_url`: a Google Hotels URL representing the search (best-effort; may be empty if serialization fails).
