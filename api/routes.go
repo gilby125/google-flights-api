@@ -8,6 +8,7 @@ import (
 
 	"github.com/gilby125/google-flights-api/config"
 	"github.com/gilby125/google-flights-api/db"
+	"github.com/gilby125/google-flights-api/hotels"
 	"github.com/gilby125/google-flights-api/pkg/cache"
 	"github.com/gilby125/google-flights-api/pkg/health"
 	"github.com/gilby125/google-flights-api/pkg/macros"
@@ -19,7 +20,7 @@ import (
 )
 
 // RegisterRoutes registers all API routes
-func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Neo4jDB, queue queue.Queue, workerManager *worker.Manager, cfg *config.Config) {
+func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Neo4jDB, queue queue.Queue, workerManager *worker.Manager, cfg *config.Config, hotelSession *hotels.Session) {
 	// Initialize cache manager
 	redisClient := redis.NewClient(&redis.Options{
 		Addr:     cfg.RedisConfig.Host + ":" + cfg.RedisConfig.Port,
@@ -127,6 +128,12 @@ func RegisterRoutes(router *gin.Engine, postgresDB db.PostgresDB, neo4jDB *db.Ne
 		v1.POST("/search", CreateSearch(queue))
 		v1.GET("/search/:id", GetSearchByID(postgresDB))
 		v1.GET("/search", ListSearches(postgresDB))
+
+		// Hotel routes
+		hotelsGroup := v1.Group("/hotels")
+		{
+			hotelsGroup.POST("/search", DirectHotelSearch(hotelSession))
+		}
 
 		// Bulk search routes
 		v1.POST("/bulk-search", CreateBulkSearch(queue, postgresDB, workerManager))
