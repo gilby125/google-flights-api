@@ -49,11 +49,14 @@ func (a Args) Validate() error {
 	if a.CheckOutDate.IsZero() {
 		return &ValidationError{Field: "CheckOutDate", Message: "cannot be zero"}
 	}
-	if a.CheckOutDate.Before(a.CheckInDate) {
-		return &ValidationError{Field: "CheckOutDate", Message: "cannot be before CheckInDate"}
+	if !a.CheckOutDate.After(a.CheckInDate) {
+		return &ValidationError{Field: "CheckOutDate", Message: "must be after CheckInDate"}
 	}
 	if a.Travelers.Adults < 1 {
 		return &ValidationError{Field: "Travelers.Adults", Message: "must be at least 1"}
+	}
+	if a.Travelers.Children < 0 {
+		return &ValidationError{Field: "Travelers.Children", Message: "must be at least 0"}
 	}
 	return nil
 }
