@@ -93,7 +93,7 @@ func TestMain(m *testing.M) {
 	}
 	// Pass nil for Redis client to disable leader election in tests
 	wm := worker.NewManager(q, nil, pgDB, neo4jDB, cfg.WorkerConfig, cfg.FlightConfig, config.DealConfig{})
-	api.RegisterRoutes(router, pgDB, neo4jDB, q, wm, cfg)
+	api.RegisterRoutes(router, pgDB, neo4jDB, q, wm, cfg, nil)
 	testServer := httptest.NewServer(router)
 	defer testServer.Close()
 

@@ -8,9 +8,12 @@ import (
 	"net/url"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/hashicorp/go-retryablehttp"
 )
+
+var ds0Re = regexp.MustCompile(`(?s)AF_initDataCallback\(\{key:\s*['"]ds:0['"].*?data:(.*?),\s*sideChannel:\s*\{\}\}\);</script>`)
 
 // SerializeURL generates a Google Hotels search URL based on the provided arguments.
 func (s *Session) SerializeURL(ctx context.Context, args Args) (string, error) {
@@ -46,6 +49,7 @@ func (s *Session) GetOffers(ctx context.Context, args Args) ([]Hotel, error) {
 	if err != nil {
 		return nil, err
 	}
+	req.Header["cookie"] = s.cookies
 
 	resp, err := s.client.Do(req)
 	if err != nil {
@@ -57,16 +61,17 @@ func (s *Session) GetOffers(ctx context.Context, args Args) ([]Hotel, error) {
 	if err != nil {
 		return nil, err
 	}
-	body := string(bodyBytes)
+	return parseHotelsFromHTML(string(bodyBytes), args.Currency.String())
+}
 
-	// Extract the ds:0 JSON data
-	re := regexp.MustCompile(`(?s)AF_initDataCallback\({key: 'ds:0'.*?data:(.*?), sideChannel: {}}\);</script>`)
-	match := re.FindStringSubmatch(body)
+func parseHotelsFromHTML(htmlBody string, currencyCode string) ([]Hotel, error) {
+	// Extract the ds:0 JSON blob.
+	match := ds0Re.FindStringSubmatch(htmlBody)
 	if len(match) < 2 {
 		return nil, fmt.Errorf("could not find hotel data in response")
 	}
 
-	var data []interface{}
+	var data []any
 	if err := json.Unmarshal([]byte(match[1]), &data); err != nil {
 		return nil, fmt.Errorf("failed to parse hotel data JSON: %w", err)
 	}
@@ -75,7 +80,7 @@ func (s *Session) GetOffers(ctx context.Context, args Args) ([]Hotel, error) {
 	findHotelsList = func(v interface{}, depth int) []interface{} {
 		switch val := v.(type) {
 		case []interface{}:
-			if len(val) > 5 {
+			if len(val) > 0 {
 				if first, ok := val[0].([]interface{}); ok && len(first) > 5 {
 					if _, ok := first[0].(string); ok {
 						if _, ok := first[2].(string); ok {
@@ -113,12 +118,12 @@ func (s *Session) GetOffers(ctx context.Context, args Args) ([]Hotel, error) {
 		}
 
 		name, _ := hotelArr[0].(string)
-		
+
 		priceStr, _ := hotelArr[2].(string)
 		price := parsePrice(priceStr)
 
 		rating, _ := hotelArr[5].(float64)
-		
+
 		// Images are in index 3
 		var images []string
 		if imgArr, ok := hotelArr[3].([]interface{}); ok {
@@ -139,7 +144,7 @@ func (s *Session) GetOffers(ctx context.Context, args Args) ([]Hotel, error) {
 		hotels = append(hotels, Hotel{
 			Name:      name,
 			Price:     price,
-			Currency:  args.Currency.String(),
+			Currency:  currencyCode,
 			Rating:    rating,
 			Images:    images,
 			Latitude:  lat,
@@ -152,8 +157,12 @@ func (s *Session) GetOffers(ctx context.Context, args Args) ([]Hotel, error) {
 
 func parsePrice(priceStr string) float64 {
 	// Remove non-numeric characters (except dot)
-	re := regexp.MustCompile(`[^\d.]`)
+	re := regexp.MustCompile(`[^\d.,]`)
 	cleanStr := re.ReplaceAllString(priceStr, "")
+	if strings.Count(cleanStr, ",") == 1 && strings.Count(cleanStr, ".") == 0 {
+		cleanStr = strings.ReplaceAll(cleanStr, ",", ".")
+	}
+	cleanStr = strings.ReplaceAll(cleanStr, ",", "")
 	val, _ := strconv.ParseFloat(cleanStr, 64)
 	return val
 }

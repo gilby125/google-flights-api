@@ -9,17 +9,17 @@ import (
 
 // Hotel represents a single hotel search result.
 type Hotel struct {
-	Name        string
-	Price       float64
-	Currency    string
-	Rating      float64
-	Stars       int
-	Address     string
-	Description string
-	Images      []string
-	HotelID     string
-	Latitude    float64
-	Longitude   float64
+	Name        string   `json:"name"`
+	Price       float64  `json:"price"`
+	Currency    string   `json:"currency"`
+	Rating      float64  `json:"rating"`
+	Stars       int      `json:"stars,omitempty"`
+	Address     string   `json:"address,omitempty"`
+	Description string   `json:"description,omitempty"`
+	Images      []string `json:"images,omitempty"`
+	HotelID     string   `json:"hotel_id,omitempty"`
+	Latitude    float64  `json:"latitude,omitempty"`
+	Longitude   float64  `json:"longitude,omitempty"`
 }
 
 // Args defines the arguments for a hotel search.
