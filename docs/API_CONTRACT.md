@@ -12,6 +12,49 @@ This document formalizes the public contract for the Google Flights API service 
 ## Airlines
 - `GET /api/v1/airlines`: Returns airline metadata; structure mirrors the airports endpoint. Same pagination and `search` query semantics apply.
 
+## Hotels
+
+### Search (DirectHotelSearch / hotelsGroup)
+
+- `POST /api/v1/hotels/search`: Executes an immediate hotel search backed by Google Hotels scraping.
+
+Request body (JSON):
+- `location` (string, required): City/region query (e.g., `"Paris"`, `"San Francisco"`).
+- `checkin_date` (string, required): Date-only `YYYY-MM-DD` (the API also accepts RFC3339 timestamps and truncates to a date).
+- `checkout_date` (string, required): Date-only `YYYY-MM-DD` (must be after `checkin_date`).
+- `adults` (int, required): Must be `>= 1`.
+- `children` (int, optional): Must be `>= 0` (default `0`).
+- `currency` (string, required): ISO 4217 currency code, 3 letters (e.g., `"USD"`).
+
+Response (200):
+```json
+{
+  "location": "Paris",
+  "checkin_date": "2026-06-01",
+  "checkout_date": "2026-06-05",
+  "offers": [
+    {
+      "name": "Example Hotel",
+      "price": 199,
+      "currency": "USD",
+      "rating": 4.3,
+      "images": ["https://..."],
+      "latitude": 48.8566,
+      "longitude": 2.3522
+    }
+  ],
+  "count": 1
+}
+```
+
+Errors:
+- `400 Bad Request`: Invalid JSON or validation failures (e.g., checkout before/equals checkin, missing location, invalid currency).
+  - Shape: `{ "error": "validation failed: <reason>" }`
+- `503 Service Unavailable`: Hotel session not initialized.
+  - Shape: `{ "error": "Hotel search service unavailable" }`
+- `500 Internal Server Error`: Upstream scraping/runtime failures.
+  - Shape: `{ "error": "Search failed: <reason>" }`
+
 ## Flight Search Lifecycle
 - `POST /api/v1/search`: Accepts a flight search payload (`origin`, `destination`, dates, pax counts, `trip_type`, `class`, `stops`, `currency`) and enqueues work. Responds with `202 Accepted` and `{ "id": "<search-id>" }`.
 - `GET /api/v1/search/:id`: Returns the status (`pending`, `processing`, `completed`, `failed`) and, once available, normalized results for the search ID returned by the create call.

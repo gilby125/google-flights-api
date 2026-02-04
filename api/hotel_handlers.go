@@ -54,6 +54,11 @@ func DirectHotelSearch(session *hotels.Session) gin.HandlerFunc {
 			Lang:     language.English, // Default to English for now
 		}
 
+		if err := args.Validate(); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("validation failed: %v", err)})
+			return
+		}
+
 		// Perform the search
 		offers, err := session.GetOffers(c.Request.Context(), args)
 		if err != nil {

@@ -42,26 +42,32 @@ func (s *Session) SerializeURL(ctx context.Context, args Args) (string, error) {
 func (s *Session) GetOffers(ctx context.Context, args Args) ([]Hotel, error) {
 	urlStr, err := s.SerializeURL(ctx, args)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("serialize hotel url: %w", err)
 	}
 
 	req, err := retryablehttp.NewRequestWithContext(ctx, "GET", urlStr, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("build hotel request: %w", err)
 	}
-	req.Header["cookie"] = s.cookies
+	if len(s.cookies) > 0 {
+		req.Header.Set("Cookie", strings.Join(s.cookies, "; "))
+	}
 
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("execute hotel request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read hotel response body: %w", err)
 	}
-	return parseHotelsFromHTML(string(bodyBytes), args.Currency.String())
+	offers, err := parseHotelsFromHTML(string(bodyBytes), args.Currency.String())
+	if err != nil {
+		return nil, fmt.Errorf("parse hotel response: %w", err)
+	}
+	return offers, nil
 }
 
 func parseHotelsFromHTML(htmlBody string, currencyCode string) ([]Hotel, error) {
