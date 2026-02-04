@@ -99,7 +99,8 @@ func New() (*Session, error) {
 	GOOGLE_ABUSE_EXEMPTION := kooky.ReadCookies(kooky.Valid, kooky.DomainHasSuffix(`google.com`), kooky.Name(`GOOGLE_ABUSE_EXEMPTION`))
 
 	if len(GOOGLE_ABUSE_EXEMPTION) == 1 {
-		cookies = append(cookies, GOOGLE_ABUSE_EXEMPTION[0].Value)
+		exemption := GOOGLE_ABUSE_EXEMPTION[0]
+		cookies = append(cookies, fmt.Sprintf("%s=%s", exemption.Name, exemption.Value))
 	}
 
 	return &Session{
