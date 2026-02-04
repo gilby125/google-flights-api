@@ -13,7 +13,7 @@ import (
 	"github.com/hashicorp/go-retryablehttp"
 )
 
-var ds0Re = regexp.MustCompile(`(?s)AF_initDataCallback\(\{key:\s*['"]ds:0['"].*?data:(.*?),\s*sideChannel:\s*\{\}\}\);</script>`)
+var ds0Re = regexp.MustCompile(`(?s)AF_initDataCallback\(\{key:\s*['"]ds:0['"].*?data:(.*?),\s*sideChannel:\s*\{\}\}\);`)
 
 // SerializeURL generates a Google Hotels search URL based on the provided arguments.
 func (s *Session) SerializeURL(ctx context.Context, args Args) (string, error) {
