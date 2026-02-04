@@ -13,6 +13,7 @@ import (
 	"github.com/gilby125/google-flights-api/api"
 	"github.com/gilby125/google-flights-api/config"
 	"github.com/gilby125/google-flights-api/db"
+	"github.com/gilby125/google-flights-api/hotels"
 	"github.com/gilby125/google-flights-api/pkg/logger"
 	"github.com/gilby125/google-flights-api/queue"
 	"github.com/gilby125/google-flights-api/worker"
@@ -256,8 +257,14 @@ func main() {
 		router := gin.New() // Use gin.New() instead of gin.Default() to have full control over middleware
 		router.LoadHTMLGlob("templates/*html")
 
+		// Initialize hotel session
+		hotelSession, err := hotels.New()
+		if err != nil {
+			logger.Warn("Failed to initialize hotel session", "error", err)
+		}
+
 		// Register all API routes from the api package
-		api.RegisterRoutes(router, postgresDB, neo4jDB, redisQueue, workerManager, cfg)
+		api.RegisterRoutes(router, postgresDB, neo4jDB, redisQueue, workerManager, cfg, hotelSession)
 
 		addr := ":" + cfg.Port
 		if cfg.HTTPBindAddr != "" {
